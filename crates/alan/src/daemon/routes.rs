@@ -180,6 +180,8 @@ pub struct CreateSessionResponse {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provider: Option<alan_runtime::LlmProvider>,
     pub resolved_model: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<alan_protocol::ReasoningEffort>,
     pub durability: SessionDurabilityInfo,
 }
 
@@ -203,6 +205,8 @@ pub struct CreateSessionRequest {
     pub agent_name: Option<String>,
     /// Optional explicit connection profile id.
     pub profile_id: Option<String>,
+    /// Optional session-scoped reasoning effort override.
+    pub reasoning_effort: Option<alan_protocol::ReasoningEffort>,
     /// Optional governance override
     pub governance: Option<alan_protocol::GovernanceConfig>,
     /// Optional streaming behavior override
@@ -223,6 +227,7 @@ pub async fn create_session(
         workspace_dir,
         agent_name,
         profile_id,
+        reasoning_effort,
         governance,
         streaming_mode,
         partial_stream_recovery_mode,
@@ -232,12 +237,13 @@ pub async fn create_session(
                 req.workspace_dir.filter(|p| !p.as_os_str().is_empty()),
                 normalized_agent_name(req.agent_name),
                 req.profile_id,
+                req.reasoning_effort,
                 req.governance,
                 req.streaming_mode,
                 req.partial_stream_recovery_mode,
             )
         })
-        .unwrap_or((None, None, None, None, None, None));
+        .unwrap_or((None, None, None, None, None, None, None));
 
     let session_id = state
         .create_session_from_rollout(CreateSessionFromRolloutOptions {
@@ -245,6 +251,7 @@ pub async fn create_session(
             resume_rollout_path: None,
             agent_name,
             profile_id,
+            reasoning_effort,
             governance: governance.clone(),
             streaming_mode,
             partial_stream_recovery_mode,
@@ -268,6 +275,7 @@ pub async fn create_session(
         profile_id,
         provider,
         resolved_model,
+        reasoning_effort,
         durability,
     ) = {
         let sessions = state.sessions.read().await;
@@ -288,6 +296,7 @@ pub async fn create_session(
             entry.profile_id.clone(),
             entry.provider,
             entry.resolved_model.clone(),
+            entry.reasoning_effort,
             session_durability_info(entry.durability_required, entry.durable),
         )
     };
@@ -305,6 +314,7 @@ pub async fn create_session(
         profile_id,
         provider,
         resolved_model,
+        reasoning_effort,
         durability,
     }))
 }
@@ -325,6 +335,8 @@ pub struct SessionInfo {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provider: Option<alan_runtime::LlmProvider>,
     pub resolved_model: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<alan_protocol::ReasoningEffort>,
     pub durability: SessionDurabilityInfo,
 }
 
@@ -344,6 +356,8 @@ pub struct SessionListItem {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provider: Option<alan_runtime::LlmProvider>,
     pub resolved_model: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<alan_protocol::ReasoningEffort>,
     pub durability: SessionDurabilityInfo,
 }
 
@@ -385,6 +399,8 @@ pub struct SessionReadResponse {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provider: Option<alan_runtime::LlmProvider>,
     pub resolved_model: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<alan_protocol::ReasoningEffort>,
     pub durability: SessionDurabilityInfo,
     pub rollout_path: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -467,6 +483,7 @@ pub struct ForkSessionRequest {
     pub workspace_dir: Option<PathBuf>,
     pub agent_name: Option<String>,
     pub profile_id: Option<String>,
+    pub reasoning_effort: Option<alan_protocol::ReasoningEffort>,
     pub governance: Option<alan_protocol::GovernanceConfig>,
     pub streaming_mode: Option<alan_runtime::StreamingMode>,
     pub partial_stream_recovery_mode: Option<alan_runtime::PartialStreamRecoveryMode>,
@@ -489,6 +506,8 @@ pub struct ForkSessionResponse {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provider: Option<alan_runtime::LlmProvider>,
     pub resolved_model: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<alan_protocol::ReasoningEffort>,
     pub durability: SessionDurabilityInfo,
 }
 
@@ -653,6 +672,7 @@ pub async fn get_session(
             profile_id,
             provider,
             resolved_model,
+            reasoning_effort,
             durability,
         ) = {
             let sessions = state.sessions.read().await;
@@ -669,6 +689,7 @@ pub async fn get_session(
                 entry.profile_id.clone(),
                 entry.provider,
                 entry.resolved_model.clone(),
+                entry.reasoning_effort,
                 session_durability_info(entry.durability_required, entry.durable),
             )
         };
@@ -683,6 +704,7 @@ pub async fn get_session(
             profile_id,
             provider,
             resolved_model,
+            reasoning_effort,
             durability,
         }))
     } else {
@@ -713,6 +735,7 @@ pub async fn list_sessions(
             profile_id: entry.profile_id.clone(),
             provider: entry.provider,
             resolved_model: entry.resolved_model.clone(),
+            reasoning_effort: entry.reasoning_effort,
             durability: session_durability_info(entry.durability_required, entry.durable),
         })
         .collect();
@@ -826,6 +849,7 @@ pub async fn read_session(
         profile_id,
         provider,
         resolved_model,
+        reasoning_effort,
         durability,
         stored_rollout_path,
         event_log,
@@ -845,6 +869,7 @@ pub async fn read_session(
             entry.profile_id.clone(),
             entry.provider,
             entry.resolved_model.clone(),
+            entry.reasoning_effort,
             session_durability_info(entry.durability_required, entry.durable),
             entry.rollout_path.clone(),
             Arc::clone(&entry.event_log),
@@ -894,6 +919,7 @@ pub async fn read_session(
         profile_id,
         provider,
         resolved_model,
+        reasoning_effort,
         durability,
         rollout_path: resolved_rollout_path.map(|path| path.to_string_lossy().to_string()),
         latest_compaction_attempt,
@@ -1092,6 +1118,7 @@ pub async fn fork_session(
         source_workspace_id,
         source_agent_name,
         source_profile_id,
+        source_reasoning_effort,
         source_governance,
         source_streaming_mode,
         source_partial_stream_recovery_mode,
@@ -1105,6 +1132,7 @@ pub async fn fork_session(
             entry.workspace_id.clone(),
             entry.agent_name.clone(),
             entry.profile_id.clone(),
+            entry.reasoning_effort,
             entry.governance.clone(),
             entry.streaming_mode,
             entry.partial_stream_recovery_mode,
@@ -1124,12 +1152,14 @@ pub async fn fork_session(
         workspace_dir,
         agent_name,
         profile_id,
+        reasoning_effort,
         governance,
         streaming_mode,
         partial_stream_recovery_mode,
     } = JsonLikeFork::from_payload(payload);
     let effective_agent_name = agent_name.or(source_agent_name);
     let effective_profile_id = profile_id.or(source_profile_id);
+    let effective_reasoning_effort = reasoning_effort.or(source_reasoning_effort);
     let effective_governance = governance.unwrap_or(source_governance);
     let effective_streaming_mode = streaming_mode.unwrap_or(source_streaming_mode);
     let effective_partial_stream_recovery_mode =
@@ -1155,6 +1185,7 @@ pub async fn fork_session(
             resume_rollout_path: Some(rollout_path),
             agent_name: effective_agent_name,
             profile_id: effective_profile_id,
+            reasoning_effort: effective_reasoning_effort,
             governance: Some(effective_governance.clone()),
             streaming_mode: Some(effective_streaming_mode),
             partial_stream_recovery_mode: Some(effective_partial_stream_recovery_mode),
@@ -1165,7 +1196,7 @@ pub async fn fork_session(
             status_for_session_creation_error(&err)
         })?;
 
-    let (agent_name, profile_id, provider, resolved_model, durability) = {
+    let (agent_name, profile_id, provider, resolved_model, reasoning_effort, durability) = {
         let sessions = state.sessions.read().await;
         let Some(entry) = sessions.get(&new_session_id) else {
             return Err(StatusCode::INTERNAL_SERVER_ERROR);
@@ -1175,6 +1206,7 @@ pub async fn fork_session(
             entry.profile_id.clone(),
             entry.provider,
             entry.resolved_model.clone(),
+            entry.reasoning_effort,
             session_durability_info(entry.durability_required, entry.durable),
         )
     };
@@ -1192,6 +1224,7 @@ pub async fn fork_session(
         profile_id,
         provider,
         resolved_model,
+        reasoning_effort,
         durability,
     }))
 }
@@ -2063,6 +2096,7 @@ struct JsonLikeFork {
     workspace_dir: Option<PathBuf>,
     agent_name: Option<String>,
     profile_id: Option<String>,
+    reasoning_effort: Option<alan_protocol::ReasoningEffort>,
     governance: Option<alan_protocol::GovernanceConfig>,
     streaming_mode: Option<alan_runtime::StreamingMode>,
     partial_stream_recovery_mode: Option<alan_runtime::PartialStreamRecoveryMode>,
@@ -2075,6 +2109,7 @@ impl JsonLikeFork {
                 workspace_dir: req.workspace_dir.filter(|p| !p.as_os_str().is_empty()),
                 agent_name: normalized_agent_name(req.agent_name),
                 profile_id: req.profile_id,
+                reasoning_effort: req.reasoning_effort,
                 governance: req.governance,
                 streaming_mode: req.streaming_mode,
                 partial_stream_recovery_mode: req.partial_stream_recovery_mode,
@@ -2083,6 +2118,7 @@ impl JsonLikeFork {
                 workspace_dir: None,
                 agent_name: None,
                 profile_id: None,
+                reasoning_effort: None,
                 governance: None,
                 streaming_mode: None,
                 partial_stream_recovery_mode: None,
@@ -2352,6 +2388,7 @@ Body
             None,
             None,
             "gpt-5.4".to_string(),
+            Some(alan_protocol::ReasoningEffort::Medium),
             alan_protocol::GovernanceConfig {
                 profile: alan_protocol::GovernanceProfile::Conservative,
                 policy_path: None,
@@ -2766,6 +2803,29 @@ Body
     }
 
     #[tokio::test]
+    async fn create_session_returns_reasoning_effort_metadata() {
+        let state = test_state();
+
+        let Json(resp) = create_session(
+            State(state),
+            json_headers(),
+            Bytes::from(
+                serde_json::json!({
+                    "reasoning_effort": "high"
+                })
+                .to_string(),
+            ),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            resp.reasoning_effort,
+            Some(alan_protocol::ReasoningEffort::High)
+        );
+    }
+
+    #[tokio::test]
     #[cfg(unix)]
     async fn create_session_reports_non_durable_mode_and_warning_when_recorder_is_unavailable() {
         let state = test_state();
@@ -3045,6 +3105,7 @@ Body
                 started_at: "2026-02-23T00:00:00Z".to_string(),
                 cwd: ".".to_string(),
                 model: "test-model".to_string(),
+                reasoning_effort: None,
             }),
             alan_runtime::RolloutItem::Message(alan_runtime::MessageRecord {
                 role: "assistant".to_string(),
@@ -3060,6 +3121,7 @@ Body
                 started_at: "2026-02-23T00:01:00Z".to_string(),
                 cwd: ".".to_string(),
                 model: "test-model".to_string(),
+                reasoning_effort: None,
             }),
             alan_runtime::RolloutItem::Message(alan_runtime::MessageRecord {
                 role: "assistant".to_string(),
@@ -3280,6 +3342,7 @@ Body
                 started_at: "2026-02-23T00:00:00Z".to_string(),
                 cwd: ".".to_string(),
                 model: "test-model".to_string(),
+                reasoning_effort: None,
             }),
             alan_runtime::RolloutItem::CompactionAttempt(
                 alan_protocol::CompactionAttemptSnapshot {
@@ -3419,6 +3482,7 @@ Body
                 started_at: "2026-02-23T00:00:00Z".to_string(),
                 cwd: ".".to_string(),
                 model: "test-model".to_string(),
+                reasoning_effort: None,
             }),
             alan_runtime::RolloutItem::Message(alan_runtime::MessageRecord {
                 role: "assistant".to_string(),
@@ -3473,6 +3537,7 @@ Body
                 started_at: "2026-02-23T00:00:00Z".to_string(),
                 cwd: ".".to_string(),
                 model: "test-model".to_string(),
+                reasoning_effort: None,
             }),
             alan_runtime::RolloutItem::Message(alan_runtime::MessageRecord {
                 role: "user".to_string(),
@@ -3505,6 +3570,7 @@ Body
                 profile_id: None,
                 provider: None,
                 resolved_model: String::new(),
+                reasoning_effort: None,
                 streaming_mode: Some(alan_runtime::StreamingMode::Auto),
                 partial_stream_recovery_mode: Some(
                     alan_runtime::PartialStreamRecoveryMode::ContinueOnce,
@@ -4257,6 +4323,7 @@ Body
                 started_at: "2026-03-16T00:00:00Z".to_string(),
                 cwd: temp.path().display().to_string(),
                 model: "gpt-5.4".to_string(),
+                reasoning_effort: None,
             }))
             .unwrap()
                 + "\n",
@@ -4286,6 +4353,58 @@ Body
             .unwrap();
 
         assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let value: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(value["reasoning_effort"], serde_json::json!("medium"));
+    }
+
+    #[tokio::test]
+    async fn fork_session_explicit_reasoning_effort_overrides_source_metadata() {
+        let state = test_state();
+        let temp = tempfile::TempDir::new().unwrap();
+        let (mut entry, _submission_rx) = session_entry(temp.path());
+        entry.reasoning_effort = Some(alan_protocol::ReasoningEffort::High);
+        let sessions_dir = temp.path().join(".alan").join("sessions");
+        std::fs::create_dir_all(&sessions_dir).unwrap();
+        let rollout_path = sessions_dir.join("rollout-20260316-sess-fork-override.jsonl");
+        std::fs::write(
+            &rollout_path,
+            serde_json::to_string(&RolloutItem::SessionMeta(alan_runtime::SessionMeta {
+                session_id: "sess-fork-override".to_string(),
+                started_at: "2026-03-16T00:00:00Z".to_string(),
+                cwd: temp.path().display().to_string(),
+                model: "gpt-5.4".to_string(),
+                reasoning_effort: Some(alan_protocol::ReasoningEffort::High),
+            }))
+            .unwrap()
+                + "\n",
+        )
+        .unwrap();
+        entry.rollout_path = Some(rollout_path);
+        state
+            .sessions
+            .write()
+            .await
+            .insert("sess-fork-override".to_string(), entry);
+
+        let Json(resp) = fork_session(
+            State(state),
+            Path("sess-fork-override".to_string()),
+            json_headers(),
+            Bytes::from(
+                serde_json::json!({
+                    "reasoning_effort": "low"
+                })
+                .to_string(),
+            ),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            resp.reasoning_effort,
+            Some(alan_protocol::ReasoningEffort::Low)
+        );
     }
 
     #[tokio::test]
@@ -4602,6 +4721,7 @@ Body
             workspace_dir: Some(PathBuf::from("/tmp/ws")),
             agent_name: Some("coder".to_string()),
             profile_id: None,
+            reasoning_effort: Some(alan_protocol::ReasoningEffort::High),
             governance: Some(alan_protocol::GovernanceConfig {
                 profile: alan_protocol::GovernanceProfile::Autonomous,
                 policy_path: Some(".alan/agents/default/policy.yaml".to_string()),
@@ -4612,6 +4732,10 @@ Body
 
         assert_eq!(parsed.workspace_dir, Some(PathBuf::from("/tmp/ws")));
         assert_eq!(parsed.agent_name.as_deref(), Some("coder"));
+        assert_eq!(
+            parsed.reasoning_effort,
+            Some(alan_protocol::ReasoningEffort::High)
+        );
         assert_eq!(
             parsed.governance,
             Some(alan_protocol::GovernanceConfig {

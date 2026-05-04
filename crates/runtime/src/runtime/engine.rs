@@ -225,12 +225,14 @@ async fn create_persistent_session(
     model: &str,
     session_dir: Option<&std::path::PathBuf>,
     rollout_cwd: Option<&std::path::Path>,
+    reasoning_effort: Option<alan_protocol::ReasoningEffort>,
 ) -> anyhow::Result<Session> {
     Session::new_with_recorder_options(
         session_id,
         model,
         session_dir.map(|dir| dir.as_path()),
         rollout_cwd,
+        reasoning_effort,
     )
     .await
 }
@@ -242,6 +244,7 @@ async fn initialize_session(
     desired_session_id: Option<&str>,
     durability_required: bool,
     rollout_cwd: Option<&std::path::Path>,
+    reasoning_effort: Option<alan_protocol::ReasoningEffort>,
 ) -> anyhow::Result<SessionStartupOutcome> {
     let mut warnings = Vec::new();
 
@@ -271,8 +274,14 @@ async fn initialize_session(
                     path = %path.display(),
                     "Failed to load session from rollout; creating fresh persistent session"
                 );
-                match create_persistent_session(desired_session_id, model, session_dir, rollout_cwd)
-                    .await
+                match create_persistent_session(
+                    desired_session_id,
+                    model,
+                    session_dir,
+                    rollout_cwd,
+                    reasoning_effort,
+                )
+                .await
                 {
                     Ok(session) => session,
                     Err(create_err) => {
@@ -287,7 +296,15 @@ async fn initialize_session(
             }
         }
     } else {
-        match create_persistent_session(desired_session_id, model, session_dir, rollout_cwd).await {
+        match create_persistent_session(
+            desired_session_id,
+            model,
+            session_dir,
+            rollout_cwd,
+            reasoning_effort,
+        )
+        .await
+        {
             Ok(session) => session,
             Err(err) => {
                 if durability_required {
@@ -365,6 +382,7 @@ struct ExplicitRuntimeOverrides {
     compaction_soft_trigger_ratio: bool,
     compaction_hard_trigger_ratio: bool,
     thinking_budget_tokens: bool,
+    model_reasoning_effort: bool,
     streaming_mode: bool,
     partial_stream_recovery_mode: bool,
     durability_required: bool,
@@ -397,13 +415,30 @@ impl AgentConfig {
     pub fn set_model_override(&mut self, model: impl Into<String>) {
         self.core_config.set_effective_model(model);
         sync_runtime_context_window_budget(&self.core_config, &mut self.runtime_config);
+        sync_runtime_model_reasoning_effort(&self.core_config, &mut self.runtime_config);
         self.explicit_runtime_overrides.model = true;
     }
 
     /// Override provider-specific thinking budget for this launch across overlays.
     pub fn set_thinking_budget_override(&mut self, thinking_budget_tokens: Option<u32>) {
         self.core_config.thinking_budget_tokens = thinking_budget_tokens;
+        self.core_config.model_reasoning_effort = None;
         self.runtime_config.thinking_budget_tokens = thinking_budget_tokens;
+        self.runtime_config.model_reasoning_effort = None;
+        self.explicit_runtime_overrides.thinking_budget_tokens = true;
+        self.explicit_runtime_overrides.model_reasoning_effort = true;
+    }
+
+    /// Override named model reasoning effort for this launch across overlays.
+    pub fn set_model_reasoning_effort_override(
+        &mut self,
+        model_reasoning_effort: Option<alan_protocol::ReasoningEffort>,
+    ) {
+        self.core_config.model_reasoning_effort = model_reasoning_effort;
+        self.core_config.thinking_budget_tokens = None;
+        self.runtime_config.model_reasoning_effort = model_reasoning_effort;
+        self.runtime_config.thinking_budget_tokens = None;
+        self.explicit_runtime_overrides.model_reasoning_effort = true;
         self.explicit_runtime_overrides.thinking_budget_tokens = true;
     }
 
@@ -433,15 +468,24 @@ impl AgentConfig {
 
     pub fn refresh_runtime_derived_fields(&mut self) {
         sync_runtime_context_window_budget(&self.core_config, &mut self.runtime_config);
+        sync_runtime_model_reasoning_effort(&self.core_config, &mut self.runtime_config);
     }
 
     pub fn with_agent_root_overlays(
         &self,
         overlay_paths: &[std::path::PathBuf],
     ) -> anyhow::Result<Self> {
-        let mut core_config = self.core_config.with_agent_root_overlays(overlay_paths)?;
+        let mut merge_base_core_config = self.core_config.clone();
+        if self.explicit_runtime_overrides.model_reasoning_effort {
+            merge_base_core_config.model_reasoning_effort = None;
+        }
+        if self.explicit_runtime_overrides.thinking_budget_tokens {
+            merge_base_core_config.thinking_budget_tokens = None;
+        }
+
+        let mut core_config = merge_base_core_config.with_agent_root_overlays(overlay_paths)?;
         let mut runtime_config = merge_runtime_config_from_core_overlay(
-            &self.core_config,
+            &merge_base_core_config,
             &core_config,
             &self.runtime_config,
             self.explicit_runtime_overrides,
@@ -463,10 +507,15 @@ impl AgentConfig {
         if self.explicit_runtime_overrides.model {
             core_config.set_effective_model(self.core_config.effective_model().to_string());
             sync_runtime_context_window_budget(core_config, runtime_config);
+            sync_runtime_model_reasoning_effort(core_config, runtime_config);
         }
         if self.explicit_runtime_overrides.thinking_budget_tokens {
             core_config.thinking_budget_tokens = self.runtime_config.thinking_budget_tokens;
             runtime_config.thinking_budget_tokens = self.runtime_config.thinking_budget_tokens;
+        }
+        if self.explicit_runtime_overrides.model_reasoning_effort {
+            core_config.model_reasoning_effort = self.runtime_config.model_reasoning_effort;
+            runtime_config.model_reasoning_effort = self.runtime_config.model_reasoning_effort;
         }
         if self.explicit_runtime_overrides.streaming_mode {
             core_config.streaming_mode = self.runtime_config.streaming_mode;
@@ -603,6 +652,14 @@ fn sync_runtime_context_window_budget(
     runtime_config.context_window_tokens = core_config.effective_context_window_tokens();
 }
 
+fn sync_runtime_model_reasoning_effort(
+    core_config: &crate::config::Config,
+    runtime_config: &mut RuntimeConfig,
+) {
+    runtime_config.model_reasoning_effort = core_config.effective_model_reasoning_effort();
+    runtime_config.thinking_budget_tokens = core_config.thinking_budget_tokens;
+}
+
 fn merge_runtime_config_from_core_overlay(
     base_core_config: &crate::config::Config,
     overlaid_core_config: &crate::config::Config,
@@ -631,6 +688,7 @@ fn merge_runtime_config_from_core_overlay(
     sync_if_unmodified!(compaction_soft_trigger_ratio);
     sync_if_unmodified!(compaction_hard_trigger_ratio);
     sync_if_unmodified!(thinking_budget_tokens);
+    sync_if_unmodified!(model_reasoning_effort);
     sync_if_unmodified!(streaming_mode);
     sync_if_unmodified!(partial_stream_recovery_mode);
     sync_if_unmodified!(durability_required);
@@ -951,6 +1009,9 @@ pub fn effective_core_config_for_runtime(
         core_config.memory.workspace_dir =
             Some(crate::workspace_memory_dir_from_alan_dir(alan_dir));
     }
+    if let Some(effort) = core_config.effective_model_reasoning_effort() {
+        core_config.validate_reasoning_effort_for_resolved_model(effort)?;
+    }
 
     Ok(core_config)
 }
@@ -1062,6 +1123,7 @@ pub fn spawn_with_llm_client_and_tools(
     // Spawn the main runtime task
     let task_handle = tokio::spawn(async move {
         let model = core_config.effective_model().to_string();
+        let reasoning_effort = core_config.effective_model_reasoning_effort();
         let startup = match initialize_session(
             &model,
             resume_rollout_path.as_ref(),
@@ -1069,6 +1131,7 @@ pub fn spawn_with_llm_client_and_tools(
             desired_session_id.as_deref(),
             runtime_config.durability_required,
             rollout_cwd.as_deref(),
+            reasoning_effort,
         )
         .await
         {
@@ -1852,6 +1915,30 @@ prompt_snapshot_enabled = true
     }
 
     #[test]
+    fn test_agent_config_with_agent_root_overlays_updates_unmodified_reasoning_effort() {
+        let temp = TempDir::new().unwrap();
+        let overlay_path = temp.path().join("agent.toml");
+        write_agent_overlay(
+            &overlay_path,
+            r#"
+model_reasoning_effort = "high"
+"#,
+        );
+
+        let base = AgentConfig::from(crate::Config::default());
+        let merged = base.with_agent_root_overlays(&[overlay_path]).unwrap();
+
+        assert_eq!(
+            merged.core_config.model_reasoning_effort,
+            Some(alan_protocol::ReasoningEffort::High)
+        );
+        assert_eq!(
+            merged.runtime_config.model_reasoning_effort,
+            Some(alan_protocol::ReasoningEffort::High)
+        );
+    }
+
+    #[test]
     fn test_agent_config_with_agent_root_overlays_preserves_runtime_overrides() {
         let temp = TempDir::new().unwrap();
         let overlay_path = temp.path().join("agent.toml");
@@ -1869,6 +1956,7 @@ thinking_budget_tokens = 1024
         base.set_model_override("gpt-5-mini");
         base.set_streaming_mode_override(crate::config::StreamingMode::On);
         base.set_thinking_budget_override(Some(2048));
+        base.set_model_reasoning_effort_override(Some(alan_protocol::ReasoningEffort::Low));
 
         let merged = base.with_agent_root_overlays(&[overlay_path]).unwrap();
 
@@ -1878,7 +1966,11 @@ thinking_budget_tokens = 1024
             merged.core_config.streaming_mode,
             crate::config::StreamingMode::On
         );
-        assert_eq!(merged.core_config.thinking_budget_tokens, Some(2048));
+        assert_eq!(merged.core_config.thinking_budget_tokens, None);
+        assert_eq!(
+            merged.core_config.model_reasoning_effort,
+            Some(alan_protocol::ReasoningEffort::Low)
+        );
         assert_eq!(
             merged.core_config.effective_context_window_tokens(),
             crate::Config::for_openai_responses("sk-test", None, Some("gpt-5-mini"))
@@ -1894,7 +1986,11 @@ thinking_budget_tokens = 1024
             merged.runtime_config.streaming_mode,
             crate::config::StreamingMode::On
         );
-        assert_eq!(merged.runtime_config.thinking_budget_tokens, Some(2048));
+        assert_eq!(merged.runtime_config.thinking_budget_tokens, None);
+        assert_eq!(
+            merged.runtime_config.model_reasoning_effort,
+            Some(alan_protocol::ReasoningEffort::Low)
+        );
     }
 
     #[test]
@@ -2438,6 +2534,7 @@ required = true
         let mut config = WorkspaceRuntimeConfig::from(Config {
             llm_provider: crate::config::LlmProvider::OpenAiResponses,
             openai_responses_model: "gpt-5.4".to_string(),
+            model_reasoning_effort: None,
             context_window_tokens: Some(42_000),
             ..Config::default()
         });
@@ -2668,6 +2765,7 @@ thinking_budget_tokens = 1024
             Some(desired_session_id.as_str()),
             true,
             Some(resumed_cwd.as_path()),
+            None,
         )
         .await
         .unwrap();

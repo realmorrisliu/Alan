@@ -14,6 +14,7 @@ Those are specified separately in:
 
 - [`provider_auth_contract.md`](./provider_auth_contract.md)
 - [`connection_profile_contract.md`](./connection_profile_contract.md)
+- [`provider_reasoning_effort_migration.md`](./provider_reasoning_effort_migration.md)
 
 ## Problem Statement
 
@@ -173,7 +174,8 @@ providers whenever the provider API supports them:
 11. thinking / reasoning content propagation when the API exposes it
 12. thinking-signature or encrypted-thinking propagation when the API exposes
     it
-13. structured multimodal or file inputs when the API exposes them
+13. named reasoning-effort control when the provider/model exposes it
+14. structured multimodal or file inputs when the API exposes them
 
 Normative rules:
 
@@ -227,6 +229,55 @@ kernel invariants:
 5. provider-native server tools and server-managed side effects
 6. provider-specific request invariants on Responses-compatible surfaces
 
+## Reasoning Effort Controls
+
+Alan's canonical user-facing reasoning control is a typed reasoning effort,
+not a raw token budget. The shared effort values are `none`, `minimal`, `low`,
+`medium`, `high`, and `xhigh`; omitted effort means "let Alan/provider defaults
+apply" and is distinct from explicit `none`.
+
+Normative rules:
+
+1. Alan must resolve effective effort before provider dispatch from turn
+   override, session/runtime override, agent config, model catalog default, then
+   provider default.
+2. If a resolved model catalog entry declares supported efforts, Alan must
+   reject explicit unsupported effort before making the provider request.
+3. `thinking_budget_tokens` is a provider-specific compatibility control, not
+   Alan's canonical cross-provider reasoning API.
+4. A configuration that explicitly sets both `model_reasoning_effort` and
+   `thinking_budget_tokens` is ambiguous and must be rejected.
+5. Compatibility providers must not silently drop explicit effort. They may
+   receive effort only when Alan has model/provider metadata declaring support;
+   otherwise the request must fail before dispatch.
+6. Reasoning-effort metadata may be logged or persisted as request/session
+   metadata, but Alan must not expose hidden reasoning content as a side effect
+   of enabling effort controls.
+
+Provider projection rules:
+
+1. OpenAI Responses maps effort to `reasoning.effort`.
+2. OpenAI Chat Completions maps effort to `reasoning_effort`.
+3. Managed ChatGPT Responses may use the Responses-shaped field only when the
+   live capability matrix says effort control is supported.
+4. Anthropic Messages maps effort to extended-thinking budget presets unless an
+   explicit legacy budget is the only configured control, and the adapter must
+   keep Anthropic minimum-budget and `max_tokens` constraints explicit.
+5. Gemini 3 maps effort to `thinkingConfig.thinkingLevel`; Gemini 2.5 maps
+   effort to `thinkingConfig.thinkingBudget`.
+6. OpenRouter and OpenAI-compatible endpoints use explicit extension fields
+   only for verified model/provider combinations.
+
+Migration guidance:
+
+1. New config examples should prefer `model_reasoning_effort = "medium"`.
+2. Existing OpenAI configs that used `thinking_budget_tokens` only to influence
+   reasoning depth should migrate to a named effort supported by the selected
+   model.
+3. Keep `thinking_budget_tokens` only for budget-native provider behavior or
+   temporary compatibility with a provider/model that does not yet expose named
+   effort metadata.
+
 ## Rich Content Contract
 
 Alan must not reduce all provider input to plain strings before the adapter
@@ -271,6 +322,7 @@ Silent degradation is forbidden for:
 2. continuation semantics
 3. multimodal or document inputs on official providers
 4. reasoning-signature continuity
+5. explicit reasoning-effort controls
 
 ## Provider-Specific Contracts
 
@@ -290,6 +342,8 @@ Required fidelity target:
 7. preserve reasoning items and encrypted reasoning state
 8. preserve native multimodal and file input items
 9. preserve cached input-token usage when returned
+10. preserve named reasoning-effort controls when the selected model supports
+    them
 
 Normative rules:
 
@@ -320,6 +374,8 @@ Required fidelity target:
 5. preserve reasoning items and encrypted reasoning state when surfaced by the
    provider
 6. preserve cached input-token usage when returned
+7. preserve named reasoning-effort controls only when live validation confirms
+   support
 
 Live-verified constraints as of April 13, 2026:
 
@@ -355,6 +411,8 @@ Required fidelity target:
 5. preserve streaming deltas
 6. preserve cached prompt-token usage when returned
 7. preserve reasoning-token usage when returned
+8. preserve named reasoning-effort controls when the selected model supports
+   them
 
 Normative rules:
 
@@ -381,6 +439,8 @@ Required fidelity target:
 9. preserve prompt-caching semantics and cached-token accounting when returned
 10. preserve provider-native response `id`
 11. preserve `stop_reason`, including `tool_use` and `pause_turn`
+12. preserve extended-thinking effort controls by mapping named effort to
+    budget presets where configured
 
 Normative rules:
 
@@ -406,6 +466,7 @@ Required fidelity target:
 4. basic usage mapping when returned
 5. best-effort reasoning-field interop using commonly observed extension
    fields such as `reasoning` or `reasoning_content`
+6. reasoning-effort extension fields only when declared for the selected model
 
 Normative rules:
 
@@ -430,6 +491,7 @@ Required fidelity target:
    supports them
 4. OpenRouter reasoning text and reasoning-detail metadata when returned
 5. usage, finish reason, and provider response id when returned
+6. OpenRouter reasoning-effort controls when supported by the selected route
 
 Normative rules:
 
@@ -453,6 +515,7 @@ supports_provider_response_id
 supports_provider_response_status
 supports_reasoning_text
 supports_reasoning_signature
+supports_reasoning_effort_control
 supports_redacted_thinking
 supports_multimodal_input
 supports_document_input

@@ -535,13 +535,31 @@ impl Session {
         model: &str,
         sessions_dir: Option<&Path>,
         rollout_cwd: Option<&Path>,
+        reasoning_effort: Option<alan_protocol::ReasoningEffort>,
     ) -> anyhow::Result<Self> {
         let id = session_id
             .map(str::to_string)
             .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
         let recorder = match sessions_dir {
-            Some(dir) => RolloutRecorder::new_in_dir_with_cwd(&id, model, dir, rollout_cwd).await?,
-            None => RolloutRecorder::new_with_cwd(&id, model, rollout_cwd).await?,
+            Some(dir) => {
+                RolloutRecorder::new_in_dir_with_cwd_and_reasoning_effort(
+                    &id,
+                    model,
+                    dir,
+                    rollout_cwd,
+                    reasoning_effort,
+                )
+                .await?
+            }
+            None => {
+                RolloutRecorder::new_with_cwd_and_reasoning_effort(
+                    &id,
+                    model,
+                    rollout_cwd,
+                    reasoning_effort,
+                )
+                .await?
+            }
         };
 
         Ok(Self {
@@ -564,7 +582,7 @@ impl Session {
 
     /// Create a new session with recorder for persistence
     pub async fn new_with_recorder(model: &str) -> anyhow::Result<Self> {
-        Self::new_with_recorder_options(None, model, None, None).await
+        Self::new_with_recorder_options(None, model, None, None, None).await
     }
 
     /// Create a new session with recorder under a specific sessions directory.
@@ -572,12 +590,12 @@ impl Session {
         model: &str,
         sessions_dir: &Path,
     ) -> anyhow::Result<Self> {
-        Self::new_with_recorder_options(None, model, Some(sessions_dir), None).await
+        Self::new_with_recorder_options(None, model, Some(sessions_dir), None, None).await
     }
 
     /// Create a new session with a specific ID and recorder
     pub async fn new_with_id_and_recorder(session_id: &str, model: &str) -> anyhow::Result<Self> {
-        Self::new_with_recorder_options(Some(session_id), model, None, None).await
+        Self::new_with_recorder_options(Some(session_id), model, None, None, None).await
     }
 
     /// Create a new session with a specific ID and recorder in a specific sessions directory.
@@ -586,7 +604,8 @@ impl Session {
         model: &str,
         sessions_dir: &Path,
     ) -> anyhow::Result<Self> {
-        Self::new_with_recorder_options(Some(session_id), model, Some(sessions_dir), None).await
+        Self::new_with_recorder_options(Some(session_id), model, Some(sessions_dir), None, None)
+            .await
     }
 
     /// Load a session from a rollout file
@@ -658,9 +677,14 @@ impl Session {
         };
 
         // Create a new session with recorder
-        let mut session =
-            Self::new_with_recorder_options(Some(&session_id), model, sessions_dir, rollout_cwd)
-                .await?;
+        let mut session = Self::new_with_recorder_options(
+            Some(&session_id),
+            model,
+            sessions_dir,
+            rollout_cwd,
+            None,
+        )
+        .await?;
 
         let recovered_latest_compaction_attempt =
             Self::latest_compaction_attempt_from_rollout_items_internal(&items);
@@ -2170,6 +2194,7 @@ mod tests {
                     started_at: "2026-01-29T14:30:52Z".to_string(),
                     cwd: "/tmp".to_string(),
                     model: "gemini-2.0-flash".to_string(),
+                    reasoning_effort: None,
                 }),
                 RolloutItem::Message(MessageRecord {
                     role: "assistant".to_string(),
@@ -2231,6 +2256,7 @@ mod tests {
                     started_at: "2026-01-29T14:30:52Z".to_string(),
                     cwd: "/tmp".to_string(),
                     model: "gemini-2.0-flash".to_string(),
+                reasoning_effort: None,
                 }),
                 RolloutItem::Message(MessageRecord {
                     role: "user".to_string(),
@@ -2340,6 +2366,7 @@ mod tests {
                     started_at: "2026-01-29T14:30:52Z".to_string(),
                     cwd: "/tmp".to_string(),
                     model: "gemini-2.0-flash".to_string(),
+                reasoning_effort: None,
                 }),
                 RolloutItem::Message(MessageRecord {
                     role: "user".to_string(),
@@ -2404,6 +2431,7 @@ mod tests {
                     started_at: "2026-01-29T14:30:52Z".to_string(),
                     cwd: "/tmp".to_string(),
                     model: "gemini-2.0-flash".to_string(),
+                reasoning_effort: None,
                 }),
                 RolloutItem::Message(MessageRecord {
                     role: "user".to_string(),
@@ -2467,6 +2495,7 @@ mod tests {
                     started_at: "2026-01-29T14:30:52Z".to_string(),
                     cwd: "/tmp".to_string(),
                     model: "gemini-2.0-flash".to_string(),
+                reasoning_effort: None,
                 }),
                 RolloutItem::Message(MessageRecord {
                     role: "user".to_string(),
@@ -2535,6 +2564,7 @@ mod tests {
                     started_at: "2026-01-29T14:30:52Z".to_string(),
                     cwd: "/tmp".to_string(),
                     model: "gemini-2.0-flash".to_string(),
+                    reasoning_effort: None,
                 }),
                 RolloutItem::Message(MessageRecord {
                     role: "user".to_string(),
@@ -2607,6 +2637,7 @@ mod tests {
                     started_at: "2026-01-29T14:30:52Z".to_string(),
                     cwd: "/tmp".to_string(),
                     model: "gemini-2.0-flash".to_string(),
+                    reasoning_effort: None,
                 }),
                 RolloutItem::Compacted(CompactedItem {
                     message: "Older turns compacted".to_string(),
@@ -2687,6 +2718,7 @@ mod tests {
                     started_at: "2026-01-29T14:30:52Z".to_string(),
                     cwd: "/tmp".to_string(),
                     model: "gemini-2.0-flash".to_string(),
+                    reasoning_effort: None,
                 }),
                 RolloutItem::Event(EventRecord {
                     event_type: "custom_event".to_string(),
@@ -2751,6 +2783,7 @@ mod tests {
                     started_at: "2026-01-29T14:30:52Z".to_string(),
                     cwd: "/tmp".to_string(),
                     model: "gemini-2.0-flash".to_string(),
+                    reasoning_effort: None,
                 }),
                 RolloutItem::Event(EventRecord {
                     event_type: "compaction_attempt".to_string(),
@@ -2851,6 +2884,7 @@ mod tests {
                     started_at: "2026-03-03T09:59:52Z".to_string(),
                     cwd: "/tmp".to_string(),
                     model: "gemini-2.0-flash".to_string(),
+                    reasoning_effort: None,
                 }),
                 RolloutItem::MemoryFlushAttempt(attempt.clone()),
             ];
@@ -2900,6 +2934,7 @@ mod tests {
                 started_at: "2026-01-29T14:30:52Z".to_string(),
                 cwd: "/tmp".to_string(),
                 model: "gemini-2.0-flash".to_string(),
+                reasoning_effort: None,
             }),
             RolloutItem::Event(EventRecord {
                 event_type: "compaction_attempt".to_string(),
@@ -2967,6 +3002,7 @@ mod tests {
                     started_at: "2026-01-29T14:30:52Z".to_string(),
                     cwd: "/tmp".to_string(),
                     model: "gemini-2.0-flash".to_string(),
+                    reasoning_effort: None,
                 }),
                 RolloutItem::CompactionAttempt(attempt.clone()),
                 RolloutItem::Compacted(CompactedItem {
@@ -3373,6 +3409,7 @@ mod tests {
                     started_at: "2026-01-29T14:30:52Z".to_string(),
                     cwd: "/tmp".to_string(),
                     model: "gemini-2.0-flash".to_string(),
+                    reasoning_effort: None,
                 }),
                 RolloutItem::CompactionAttempt(completed_attempt.clone()),
                 RolloutItem::Compacted(CompactedItem {
@@ -3511,6 +3548,7 @@ mod tests {
                     started_at: "2026-01-29T14:30:52Z".to_string(),
                     cwd: "/tmp".to_string(),
                     model: "gemini-2.0-flash".to_string(),
+                    reasoning_effort: None,
                 }),
                 RolloutItem::CompactionAttempt(completed_attempt.clone()),
                 RolloutItem::Compacted(CompactedItem {

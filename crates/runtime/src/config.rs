@@ -4,6 +4,7 @@ use crate::connections::{ConnectionsFile, ResolvedConnectionProfile, SecretStore
 use crate::models::{self, ModelCatalogProvider, ModelInfo};
 use crate::paths::AlanHomePaths;
 use crate::skills::{SkillOverride, merge_skill_overrides};
+use alan_protocol::ReasoningEffort;
 use anyhow::Context;
 use serde::{Deserialize, Serialize, de};
 use std::path::PathBuf;
@@ -355,6 +356,10 @@ pub struct Config {
     #[serde(default)]
     pub thinking_budget_tokens: Option<u32>,
 
+    /// Named cross-provider model reasoning effort. None = use model/provider default.
+    #[serde(default)]
+    pub model_reasoning_effort: Option<ReasoningEffort>,
+
     /// Streaming strategy (`auto`/`on`/`off`).
     #[serde(default = "default_streaming_mode")]
     pub streaming_mode: StreamingMode,
@@ -519,6 +524,7 @@ impl Default for Config {
             prompt_snapshot_enabled: false,
             prompt_snapshot_max_chars: default_prompt_snapshot_max_chars(),
             thinking_budget_tokens: None,
+            model_reasoning_effort: None,
             streaming_mode: default_streaming_mode(),
             partial_stream_recovery_mode: default_partial_stream_recovery_mode(),
 
@@ -640,6 +646,7 @@ impl Config {
             .with_context(|| format!("failed to parse configuration file {}", path.display()))?;
         config.skill_overrides = config.resolved_skill_overrides();
         config.validate_compaction_thresholds(path.display().to_string())?;
+        config.validate_reasoning_controls(path.display().to_string())?;
         Ok(config)
     }
 
@@ -762,6 +769,7 @@ impl Config {
         )?;
         config.model_catalog = model_catalog;
         config.validate_compaction_thresholds("merged agent-root configuration".to_string())?;
+        config.validate_reasoning_controls("merged agent-root configuration".to_string())?;
         Ok(config)
     }
 
@@ -1049,6 +1057,49 @@ impl Config {
             .unwrap_or_else(|| inferred_context_window_tokens(self.llm_provider))
     }
 
+    pub fn effective_model_reasoning_effort(&self) -> Option<ReasoningEffort> {
+        if self.model_reasoning_effort.is_some() {
+            return self.model_reasoning_effort;
+        }
+
+        if self.thinking_budget_tokens.is_some() {
+            return None;
+        }
+
+        self.effective_model_info()
+            .and_then(|model_info| model_info.default_reasoning_effort)
+    }
+
+    pub fn validate_reasoning_effort_for_resolved_model(
+        &self,
+        effort: ReasoningEffort,
+    ) -> anyhow::Result<()> {
+        let Some(model_info) = self.effective_model_info() else {
+            return Ok(());
+        };
+
+        if model_info.supported_reasoning_efforts.contains(&effort) {
+            return Ok(());
+        }
+
+        let supported = if model_info.supported_reasoning_efforts.is_empty() {
+            "none declared".to_string()
+        } else {
+            model_info
+                .supported_reasoning_efforts
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        anyhow::bail!(
+            "model `{}` does not support reasoning effort `{}`; supported efforts: {}",
+            model_info.slug,
+            effort,
+            supported
+        );
+    }
+
     pub fn effective_compaction_hard_trigger_ratio(&self) -> f32 {
         self.compaction_hard_trigger_ratio
             .or(self.compaction_trigger_ratio)
@@ -1229,6 +1280,16 @@ impl Config {
                 source,
                 soft,
                 hard
+            );
+        }
+        Ok(())
+    }
+
+    fn validate_reasoning_controls(&self, source: String) -> anyhow::Result<()> {
+        if self.model_reasoning_effort.is_some() && self.thinking_budget_tokens.is_some() {
+            anyhow::bail!(
+                "configuration file {} sets both `model_reasoning_effort` and `thinking_budget_tokens`; remove one because named effort and token budget controls are ambiguous together",
+                source
             );
         }
         Ok(())
@@ -1755,6 +1816,59 @@ partial_stream_recovery_mode = "off"
             config.partial_stream_recovery_mode,
             PartialStreamRecoveryMode::Off
         );
+    }
+
+    #[test]
+    fn test_config_from_file_accepts_model_reasoning_effort() {
+        let temp = TempDir::new().unwrap();
+        let config_path = temp.path().join("test_config.toml");
+        std::fs::write(
+            &config_path,
+            r#"
+model_reasoning_effort = "high"
+"#,
+        )
+        .unwrap();
+
+        let config = Config::from_file(&config_path).unwrap();
+        assert_eq!(config.model_reasoning_effort, Some(ReasoningEffort::High));
+    }
+
+    #[test]
+    fn test_config_from_file_rejects_reasoning_effort_and_budget_conflict() {
+        let temp = TempDir::new().unwrap();
+        let config_path = temp.path().join("test_config.toml");
+        std::fs::write(
+            &config_path,
+            r#"
+model_reasoning_effort = "medium"
+thinking_budget_tokens = 2048
+"#,
+        )
+        .unwrap();
+
+        let err = Config::from_file(&config_path).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("sets both `model_reasoning_effort`")
+        );
+    }
+
+    #[test]
+    fn test_effective_model_reasoning_effort_uses_model_default_without_budget() {
+        let config = Config::for_openai_responses("sk-test", None, Some("gpt-5.4"));
+        assert_eq!(
+            config.effective_model_reasoning_effort(),
+            Some(ReasoningEffort::Medium)
+        );
+    }
+
+    #[test]
+    fn test_effective_model_reasoning_effort_preserves_legacy_budget_behavior() {
+        let mut config = Config::for_openai_responses("sk-test", None, Some("gpt-5.4"));
+        config.thinking_budget_tokens = Some(2048);
+
+        assert_eq!(config.effective_model_reasoning_effort(), None);
     }
 
     #[test]
@@ -2390,6 +2504,21 @@ supports_reasoning = true
         assert_eq!(overlaid.thinking_budget_tokens, Some(1024));
         assert_eq!(overlaid.effective_model_info().unwrap().slug, "custom-kimi");
         assert_eq!(overlaid.effective_context_window_tokens(), 654_321);
+    }
+
+    #[test]
+    fn test_with_agent_root_overlays_merges_model_reasoning_effort() {
+        let temp = TempDir::new().unwrap();
+        let overlay_path = temp.path().join("agent.toml");
+        std::fs::write(&overlay_path, "model_reasoning_effort = \"high\"\n").unwrap();
+
+        let config = Config::for_openai_responses("sk-test", None, Some("gpt-5.4"));
+        let overlaid = config.with_agent_root_overlays(&[overlay_path]).unwrap();
+
+        assert_eq!(
+            overlaid.effective_model_reasoning_effort(),
+            Some(ReasoningEffort::High)
+        );
     }
 
     #[test]

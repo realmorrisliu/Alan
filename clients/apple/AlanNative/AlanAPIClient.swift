@@ -26,6 +26,17 @@ enum PartialStreamRecoveryMode: String, Codable, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
+enum ReasoningEffort: String, Codable, CaseIterable, Identifiable {
+    case none
+    case minimal
+    case low
+    case medium
+    case high
+    case xhigh
+
+    var id: String { rawValue }
+}
+
 struct GovernanceConfig: Codable {
     let profile: GovernanceProfile
     let policyPath: String?
@@ -44,6 +55,7 @@ struct CreateSessionResponse: Decodable {
     let governance: GovernanceConfig?
     let streamingMode: SessionStreamingMode?
     let partialStreamRecoveryMode: PartialStreamRecoveryMode?
+    let reasoningEffort: ReasoningEffort?
 
     private enum CodingKeys: String, CodingKey {
         case sessionID = "session_id"
@@ -53,6 +65,7 @@ struct CreateSessionResponse: Decodable {
         case governance
         case streamingMode = "streaming_mode"
         case partialStreamRecoveryMode = "partial_stream_recovery_mode"
+        case reasoningEffort = "reasoning_effort"
         case id
         case session
     }
@@ -91,6 +104,7 @@ struct CreateSessionResponse: Decodable {
             PartialStreamRecoveryMode.self,
             forKey: .partialStreamRecoveryMode
         )
+        reasoningEffort = try container.decodeIfPresent(ReasoningEffort.self, forKey: .reasoningEffort)
     }
 }
 
@@ -105,6 +119,7 @@ struct SessionListItem: Decodable, Identifiable {
     let governance: GovernanceConfig
     let streamingMode: SessionStreamingMode
     let partialStreamRecoveryMode: PartialStreamRecoveryMode
+    let reasoningEffort: ReasoningEffort?
 
     var id: String { sessionID }
 
@@ -115,6 +130,7 @@ struct SessionListItem: Decodable, Identifiable {
         case governance
         case streamingMode = "streaming_mode"
         case partialStreamRecoveryMode = "partial_stream_recovery_mode"
+        case reasoningEffort = "reasoning_effort"
     }
 }
 
@@ -139,6 +155,7 @@ struct SessionReadResponse: Decodable {
     let governance: GovernanceConfig
     let streamingMode: SessionStreamingMode
     let partialStreamRecoveryMode: PartialStreamRecoveryMode
+    let reasoningEffort: ReasoningEffort?
     let rolloutPath: String?
     let messages: [SessionHistoryMessage]
 
@@ -149,6 +166,7 @@ struct SessionReadResponse: Decodable {
         case governance
         case streamingMode = "streaming_mode"
         case partialStreamRecoveryMode = "partial_stream_recovery_mode"
+        case reasoningEffort = "reasoning_effort"
         case rolloutPath = "rollout_path"
         case messages
     }
@@ -170,6 +188,7 @@ struct ForkSessionResponse: Decodable {
     let websocketURL: String?
     let eventsURL: String?
     let submitURL: String?
+    let reasoningEffort: ReasoningEffort?
 
     private enum CodingKeys: String, CodingKey {
         case sessionID = "session_id"
@@ -177,6 +196,7 @@ struct ForkSessionResponse: Decodable {
         case websocketURL = "websocket_url"
         case eventsURL = "events_url"
         case submitURL = "submit_url"
+        case reasoningEffort = "reasoning_effort"
     }
 }
 
@@ -514,6 +534,7 @@ private struct SubmitBody: Encodable {
 
 private struct CreateSessionBody {
     let governanceProfile: GovernanceProfile
+    let reasoningEffort: ReasoningEffort?
     let streamingMode: SessionStreamingMode?
     let partialStreamRecoveryMode: PartialStreamRecoveryMode?
 
@@ -525,6 +546,9 @@ private struct CreateSessionBody {
         ]
         if let streamingMode {
             body["streaming_mode"] = streamingMode.rawValue
+        }
+        if let reasoningEffort {
+            body["reasoning_effort"] = reasoningEffort.rawValue
         }
         if let partialStreamRecoveryMode {
             body["partial_stream_recovery_mode"] = partialStreamRecoveryMode.rawValue
@@ -569,12 +593,14 @@ struct AlanAPIClient {
 
     func createSession(
         governanceProfile: GovernanceProfile,
+        reasoningEffort: ReasoningEffort? = nil,
         streamingMode: SessionStreamingMode? = nil,
         partialStreamRecoveryMode: PartialStreamRecoveryMode? = nil
     ) async throws -> CreateSessionResponse {
         let requestURL = endpointURL(pathComponents: ["api", "v1", "sessions"])
         let body = CreateSessionBody(
             governanceProfile: governanceProfile,
+            reasoningEffort: reasoningEffort,
             streamingMode: streamingMode,
             partialStreamRecoveryMode: partialStreamRecoveryMode
         )

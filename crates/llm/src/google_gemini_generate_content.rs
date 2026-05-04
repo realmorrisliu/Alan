@@ -9,6 +9,8 @@ use serde::{Deserialize, Serialize};
 use std::process::Command;
 use tracing::{debug, error, instrument, warn};
 
+use crate::ReasoningEffort;
+
 /// Client for the Google Gemini GenerateContent API.
 pub struct GoogleGeminiGenerateContentClient {
     /// HTTP client
@@ -123,6 +125,19 @@ pub struct GenerationConfig {
     /// Top-K sampling
     #[serde(skip_serializing_if = "Option::is_none")]
     pub top_k: Option<i32>,
+    /// Gemini thinking configuration.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thinking_config: Option<ThinkingConfig>,
+}
+
+/// Gemini thinking controls.
+#[derive(Debug, Clone, Serialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct ThinkingConfig {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thinking_level: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thinking_budget: Option<i32>,
 }
 
 // ============================================================================
@@ -602,9 +617,91 @@ fn normalize_stream_finish_reason(finish_reason: String) -> String {
     }
 }
 
+fn build_gemini_thinking_config(
+    model: &str,
+    reasoning_effort: Option<ReasoningEffort>,
+    thinking_budget_tokens: Option<u32>,
+) -> Result<Option<ThinkingConfig>> {
+    let model = model.to_ascii_lowercase();
+    if model.contains("gemini-3") {
+        let Some(effort) = reasoning_effort else {
+            return Ok(None);
+        };
+        let thinking_level = match effort {
+            ReasoningEffort::None => {
+                anyhow::bail!("Gemini 3 does not support disabling thinking with effort `none`")
+            }
+            ReasoningEffort::Minimal if model.contains("flash") => "minimal",
+            ReasoningEffort::Minimal => {
+                anyhow::bail!("Gemini 3 Pro supports reasoning efforts `low` and `high`")
+            }
+            ReasoningEffort::Low => "low",
+            ReasoningEffort::Medium if model.contains("flash") => "medium",
+            ReasoningEffort::Medium => {
+                anyhow::bail!("Gemini 3 Pro supports reasoning efforts `low` and `high`")
+            }
+            ReasoningEffort::High => "high",
+            ReasoningEffort::XHigh => {
+                anyhow::bail!("Gemini 3 does not support reasoning effort `xhigh`")
+            }
+        };
+        return Ok(Some(ThinkingConfig {
+            thinking_level: Some(thinking_level.to_string()),
+            thinking_budget: None,
+        }));
+    }
+
+    if model.contains("gemini-2.5") {
+        let budget = match reasoning_effort {
+            Some(ReasoningEffort::None) if model.contains("pro") => {
+                anyhow::bail!("Gemini 2.5 Pro does not support disabling thinking")
+            }
+            Some(ReasoningEffort::None) => Some(0),
+            Some(effort) => Some(gemini_budget_for_effort(effort)),
+            None => thinking_budget_tokens
+                .map(|tokens| {
+                    i32::try_from(tokens).context("Gemini thinkingBudget exceeds supported range")
+                })
+                .transpose()?,
+        };
+        return Ok(budget.map(|thinking_budget| ThinkingConfig {
+            thinking_level: None,
+            thinking_budget: Some(thinking_budget),
+        }));
+    }
+
+    if reasoning_effort.is_some() {
+        anyhow::bail!(
+            "Gemini model `{}` does not declare reasoning effort support",
+            model
+        );
+    }
+
+    Ok(None)
+}
+
+fn gemini_budget_for_effort(effort: ReasoningEffort) -> i32 {
+    match effort {
+        ReasoningEffort::None => 0,
+        ReasoningEffort::Minimal => 512,
+        ReasoningEffort::Low => 1_024,
+        ReasoningEffort::Medium => 4_096,
+        ReasoningEffort::High => 8_192,
+        ReasoningEffort::XHigh => 16_384,
+    }
+}
+
 #[async_trait::async_trait]
 impl LlmProvider for GoogleGeminiGenerateContentClient {
     async fn generate(&mut self, request: GenerationRequest) -> anyhow::Result<GenerationResponse> {
+        let thinking_config = build_gemini_thinking_config(
+            &self.model,
+            request.reasoning.effort,
+            request
+                .reasoning
+                .budget_tokens
+                .or(request.thinking_budget_tokens),
+        )?;
         // Convert messages to Gemini format
         let contents: Vec<Content> = request
             .messages
@@ -661,6 +758,7 @@ impl LlmProvider for GoogleGeminiGenerateContentClient {
                 max_output_tokens: request.max_tokens,
                 top_p: None,
                 top_k: None,
+                thinking_config,
             }),
         };
 
@@ -764,6 +862,14 @@ impl LlmProvider for GoogleGeminiGenerateContentClient {
         &mut self,
         request: GenerationRequest,
     ) -> anyhow::Result<tokio::sync::mpsc::Receiver<UnifiedStreamChunk>> {
+        let thinking_config = build_gemini_thinking_config(
+            &self.model,
+            request.reasoning.effort,
+            request
+                .reasoning
+                .budget_tokens
+                .or(request.thinking_budget_tokens),
+        )?;
         // Convert messages to Gemini format
         let contents: Vec<Content> = request
             .messages
@@ -819,6 +925,7 @@ impl LlmProvider for GoogleGeminiGenerateContentClient {
                 max_output_tokens: request.max_tokens,
                 top_p: None,
                 top_k: None,
+                thinking_config,
             }),
         };
 
@@ -1079,6 +1186,41 @@ mod tests {
         assert!(config.max_output_tokens.is_none());
         assert!(config.top_p.is_none());
         assert!(config.top_k.is_none());
+        assert!(config.thinking_config.is_none());
+    }
+
+    #[test]
+    fn test_build_gemini_thinking_config_maps_gemini_3_effort_to_level() {
+        let config = build_gemini_thinking_config(
+            "gemini-3-flash-preview",
+            Some(ReasoningEffort::Medium),
+            None,
+        )
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(config.thinking_level.as_deref(), Some("medium"));
+        assert_eq!(config.thinking_budget, None);
+    }
+
+    #[test]
+    fn test_build_gemini_thinking_config_maps_gemini_25_effort_to_budget() {
+        let config =
+            build_gemini_thinking_config("gemini-2.5-flash", Some(ReasoningEffort::High), None)
+                .unwrap()
+                .unwrap();
+
+        assert_eq!(config.thinking_level, None);
+        assert_eq!(config.thinking_budget, Some(8192));
+    }
+
+    #[test]
+    fn test_build_gemini_thinking_config_preserves_gemini_25_explicit_budget() {
+        let config = build_gemini_thinking_config("gemini-2.5-flash", None, Some(1234))
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(config.thinking_budget, Some(1234));
     }
 
     #[test]
@@ -1187,12 +1329,18 @@ mod tests {
                 max_output_tokens: Some(100),
                 top_p: None,
                 top_k: None,
+                thinking_config: Some(ThinkingConfig {
+                    thinking_level: Some("low".to_string()),
+                    thinking_budget: None,
+                }),
             }),
         };
 
         let json = serde_json::to_string(&request).unwrap();
         assert!(json.contains("contents"));
         assert!(json.contains("generationConfig"));
+        assert!(json.contains("thinkingConfig"));
+        assert!(json.contains("thinkingLevel"));
         assert!(json.contains("0.7"));
     }
 
