@@ -331,9 +331,7 @@ impl GenerationRequest {
     /// Set canonical reasoning controls.
     pub fn with_reasoning_controls(mut self, controls: ReasoningControls) -> Self {
         self.reasoning = controls;
-        if let Some(tokens) = controls.budget_tokens {
-            self.thinking_budget_tokens = Some(tokens);
-        }
+        self.thinking_budget_tokens = controls.budget_tokens;
         self
     }
 
@@ -1368,6 +1366,24 @@ mod tests {
             request.extra_params.get("context_management"),
             Some(&serde_json::json!({ "compact_threshold": 8192 }))
         );
+    }
+
+    #[test]
+    fn test_generation_request_reasoning_controls_sync_legacy_budget() {
+        let cleared = GenerationRequest::new()
+            .with_thinking_budget_tokens(2048)
+            .with_reasoning_controls(ReasoningControls::default());
+
+        assert_eq!(cleared.reasoning, ReasoningControls::default());
+        assert_eq!(cleared.thinking_budget_tokens, None);
+
+        let budgeted = GenerationRequest::new().with_reasoning_controls(ReasoningControls {
+            effort: None,
+            budget_tokens: Some(512),
+        });
+
+        assert_eq!(budgeted.reasoning.budget_tokens, Some(512));
+        assert_eq!(budgeted.thinking_budget_tokens, Some(512));
     }
 
     #[test]
