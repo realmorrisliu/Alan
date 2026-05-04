@@ -846,10 +846,37 @@ where
     state
         .turn_state
         .set_active_skills(prompt_build.active_skills.clone());
+    let active_skill_ids = prompt_build
+        .active_skills
+        .iter()
+        .map(|skill| skill.metadata.id.clone())
+        .collect::<Vec<_>>();
     let _domain_prompt = prompt_build.domain_prompt;
     let system_prompt = prompt_build.system_prompt;
 
     let tools = turn_tool_definitions(state);
+    let tool_names = tools
+        .iter()
+        .map(|tool| tool.name.clone())
+        .collect::<Vec<_>>();
+    let reasoning_effort = state
+        .turn_state
+        .active_turn_reasoning_effort()
+        .or(state.runtime_config.model_reasoning_effort);
+    let model = state.core_config.effective_model().to_string();
+    let memory_enabled = state.core_config.memory.enabled;
+    let context_items = state.session.tape.context_items().to_vec();
+    let context_delta = state.session.tape.last_context_delta().clone();
+    state.session.record_turn_context_if_changed(
+        &model,
+        reasoning_effort,
+        &system_prompt,
+        &context_items,
+        &tool_names,
+        memory_enabled,
+        &active_skill_ids,
+        &context_delta,
+    );
 
     let max_tool_loops = if state.runtime_config.max_tool_loops == 0 {
         None
@@ -978,10 +1005,6 @@ where
                 .with_previous_response_id(previous_response_id)
                 .with_store(true);
         }
-        let reasoning_effort = state
-            .turn_state
-            .active_turn_reasoning_effort()
-            .or(state.runtime_config.model_reasoning_effort);
         if let Some(effort) = reasoning_effort {
             if !provider_capabilities.supports_reasoning_effort_control {
                 anyhow::bail!(
@@ -1760,6 +1783,7 @@ mod tests {
     use crate::{
         config::Config,
         llm::LlmClient,
+        rollout::{RolloutItem, RolloutRecorder},
         runtime::{RuntimeConfig, TurnState},
         session::Session,
         skills::{ResolvedCapabilityView, ScopedPackageDir, SkillScope},
@@ -3097,6 +3121,10 @@ description: {description}
             provider_name: "openai_responses",
         };
         let mut state = create_test_state_with_provider(provider);
+        let temp_dir = TempDir::new().unwrap();
+        state.session = Session::new_with_recorder_in_dir("gpt-5.4", temp_dir.path())
+            .await
+            .unwrap();
         state.runtime_config.streaming_mode = crate::config::StreamingMode::Off;
         state.runtime_config.model_reasoning_effort = Some(alan_protocol::ReasoningEffort::High);
         state
@@ -3116,13 +3144,27 @@ description: {description}
         .await
         .unwrap();
 
-        let requests = requests.lock().unwrap();
-        let request = requests.last().expect("captured request");
-        assert_eq!(
-            request.reasoning.effort,
-            Some(alan_protocol::ReasoningEffort::Low)
-        );
-        assert_eq!(request.reasoning.budget_tokens, None);
+        {
+            let requests = requests.lock().unwrap();
+            let request = requests.last().expect("captured request");
+            assert_eq!(
+                request.reasoning.effort,
+                Some(alan_protocol::ReasoningEffort::Low)
+            );
+            assert_eq!(request.reasoning.budget_tokens, None);
+        }
+
+        state.session.flush().await;
+        let rollout_path = state.session.rollout_path().expect("rollout path");
+        let persisted_effort = RolloutRecorder::load_history(rollout_path)
+            .await
+            .unwrap()
+            .into_iter()
+            .find_map(|item| match item {
+                RolloutItem::TurnContext(ctx) => ctx.reasoning_effort,
+                _ => None,
+            });
+        assert_eq!(persisted_effort, Some(alan_protocol::ReasoningEffort::Low));
     }
 
     #[tokio::test]

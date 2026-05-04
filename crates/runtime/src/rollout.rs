@@ -691,6 +691,7 @@ impl RolloutRecorder {
     pub async fn record_turn_context(
         &self,
         model: &str,
+        reasoning_effort: Option<alan_protocol::ReasoningEffort>,
         system_prompt: &str,
         context_items: Vec<ContextItemRecord>,
         tools: Vec<String>,
@@ -700,7 +701,7 @@ impl RolloutRecorder {
     ) -> Result<()> {
         let item = RolloutItem::TurnContext(TurnContextItem {
             model: model.to_string(),
-            reasoning_effort: None,
+            reasoning_effort,
             system_prompt: system_prompt.to_string(),
             context_items,
             tools,
@@ -719,6 +720,7 @@ impl RolloutRecorder {
     pub fn record_turn_context_nowait(
         &self,
         model: &str,
+        reasoning_effort: Option<alan_protocol::ReasoningEffort>,
         system_prompt: &str,
         context_items: Vec<ContextItemRecord>,
         tools: Vec<String>,
@@ -728,7 +730,7 @@ impl RolloutRecorder {
     ) -> Result<()> {
         let item = RolloutItem::TurnContext(TurnContextItem {
             model: model.to_string(),
-            reasoning_effort: None,
+            reasoning_effort,
             system_prompt: system_prompt.to_string(),
             context_items,
             tools,
@@ -1562,6 +1564,38 @@ this is not valid json
             deserialized.reference_context.as_ref().map(|r| r.revision),
             Some(3)
         );
+    }
+
+    #[tokio::test]
+    async fn test_record_turn_context_persists_reasoning_effort() {
+        let temp_dir = TempDir::new().unwrap();
+        let recorder =
+            RolloutRecorder::new_in_dir("session-123", "gemini-2.0-flash", temp_dir.path())
+                .await
+                .unwrap();
+
+        recorder
+            .record_turn_context(
+                "gemini-2.0-flash",
+                Some(alan_protocol::ReasoningEffort::High),
+                "System",
+                vec![],
+                vec!["web_search".to_string()],
+                true,
+                vec![],
+                None,
+            )
+            .await
+            .unwrap();
+
+        let items = RolloutRecorder::load_history(recorder.path())
+            .await
+            .unwrap();
+        let persisted_effort = items.into_iter().find_map(|item| match item {
+            RolloutItem::TurnContext(ctx) => ctx.reasoning_effort,
+            _ => None,
+        });
+        assert_eq!(persisted_effort, Some(alan_protocol::ReasoningEffort::High));
     }
 
     #[test]

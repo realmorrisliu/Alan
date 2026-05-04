@@ -638,7 +638,6 @@ mod tests {
             context: Some(alan_protocol::TurnContext {
                 workspace_id: Some("test-workspace".to_string()),
                 reasoning_effort: Some(alan_protocol::ReasoningEffort::High),
-                ..alan_protocol::TurnContext::default()
             }),
         };
 

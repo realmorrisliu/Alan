@@ -610,7 +610,7 @@ impl Session {
 
     /// Load a session from a rollout file
     pub async fn load_from_rollout(path: &PathBuf, model: &str) -> anyhow::Result<Self> {
-        Self::load_from_rollout_impl(path, None, model, None, None).await
+        Self::load_from_rollout_impl(path, None, model, None, None, None).await
     }
 
     /// Load a session from a rollout file while overriding the session ID for new persistence.
@@ -619,7 +619,7 @@ impl Session {
         session_id: &str,
         model: &str,
     ) -> anyhow::Result<Self> {
-        Self::load_from_rollout_impl(path, Some(session_id), model, None, None).await
+        Self::load_from_rollout_impl(path, Some(session_id), model, None, None, None).await
     }
 
     /// Load a session from a rollout file, writing future persistence to a specific sessions dir.
@@ -628,7 +628,7 @@ impl Session {
         model: &str,
         sessions_dir: &Path,
     ) -> anyhow::Result<Self> {
-        Self::load_from_rollout_impl(path, None, model, Some(sessions_dir), None).await
+        Self::load_from_rollout_impl(path, None, model, Some(sessions_dir), None, None).await
     }
 
     /// Load a session from a rollout file with an explicit session ID and sessions dir.
@@ -638,7 +638,15 @@ impl Session {
         model: &str,
         sessions_dir: &Path,
     ) -> anyhow::Result<Self> {
-        Self::load_from_rollout_impl(path, Some(session_id), model, Some(sessions_dir), None).await
+        Self::load_from_rollout_impl(
+            path,
+            Some(session_id),
+            model,
+            Some(sessions_dir),
+            None,
+            None,
+        )
+        .await
     }
 
     pub(crate) async fn load_from_rollout_with_recorder_cwd(
@@ -647,9 +655,17 @@ impl Session {
         model: &str,
         sessions_dir: Option<&Path>,
         rollout_cwd: Option<&Path>,
+        reasoning_effort: Option<alan_protocol::ReasoningEffort>,
     ) -> anyhow::Result<Self> {
-        Self::load_from_rollout_impl(path, session_id_override, model, sessions_dir, rollout_cwd)
-            .await
+        Self::load_from_rollout_impl(
+            path,
+            session_id_override,
+            model,
+            sessions_dir,
+            rollout_cwd,
+            reasoning_effort,
+        )
+        .await
     }
 
     async fn load_from_rollout_impl(
@@ -658,6 +674,7 @@ impl Session {
         model: &str,
         sessions_dir: Option<&Path>,
         rollout_cwd: Option<&Path>,
+        reasoning_effort: Option<alan_protocol::ReasoningEffort>,
     ) -> anyhow::Result<Self> {
         let items = RolloutRecorder::load_history(path).await?;
 
@@ -682,7 +699,7 @@ impl Session {
             model,
             sessions_dir,
             rollout_cwd,
-            None,
+            reasoning_effort,
         )
         .await?;
 
@@ -1462,9 +1479,11 @@ impl Session {
     }
 
     /// Record turn context snapshot to persistence (enqueue only; background writer performs IO)
+    #[allow(clippy::too_many_arguments)]
     pub fn record_turn_context(
         &self,
         model: &str,
+        reasoning_effort: Option<alan_protocol::ReasoningEffort>,
         system_prompt: &str,
         context_items: &[ContextItem],
         tools: &[String],
@@ -1489,6 +1508,7 @@ impl Session {
         let active_skills = active_skills.to_vec();
         if let Err(err) = recorder.record_turn_context_nowait(
             model,
+            reasoning_effort,
             system_prompt,
             items,
             tools,
@@ -1506,6 +1526,7 @@ impl Session {
     pub fn record_turn_context_if_changed(
         &mut self,
         model: &str,
+        reasoning_effort: Option<alan_protocol::ReasoningEffort>,
         system_prompt: &str,
         context_items: &[ContextItem],
         tools: &[String],
@@ -1515,6 +1536,7 @@ impl Session {
     ) -> bool {
         let fingerprint = fingerprint_turn_context_observation(
             model,
+            reasoning_effort,
             system_prompt,
             context_items,
             tools,
@@ -1555,6 +1577,7 @@ impl Session {
         });
         if let Err(err) = recorder.record_turn_context_nowait(
             model,
+            reasoning_effort,
             system_prompt,
             items,
             tools,
@@ -1677,6 +1700,7 @@ fn truncate_text(text: &str, max_len: usize) -> String {
 
 fn fingerprint_turn_context_observation(
     model: &str,
+    reasoning_effort: Option<alan_protocol::ReasoningEffort>,
     system_prompt: &str,
     context_items: &[ContextItem],
     tools: &[String],
@@ -1685,6 +1709,13 @@ fn fingerprint_turn_context_observation(
 ) -> String {
     let mut hasher = Sha256::new();
     hasher.update(model.as_bytes());
+    hasher.update(b"\n");
+    hasher.update(
+        reasoning_effort
+            .map(alan_protocol::ReasoningEffort::as_str)
+            .unwrap_or("unset")
+            .as_bytes(),
+    );
     hasher.update(b"\n");
     hasher.update(system_prompt.as_bytes());
     hasher.update(b"\n");
@@ -2070,6 +2101,7 @@ mod tests {
                 "gemini-2.0-flash",
                 Some(temp_dir.path()),
                 Some(resumed_cwd.as_path()),
+                Some(alan_protocol::ReasoningEffort::High),
             )
             .await
             .unwrap();
@@ -2089,6 +2121,10 @@ mod tests {
             assert_eq!(
                 persisted_meta.as_ref().map(|meta| meta.cwd.as_str()),
                 Some(resumed_cwd.to_string_lossy().as_ref())
+            );
+            assert_eq!(
+                persisted_meta.as_ref().and_then(|meta| meta.reasoning_effort),
+                Some(alan_protocol::ReasoningEffort::High)
             );
         });
     }
@@ -3953,6 +3989,7 @@ mod tests {
         // Should not panic without recorder
         session.record_turn_context(
             "gemini-2.0-flash",
+            Some(alan_protocol::ReasoningEffort::Low),
             "System prompt",
             &context_items,
             &["tool1".to_string(), "tool2".to_string()],
@@ -3982,6 +4019,7 @@ mod tests {
             let unchanged = ContextItemsDelta::default();
             assert!(session.record_turn_context_if_changed(
                 "gemini-2.0-flash",
+                None,
                 "System prompt",
                 &context_items,
                 &["tool1".to_string()],
@@ -3992,6 +4030,7 @@ mod tests {
 
             assert!(!session.record_turn_context_if_changed(
                 "gemini-2.0-flash",
+                None,
                 "System prompt",
                 &context_items,
                 &["tool1".to_string()],
@@ -4003,6 +4042,7 @@ mod tests {
             // A tool list change should still record even when reference context is unchanged.
             assert!(session.record_turn_context_if_changed(
                 "gemini-2.0-flash",
+                None,
                 "System prompt",
                 &context_items,
                 &["tool1".to_string(), "tool2".to_string()],
@@ -4020,6 +4060,68 @@ mod tests {
                 .filter(|item| matches!(item, RolloutItem::TurnContext(_)))
                 .count();
             assert_eq!(turn_context_count, 2);
+        });
+    }
+
+    #[test]
+    fn test_record_turn_context_if_changed_records_reasoning_effort_changes() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let temp_dir = TempDir::new_in(std::env::temp_dir()).unwrap();
+            let mut session =
+                Session::new_with_recorder_in_dir("gemini-2.0-flash", temp_dir.path())
+                    .await
+                    .unwrap();
+
+            let context_items = vec![ContextItem {
+                id: "ctx-1".to_string(),
+                kind: "customer".to_string(),
+                title: "Customer Profile".to_string(),
+                content: "Test content".to_string(),
+                fingerprint: "abc123".to_string(),
+            }];
+            let unchanged = ContextItemsDelta::default();
+
+            assert!(session.record_turn_context_if_changed(
+                "gemini-2.0-flash",
+                Some(alan_protocol::ReasoningEffort::Low),
+                "System prompt",
+                &context_items,
+                &["tool1".to_string()],
+                true,
+                &["skill1".to_string()],
+                &unchanged,
+            ));
+            assert!(session.record_turn_context_if_changed(
+                "gemini-2.0-flash",
+                Some(alan_protocol::ReasoningEffort::High),
+                "System prompt",
+                &context_items,
+                &["tool1".to_string()],
+                true,
+                &["skill1".to_string()],
+                &unchanged,
+            ));
+
+            session.flush().await;
+
+            let rollout_path = session.rollout_path().unwrap().clone();
+            let efforts = RolloutRecorder::load_history(&rollout_path)
+                .await
+                .unwrap()
+                .into_iter()
+                .filter_map(|item| match item {
+                    RolloutItem::TurnContext(ctx) => Some(ctx.reasoning_effort),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(
+                efforts,
+                vec![
+                    Some(alan_protocol::ReasoningEffort::Low),
+                    Some(alan_protocol::ReasoningEffort::High)
+                ]
+            );
         });
     }
 

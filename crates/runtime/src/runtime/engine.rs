@@ -255,6 +255,7 @@ async fn initialize_session(
             model,
             session_dir.map(|dir| dir.as_path()),
             rollout_cwd,
+            reasoning_effort,
         )
         .await;
 
@@ -2765,7 +2766,7 @@ thinking_budget_tokens = 1024
             Some(desired_session_id.as_str()),
             true,
             Some(resumed_cwd.as_path()),
-            None,
+            Some(alan_protocol::ReasoningEffort::Medium),
         )
         .await
         .unwrap();
@@ -2791,6 +2792,12 @@ thinking_budget_tokens = 1024
         assert_eq!(
             persisted_meta.as_ref().map(|meta| meta.cwd.as_str()),
             Some(resumed_cwd.to_string_lossy().as_ref())
+        );
+        assert_eq!(
+            persisted_meta
+                .as_ref()
+                .and_then(|meta| meta.reasoning_effort),
+            Some(alan_protocol::ReasoningEffort::Medium)
         );
 
         drop(startup);
