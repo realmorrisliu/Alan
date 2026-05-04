@@ -1479,7 +1479,7 @@ pub(crate) fn build_responses_request_for_model(
         tools,
         temperature,
         max_tokens,
-        thinking_budget_tokens,
+        thinking_budget_tokens: _,
         reasoning,
         mut extra_params,
     } = request;
@@ -1493,7 +1493,7 @@ pub(crate) fn build_responses_request_for_model(
 
     let reasoning = build_openai_responses_reasoning(
         reasoning.effort,
-        reasoning.budget_tokens.or(thinking_budget_tokens),
+        reasoning.budget_tokens,
         &mut extra_params,
     );
     let include = normalize_responses_include(
@@ -1533,14 +1533,14 @@ pub(crate) fn build_responses_input_tokens_request_for_model(
         tools,
         temperature: _,
         max_tokens: _,
-        thinking_budget_tokens,
+        thinking_budget_tokens: _,
         reasoning,
         mut extra_params,
     } = request;
 
     let reasoning = build_openai_responses_reasoning(
         reasoning.effort,
-        reasoning.budget_tokens.or(thinking_budget_tokens),
+        reasoning.budget_tokens,
         &mut extra_params,
     );
     let (response_tools, tool_choice) = convert_tools_for_openai_responses(tools);
@@ -1662,7 +1662,7 @@ fn build_chat_completions_request_for_model(
         tools: request_tools,
         temperature,
         max_tokens,
-        thinking_budget_tokens,
+        thinking_budget_tokens: _,
         reasoning,
         mut extra_params,
     } = request;
@@ -1684,11 +1684,8 @@ fn build_chat_completions_request_for_model(
     );
 
     let (tools, tool_choice) = convert_tools_for_openai_chat_completions(request_tools);
-    let reasoning_effort = build_reasoning_effort(
-        reasoning.effort,
-        reasoning.budget_tokens.or(thinking_budget_tokens),
-        &mut extra_params,
-    );
+    let reasoning_effort =
+        build_reasoning_effort(reasoning.effort, reasoning.budget_tokens, &mut extra_params);
     let max_completion_tokens = build_max_completion_tokens(max_tokens, &mut extra_params);
 
     OpenAiChatCompletionsRequest {
@@ -2192,6 +2189,11 @@ pub(crate) fn build_reasoning_effort(
         return Some(effort.as_str().to_string());
     }
 
+    if let Some(tokens) = thinking_budget_tokens {
+        extra_params.remove("reasoning_effort");
+        return Some(map_thinking_budget_to_effort(tokens).to_string());
+    }
+
     if let Some(value) = extra_params.remove("reasoning_effort") {
         if let Some(effort) = value.as_str() {
             if is_valid_reasoning_effort(effort) {
@@ -2209,9 +2211,7 @@ pub(crate) fn build_reasoning_effort(
         }
     }
 
-    thinking_budget_tokens
-        .map(map_thinking_budget_to_effort)
-        .map(str::to_string)
+    None
 }
 
 pub(crate) fn build_max_completion_tokens(
@@ -2329,7 +2329,7 @@ impl OpenAiChatCompletionsClient {
             tools: request_tools,
             temperature,
             max_tokens,
-            thinking_budget_tokens,
+            thinking_budget_tokens: _,
             reasoning,
             mut extra_params,
         } = request;
@@ -2354,11 +2354,8 @@ impl OpenAiChatCompletionsClient {
         );
 
         let (tools, tool_choice) = convert_tools_for_openai_chat_completions(request_tools);
-        let reasoning_effort = build_reasoning_effort(
-            reasoning.effort,
-            reasoning.budget_tokens.or(thinking_budget_tokens),
-            &mut extra_params,
-        );
+        let reasoning_effort =
+            build_reasoning_effort(reasoning.effort, reasoning.budget_tokens, &mut extra_params);
         let max_completion_tokens = build_max_completion_tokens(max_tokens, &mut extra_params);
 
         let chat_request = OpenAiChatCompletionsRequest {
@@ -2388,7 +2385,7 @@ impl OpenAiChatCompletionsClient {
             tools: request_tools,
             temperature,
             max_tokens,
-            thinking_budget_tokens,
+            thinking_budget_tokens: _,
             reasoning,
             mut extra_params,
         } = request;
@@ -2413,11 +2410,8 @@ impl OpenAiChatCompletionsClient {
         );
 
         let (tools, tool_choice) = convert_tools_for_openai_chat_completions(request_tools);
-        let reasoning_effort = build_reasoning_effort(
-            reasoning.effort,
-            reasoning.budget_tokens.or(thinking_budget_tokens),
-            &mut extra_params,
-        );
+        let reasoning_effort =
+            build_reasoning_effort(reasoning.effort, reasoning.budget_tokens, &mut extra_params);
         let max_completion_tokens = build_max_completion_tokens(max_tokens, &mut extra_params);
 
         let chat_request = OpenAiChatCompletionsRequest {
@@ -3071,7 +3065,7 @@ mod tests {
             serde_json::Value::String("high".to_string()),
         )]);
 
-        let effort = build_reasoning_effort(None, Some(256), &mut extra_params);
+        let effort = build_reasoning_effort(None, None, &mut extra_params);
         assert_eq!(effort.as_deref(), Some("high"));
         assert!(!extra_params.contains_key("reasoning_effort"));
     }
@@ -3103,12 +3097,25 @@ mod tests {
     }
 
     #[test]
+    fn test_build_reasoning_effort_prefers_canonical_budget_over_extra_params() {
+        let mut extra_params = HashMap::from([(
+            "reasoning_effort".to_string(),
+            serde_json::Value::String("high".to_string()),
+        )]);
+
+        let effort = build_reasoning_effort(None, Some(512), &mut extra_params);
+
+        assert_eq!(effort.as_deref(), Some("low"));
+        assert!(!extra_params.contains_key("reasoning_effort"));
+    }
+
+    #[test]
     fn test_build_reasoning_effort_accepts_extended_values() {
         let mut extra_params = HashMap::from([(
             "reasoning_effort".to_string(),
             serde_json::Value::String("xhigh".to_string()),
         )]);
-        let effort = build_reasoning_effort(None, Some(256), &mut extra_params);
+        let effort = build_reasoning_effort(None, None, &mut extra_params);
         assert_eq!(effort.as_deref(), Some("xhigh"));
         assert!(!extra_params.contains_key("reasoning_effort"));
     }

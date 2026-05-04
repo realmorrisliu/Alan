@@ -178,6 +178,7 @@ pub struct RuntimeStartupMetadata {
     pub rollout_path: Option<PathBuf>,
     pub durability: SessionDurabilityState,
     pub execution_backend: String,
+    pub request_controls: crate::ResolvedRequestControls,
     pub warnings: Vec<String>,
 }
 
@@ -244,9 +245,10 @@ async fn initialize_session(
     desired_session_id: Option<&str>,
     durability_required: bool,
     rollout_cwd: Option<&std::path::Path>,
-    reasoning_effort: Option<alan_protocol::ReasoningEffort>,
+    request_controls: crate::ResolvedRequestControls,
 ) -> anyhow::Result<SessionStartupOutcome> {
     let mut warnings = Vec::new();
+    let reasoning_effort = request_controls.reasoning_effort();
 
     let session = if let Some(path) = resume_rollout_path {
         let load_result = Session::load_from_rollout_with_recorder_cwd(
@@ -331,6 +333,7 @@ async fn initialize_session(
                 required: durability_required,
             },
             execution_backend: current_execution_backend(),
+            request_controls,
             warnings,
         },
         session,
@@ -382,8 +385,7 @@ struct ExplicitRuntimeOverrides {
     compaction_trigger_ratio: bool,
     compaction_soft_trigger_ratio: bool,
     compaction_hard_trigger_ratio: bool,
-    thinking_budget_tokens: bool,
-    model_reasoning_effort: bool,
+    request_control_intent: bool,
     streaming_mode: bool,
     partial_stream_recovery_mode: bool,
     durability_required: bool,
@@ -416,7 +418,7 @@ impl AgentConfig {
     pub fn set_model_override(&mut self, model: impl Into<String>) {
         self.core_config.set_effective_model(model);
         sync_runtime_context_window_budget(&self.core_config, &mut self.runtime_config);
-        sync_runtime_model_reasoning_effort(&self.core_config, &mut self.runtime_config);
+        sync_runtime_request_control_intent(&self.core_config, &mut self.runtime_config);
         self.explicit_runtime_overrides.model = true;
     }
 
@@ -424,10 +426,9 @@ impl AgentConfig {
     pub fn set_thinking_budget_override(&mut self, thinking_budget_tokens: Option<u32>) {
         self.core_config.thinking_budget_tokens = thinking_budget_tokens;
         self.core_config.model_reasoning_effort = None;
-        self.runtime_config.thinking_budget_tokens = thinking_budget_tokens;
-        self.runtime_config.model_reasoning_effort = None;
-        self.explicit_runtime_overrides.thinking_budget_tokens = true;
-        self.explicit_runtime_overrides.model_reasoning_effort = true;
+        self.runtime_config.request_control_intent =
+            crate::RequestControlIntent::thinking_budget_tokens(thinking_budget_tokens);
+        self.explicit_runtime_overrides.request_control_intent = true;
     }
 
     /// Override named model reasoning effort for this launch across overlays.
@@ -437,10 +438,9 @@ impl AgentConfig {
     ) {
         self.core_config.model_reasoning_effort = model_reasoning_effort;
         self.core_config.thinking_budget_tokens = None;
-        self.runtime_config.model_reasoning_effort = model_reasoning_effort;
-        self.runtime_config.thinking_budget_tokens = None;
-        self.explicit_runtime_overrides.model_reasoning_effort = true;
-        self.explicit_runtime_overrides.thinking_budget_tokens = true;
+        self.runtime_config.request_control_intent =
+            crate::RequestControlIntent::reasoning_effort(model_reasoning_effort);
+        self.explicit_runtime_overrides.request_control_intent = true;
     }
 
     /// Override streaming mode for this runtime launch, preserving it across agent-root overlays.
@@ -469,7 +469,7 @@ impl AgentConfig {
 
     pub fn refresh_runtime_derived_fields(&mut self) {
         sync_runtime_context_window_budget(&self.core_config, &mut self.runtime_config);
-        sync_runtime_model_reasoning_effort(&self.core_config, &mut self.runtime_config);
+        sync_runtime_request_control_intent(&self.core_config, &mut self.runtime_config);
     }
 
     pub fn with_agent_root_overlays(
@@ -477,10 +477,8 @@ impl AgentConfig {
         overlay_paths: &[std::path::PathBuf],
     ) -> anyhow::Result<Self> {
         let mut merge_base_core_config = self.core_config.clone();
-        if self.explicit_runtime_overrides.model_reasoning_effort {
+        if self.explicit_runtime_overrides.request_control_intent {
             merge_base_core_config.model_reasoning_effort = None;
-        }
-        if self.explicit_runtime_overrides.thinking_budget_tokens {
             merge_base_core_config.thinking_budget_tokens = None;
         }
 
@@ -508,15 +506,13 @@ impl AgentConfig {
         if self.explicit_runtime_overrides.model {
             core_config.set_effective_model(self.core_config.effective_model().to_string());
             sync_runtime_context_window_budget(core_config, runtime_config);
-            sync_runtime_model_reasoning_effort(core_config, runtime_config);
+            sync_runtime_request_control_intent(core_config, runtime_config);
         }
-        if self.explicit_runtime_overrides.thinking_budget_tokens {
-            core_config.thinking_budget_tokens = self.runtime_config.thinking_budget_tokens;
-            runtime_config.thinking_budget_tokens = self.runtime_config.thinking_budget_tokens;
-        }
-        if self.explicit_runtime_overrides.model_reasoning_effort {
-            core_config.model_reasoning_effort = self.runtime_config.model_reasoning_effort;
-            runtime_config.model_reasoning_effort = self.runtime_config.model_reasoning_effort;
+        if self.explicit_runtime_overrides.request_control_intent {
+            self.runtime_config
+                .request_control_intent
+                .apply_to_config(core_config);
+            runtime_config.request_control_intent = self.runtime_config.request_control_intent;
         }
         if self.explicit_runtime_overrides.streaming_mode {
             core_config.streaming_mode = self.runtime_config.streaming_mode;
@@ -653,12 +649,11 @@ fn sync_runtime_context_window_budget(
     runtime_config.context_window_tokens = core_config.effective_context_window_tokens();
 }
 
-fn sync_runtime_model_reasoning_effort(
+fn sync_runtime_request_control_intent(
     core_config: &crate::config::Config,
     runtime_config: &mut RuntimeConfig,
 ) {
-    runtime_config.model_reasoning_effort = core_config.effective_model_reasoning_effort();
-    runtime_config.thinking_budget_tokens = core_config.thinking_budget_tokens;
+    runtime_config.request_control_intent = crate::RequestControlIntent::from_config(core_config);
 }
 
 fn merge_runtime_config_from_core_overlay(
@@ -688,8 +683,7 @@ fn merge_runtime_config_from_core_overlay(
     sync_if_unmodified!(compaction_trigger_ratio);
     sync_if_unmodified!(compaction_soft_trigger_ratio);
     sync_if_unmodified!(compaction_hard_trigger_ratio);
-    sync_if_unmodified!(thinking_budget_tokens);
-    sync_if_unmodified!(model_reasoning_effort);
+    sync_if_unmodified!(request_control_intent);
     sync_if_unmodified!(streaming_mode);
     sync_if_unmodified!(partial_stream_recovery_mode);
     sync_if_unmodified!(durability_required);
@@ -837,6 +831,7 @@ impl RuntimeController {
                     required: false,
                 },
                 execution_backend: current_execution_backend(),
+                request_controls: crate::ResolvedRequestControls::default(),
                 warnings: Vec::new(),
             });
         };
@@ -1010,9 +1005,11 @@ pub fn effective_core_config_for_runtime(
         core_config.memory.workspace_dir =
             Some(crate::workspace_memory_dir_from_alan_dir(alan_dir));
     }
-    if let Some(effort) = core_config.effective_model_reasoning_effort() {
-        core_config.validate_reasoning_effort_for_resolved_model(effort)?;
-    }
+    crate::resolve_session_request_controls(
+        &core_config,
+        crate::provider_capabilities_for_config(&core_config),
+        agent_config.runtime_config.request_control_intent,
+    )?;
 
     Ok(core_config)
 }
@@ -1124,7 +1121,17 @@ pub fn spawn_with_llm_client_and_tools(
     // Spawn the main runtime task
     let task_handle = tokio::spawn(async move {
         let model = core_config.effective_model().to_string();
-        let reasoning_effort = core_config.effective_model_reasoning_effort();
+        let session_request_controls = match crate::resolve_session_request_controls(
+            &core_config,
+            llm_client.capabilities(),
+            runtime_config.request_control_intent,
+        ) {
+            Ok(controls) => controls,
+            Err(err) => {
+                let _ = ready_tx.send(Err(format!("{:#}", err)));
+                return;
+            }
+        };
         let startup = match initialize_session(
             &model,
             resume_rollout_path.as_ref(),
@@ -1132,7 +1139,7 @@ pub fn spawn_with_llm_client_and_tools(
             desired_session_id.as_deref(),
             runtime_config.durability_required,
             rollout_cwd.as_deref(),
-            reasoning_effort,
+            session_request_controls,
         )
         .await
         {
@@ -1911,7 +1918,13 @@ prompt_snapshot_enabled = true
         assert_eq!(merged.core_config.thinking_budget_tokens, Some(1024));
         assert!(merged.core_config.prompt_snapshot_enabled);
         assert_eq!(merged.runtime_config.tool_repeat_limit, 9);
-        assert_eq!(merged.runtime_config.thinking_budget_tokens, Some(1024));
+        assert_eq!(
+            merged
+                .runtime_config
+                .request_control_intent
+                .thinking_budget_tokens,
+            Some(1024)
+        );
         assert!(merged.runtime_config.prompt_snapshot_enabled);
     }
 
@@ -1934,7 +1947,10 @@ model_reasoning_effort = "high"
             Some(alan_protocol::ReasoningEffort::High)
         );
         assert_eq!(
-            merged.runtime_config.model_reasoning_effort,
+            merged
+                .runtime_config
+                .request_control_intent
+                .reasoning_effort,
             Some(alan_protocol::ReasoningEffort::High)
         );
     }
@@ -1987,10 +2003,19 @@ thinking_budget_tokens = 1024
             merged.runtime_config.streaming_mode,
             crate::config::StreamingMode::On
         );
-        assert_eq!(merged.runtime_config.thinking_budget_tokens, None);
         assert_eq!(
-            merged.runtime_config.model_reasoning_effort,
+            merged
+                .runtime_config
+                .request_control_intent
+                .reasoning_effort,
             Some(alan_protocol::ReasoningEffort::Low)
+        );
+        assert_eq!(
+            merged
+                .runtime_config
+                .request_control_intent
+                .thinking_budget_tokens,
+            None
         );
     }
 
@@ -2766,7 +2791,14 @@ thinking_budget_tokens = 1024
             Some(desired_session_id.as_str()),
             true,
             Some(resumed_cwd.as_path()),
-            Some(alan_protocol::ReasoningEffort::Medium),
+            crate::ResolvedRequestControls {
+                reasoning: alan_protocol::ReasoningControls {
+                    effort: Some(alan_protocol::ReasoningEffort::Medium),
+                    budget_tokens: None,
+                },
+                source: crate::RequestControlSource::SessionOverride,
+                diagnostics: Vec::new(),
+            },
         )
         .await
         .unwrap();

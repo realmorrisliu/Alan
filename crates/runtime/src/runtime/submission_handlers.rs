@@ -169,9 +169,9 @@ where
             merged_parts.extend(parts);
 
             state.turn_state.clear();
-            state
-                .turn_state
-                .set_active_turn_reasoning_effort(reasoning_effort);
+            state.turn_state.set_active_turn_request_control_intent(
+                crate::RequestControlIntent::reasoning_effort(reasoning_effort),
+            );
 
             if queued_next_turn_count > 0 {
                 emit(Event::Warning {
@@ -661,7 +661,10 @@ mod tests {
                     "existing message"
                 );
                 assert_eq!(
-                    state.turn_state.active_turn_reasoning_effort(),
+                    state
+                        .turn_state
+                        .active_turn_request_control_intent()
+                        .reasoning_effort,
                     Some(alan_protocol::ReasoningEffort::High)
                 );
             }

@@ -1057,49 +1057,6 @@ impl Config {
             .unwrap_or_else(|| inferred_context_window_tokens(self.llm_provider))
     }
 
-    pub fn effective_model_reasoning_effort(&self) -> Option<ReasoningEffort> {
-        if self.model_reasoning_effort.is_some() {
-            return self.model_reasoning_effort;
-        }
-
-        if self.thinking_budget_tokens.is_some() {
-            return None;
-        }
-
-        self.effective_model_info()
-            .and_then(|model_info| model_info.default_reasoning_effort)
-    }
-
-    pub fn validate_reasoning_effort_for_resolved_model(
-        &self,
-        effort: ReasoningEffort,
-    ) -> anyhow::Result<()> {
-        let Some(model_info) = self.effective_model_info() else {
-            return Ok(());
-        };
-
-        if model_info.supported_reasoning_efforts.contains(&effort) {
-            return Ok(());
-        }
-
-        let supported = if model_info.supported_reasoning_efforts.is_empty() {
-            "none declared".to_string()
-        } else {
-            model_info
-                .supported_reasoning_efforts
-                .iter()
-                .map(ToString::to_string)
-                .collect::<Vec<_>>()
-                .join(", ")
-        };
-        anyhow::bail!(
-            "model `{}` does not support reasoning effort `{}`; supported efforts: {}",
-            model_info.slug,
-            effort,
-            supported
-        );
-    }
-
     pub fn effective_compaction_hard_trigger_ratio(&self) -> f32 {
         self.compaction_hard_trigger_ratio
             .or(self.compaction_trigger_ratio)
@@ -1855,20 +1812,30 @@ thinking_budget_tokens = 2048
     }
 
     #[test]
-    fn test_effective_model_reasoning_effort_uses_model_default_without_budget() {
+    fn test_request_control_resolver_uses_model_default_without_budget() {
         let config = Config::for_openai_responses("sk-test", None, Some("gpt-5.4"));
-        assert_eq!(
-            config.effective_model_reasoning_effort(),
-            Some(ReasoningEffort::Medium)
-        );
+        let resolved = crate::resolve_session_request_controls(
+            &config,
+            crate::provider_capabilities_for_config(&config),
+            crate::RequestControlIntent::default(),
+        )
+        .unwrap();
+        assert_eq!(resolved.reasoning_effort(), Some(ReasoningEffort::Medium));
     }
 
     #[test]
-    fn test_effective_model_reasoning_effort_preserves_legacy_budget_behavior() {
+    fn test_request_control_resolver_preserves_legacy_budget_behavior() {
         let mut config = Config::for_openai_responses("sk-test", None, Some("gpt-5.4"));
         config.thinking_budget_tokens = Some(2048);
 
-        assert_eq!(config.effective_model_reasoning_effort(), None);
+        let resolved = crate::resolve_session_request_controls(
+            &config,
+            crate::provider_capabilities_for_config(&config),
+            crate::RequestControlIntent::default(),
+        )
+        .unwrap();
+        assert_eq!(resolved.reasoning_effort(), None);
+        assert_eq!(resolved.budget_tokens(), Some(2048));
     }
 
     #[test]
@@ -2516,7 +2483,13 @@ supports_reasoning = true
         let overlaid = config.with_agent_root_overlays(&[overlay_path]).unwrap();
 
         assert_eq!(
-            overlaid.effective_model_reasoning_effort(),
+            crate::resolve_session_request_controls(
+                &overlaid,
+                crate::provider_capabilities_for_config(&overlaid),
+                crate::RequestControlIntent::default(),
+            )
+            .unwrap()
+            .reasoning_effort(),
             Some(ReasoningEffort::High)
         );
     }

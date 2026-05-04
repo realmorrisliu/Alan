@@ -936,7 +936,7 @@ impl LlmProvider for AnthropicMessagesClient {
             tools: request_tools,
             temperature,
             max_tokens,
-            thinking_budget_tokens,
+            thinking_budget_tokens: _,
             reasoning,
             mut extra_params,
         } = request;
@@ -955,7 +955,7 @@ impl LlmProvider for AnthropicMessagesClient {
 
         let (thinking, temperature, max_tokens) = build_thinking_params(
             reasoning.effort,
-            &reasoning.budget_tokens.or(thinking_budget_tokens),
+            &reasoning.budget_tokens,
             temperature,
             max_tokens.unwrap_or(4096),
         )?;
@@ -991,7 +991,7 @@ impl LlmProvider for AnthropicMessagesClient {
             tools: request_tools,
             temperature,
             max_tokens,
-            thinking_budget_tokens,
+            thinking_budget_tokens: _,
             reasoning,
             mut extra_params,
         } = request;
@@ -1010,7 +1010,7 @@ impl LlmProvider for AnthropicMessagesClient {
 
         let (thinking, temperature, max_tokens) = build_thinking_params(
             reasoning.effort,
-            &reasoning.budget_tokens.or(thinking_budget_tokens),
+            &reasoning.budget_tokens,
             temperature,
             max_tokens.unwrap_or(4096),
         )?;

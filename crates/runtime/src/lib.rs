@@ -19,6 +19,7 @@ mod llm;
 mod models;
 mod paths;
 mod policy;
+mod request_controls;
 mod retry;
 mod rollout;
 mod session;
@@ -59,6 +60,11 @@ pub use models::{ModelCatalog, ModelInfo};
 pub use paths::AlanHomePaths;
 pub use policy::{PolicyAction, PolicyDecision, PolicyEngine, PolicyProfile, PolicyRule};
 pub use prompts::PromptLoader;
+pub use request_controls::{
+    RequestControlDiagnostic, RequestControlIntent, RequestControlResolutionInput,
+    RequestControlSource, ResolvedRequestControls, provider_capabilities_for_config,
+    resolve_request_controls, resolve_session_request_controls, resolve_turn_request_controls,
+};
 pub use rollout::{
     CheckpointRecord, EventRecord, MessageRecord, RolloutItem, RolloutRecorder, SessionMeta,
     ToolCallRecord, session_storage_key,

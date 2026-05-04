@@ -5,8 +5,8 @@ use alan::daemon::connection_routes::{
     ConnectionCatalogResponse, ConnectionListResponse, ProviderDescriptorView,
 };
 use alan::daemon::routes::{
-    ChildRunListResponse, ChildRunResponse, CreateSessionResponse, SessionDurabilityInfo,
-    SessionListItem, SessionListResponse, SessionReadResponse,
+    ChildRunListResponse, ChildRunResponse, CreateSessionResponse, ForkSessionResponse,
+    SessionDurabilityInfo, SessionListItem, SessionListResponse, SessionReadResponse,
 };
 use alan_protocol::GovernanceConfig;
 use alan_runtime::runtime::ChildRunRecord;
@@ -22,6 +22,11 @@ fn tui_types_cover_selected_daemon_payload_fields() {
         &types_source,
         "CreateSessionResponse",
         &sample_create_session_response(),
+    );
+    assert_interface_covers_value(
+        &types_source,
+        "ForkSessionResponse",
+        &sample_fork_session_response(),
     );
     assert_interface_covers_value(
         &types_source,
@@ -128,6 +133,25 @@ fn sample_create_session_response() -> CreateSessionResponse {
         provider: Some(LlmProvider::Chatgpt),
         resolved_model: "gpt-5.3-codex".to_string(),
         reasoning_effort: Some(alan_protocol::ReasoningEffort::Medium),
+        durability: sample_durability(),
+    }
+}
+
+fn sample_fork_session_response() -> ForkSessionResponse {
+    ForkSessionResponse {
+        session_id: "sess-fork".to_string(),
+        forked_from_session_id: "sess-1".to_string(),
+        websocket_url: "/api/v1/sessions/sess-fork/ws".to_string(),
+        events_url: "/api/v1/sessions/sess-fork/events".to_string(),
+        submit_url: "/api/v1/sessions/sess-fork/submit".to_string(),
+        agent_name: Some("default".to_string()),
+        governance: GovernanceConfig::default(),
+        streaming_mode: StreamingMode::Auto,
+        partial_stream_recovery_mode: PartialStreamRecoveryMode::ContinueOnce,
+        profile_id: Some("chatgpt-main".to_string()),
+        provider: Some(LlmProvider::Chatgpt),
+        resolved_model: "gpt-5.3-codex".to_string(),
+        reasoning_effort: Some(alan_protocol::ReasoningEffort::Low),
         durability: sample_durability(),
     }
 }

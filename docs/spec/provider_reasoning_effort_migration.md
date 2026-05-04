@@ -46,6 +46,11 @@ Keep `thinking_budget_tokens` when the target provider is budget-native, such
 as Anthropic extended thinking or Gemini 2.5 thinking budgets, and you need a
 specific provider token budget rather than Alan's named effort presets.
 
+Alan normalizes the selected named effort or legacy budget in the runtime before
+provider dispatch. Provider-specific `extra_params` may still carry temporary
+compatibility fields when no canonical control is set, but they must not
+override a resolved runtime effort or budget.
+
 If a provider/model supports both in the future, prefer named effort in shared
 agent configuration and reserve raw budgets for provider-specific profiles or
 temporary experiments.
