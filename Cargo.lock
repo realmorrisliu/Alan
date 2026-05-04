@@ -43,7 +43,7 @@ dependencies = [
  "clap",
  "dirs",
  "futures",
- "reqwest 0.13.2",
+ "reqwest 0.13.3",
  "serde",
  "serde_json",
  "sha2",
@@ -70,7 +70,7 @@ dependencies = [
  "chrono",
  "dirs",
  "rand 0.10.1",
- "reqwest 0.13.2",
+ "reqwest 0.13.3",
  "serde",
  "serde_json",
  "sha2",
@@ -97,7 +97,7 @@ dependencies = [
  "futures-core",
  "openrouter-rs",
  "pin-utils",
- "reqwest 0.13.2",
+ "reqwest 0.13.3",
  "serde",
  "serde_json",
  "tempfile",
@@ -136,7 +136,7 @@ dependencies = [
  "pin-utils",
  "rand 0.10.1",
  "regex",
- "reqwest 0.13.2",
+ "reqwest 0.13.3",
  "semver",
  "serde",
  "serde_json",
@@ -159,7 +159,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
- "reqwest 0.13.2",
+ "reqwest 0.13.3",
  "serde",
  "serde_json",
  "tempfile",
@@ -1450,7 +1450,7 @@ dependencies = [
  "referencing",
  "regex",
  "regex-syntax",
- "reqwest 0.13.2",
+ "reqwest 0.13.3",
  "rustls",
  "serde",
  "serde_json",
@@ -1681,9 +1681,9 @@ checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
 
 [[package]]
 name = "openrouter-rs"
-version = "0.8.1"
+version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a5de66d46faeac035a618ee8292434a0ed8243fb05e0aecda707c94ee242d278"
+checksum = "62770f84ba1a4ebb3e5f6a5107117119007f04782fb3e49c03e931cf0dbe2543"
 dependencies = [
  "derive_builder",
  "dotenvy_macro",
@@ -2041,9 +2041,9 @@ dependencies = [
 
 [[package]]
 name = "reqwest"
-version = "0.13.2"
+version = "0.13.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ab3f43e3283ab1488b624b44b0e988d0acea0b3214e694730a055cb6b2efa801"
+checksum = "62e0021ea2c22aed41653bc7e1419abb2c97e038ff2c33d0e1309e49a97deec0"
 dependencies = [
  "base64",
  "bytes",
