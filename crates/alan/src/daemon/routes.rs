@@ -1118,7 +1118,6 @@ pub async fn fork_session(
         source_workspace_id,
         source_agent_name,
         source_profile_id,
-        source_reasoning_effort,
         source_governance,
         source_streaming_mode,
         source_partial_stream_recovery_mode,
@@ -1132,7 +1131,6 @@ pub async fn fork_session(
             entry.workspace_id.clone(),
             entry.agent_name.clone(),
             entry.profile_id.clone(),
-            entry.reasoning_effort,
             entry.governance.clone(),
             entry.streaming_mode,
             entry.partial_stream_recovery_mode,
@@ -1159,7 +1157,6 @@ pub async fn fork_session(
     } = JsonLikeFork::from_payload(payload);
     let effective_agent_name = agent_name.or(source_agent_name);
     let effective_profile_id = profile_id.or(source_profile_id);
-    let effective_reasoning_effort = reasoning_effort.or(source_reasoning_effort);
     let effective_governance = governance.unwrap_or(source_governance);
     let effective_streaming_mode = streaming_mode.unwrap_or(source_streaming_mode);
     let effective_partial_stream_recovery_mode =
@@ -1185,7 +1182,7 @@ pub async fn fork_session(
             resume_rollout_path: Some(rollout_path),
             agent_name: effective_agent_name,
             profile_id: effective_profile_id,
-            reasoning_effort: effective_reasoning_effort,
+            reasoning_effort,
             governance: Some(effective_governance.clone()),
             streaming_mode: Some(effective_streaming_mode),
             partial_stream_recovery_mode: Some(effective_partial_stream_recovery_mode),
@@ -4404,6 +4401,50 @@ Body
         assert_eq!(
             resp.reasoning_effort,
             Some(alan_protocol::ReasoningEffort::Low)
+        );
+    }
+
+    #[tokio::test]
+    async fn fork_session_without_reasoning_override_uses_destination_default() {
+        let state = test_state();
+        let temp = tempfile::TempDir::new().unwrap();
+        let (mut entry, _submission_rx) = session_entry(temp.path());
+        entry.reasoning_effort = Some(alan_protocol::ReasoningEffort::High);
+        let sessions_dir = temp.path().join(".alan").join("sessions");
+        std::fs::create_dir_all(&sessions_dir).unwrap();
+        let rollout_path = sessions_dir.join("rollout-20260316-sess-fork-no-override.jsonl");
+        std::fs::write(
+            &rollout_path,
+            serde_json::to_string(&RolloutItem::SessionMeta(alan_runtime::SessionMeta {
+                session_id: "sess-fork-no-override".to_string(),
+                started_at: "2026-03-16T00:00:00Z".to_string(),
+                cwd: temp.path().display().to_string(),
+                model: "gpt-5.4".to_string(),
+                reasoning_effort: Some(alan_protocol::ReasoningEffort::High),
+            }))
+            .unwrap()
+                + "\n",
+        )
+        .unwrap();
+        entry.rollout_path = Some(rollout_path);
+        state
+            .sessions
+            .write()
+            .await
+            .insert("sess-fork-no-override".to_string(), entry);
+
+        let Json(resp) = fork_session(
+            State(state),
+            Path("sess-fork-no-override".to_string()),
+            json_headers(),
+            Bytes::from(serde_json::json!({}).to_string()),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            resp.reasoning_effort,
+            Some(alan_protocol::ReasoningEffort::Medium)
         );
     }
 

@@ -229,6 +229,7 @@ where
                         return Ok(RuntimeOpAction::NoTurn);
                     }
 
+                    state.turn_state.clear();
                     return Ok(RuntimeOpAction::RunTurn {
                         turn_kind: TurnRunKind::NewTurn,
                         user_input: Some(parts),
@@ -1689,6 +1690,9 @@ Use this skill when asked.
     #[tokio::test]
     async fn test_handle_follow_up_without_active_turn_starts_new_turn() {
         let mut state = create_test_state();
+        state
+            .turn_state
+            .set_active_turn_reasoning_effort(Some(alan_protocol::ReasoningEffort::High));
         let cancel = CancellationToken::new();
         let mut events = vec![];
         let mut emit = |event: Event| {
@@ -1716,6 +1720,7 @@ Use this skill when asked.
                     Some(vec![ContentPart::text("run after current")])
                 );
                 assert!(activate_task);
+                assert_eq!(state.turn_state.active_turn_reasoning_effort(), None);
             }
             _ => panic!("Expected RunTurn"),
         }
