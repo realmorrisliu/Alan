@@ -31,14 +31,16 @@ export type ProtocolEventType =
   | "yield"
   | "tool_call_started"
   | "tool_call_completed"
+  | "plan_updated"
   | "session_rolled_back"
+  | "compaction_observed"
+  | "memory_flush_observed"
   | "error";
 
 // Legacy/compat runtime events that may appear in historical logs.
 export type LegacyCompatEventType =
   | "task_completed"
   | "context_compacted"
-  | "plan_updated"
   | "stream_lagged"
   | "skills_loaded"
   | "dynamic_tools_registered";
@@ -200,12 +202,19 @@ export interface SessionListItem {
   provider?: ProviderId;
   resolved_model: string;
   governance: GovernanceConfig;
+  execution_backend: string;
   streaming_mode: StreamingMode;
   partial_stream_recovery_mode: PartialStreamRecoveryMode;
+  durability: SessionDurabilityInfo;
 }
 
 export interface SessionListResponse {
   sessions: SessionListItem[];
+}
+
+export interface SessionDurabilityInfo {
+  durable: boolean;
+  required: boolean;
 }
 
 export interface SessionReadResponse {
@@ -217,9 +226,13 @@ export interface SessionReadResponse {
   provider?: ProviderId;
   resolved_model: string;
   governance: GovernanceConfig;
+  execution_backend: string;
   streaming_mode: StreamingMode;
   partial_stream_recovery_mode: PartialStreamRecoveryMode;
+  durability: SessionDurabilityInfo;
   rollout_path?: string;
+  latest_compaction_attempt?: unknown;
+  latest_memory_flush_attempt?: unknown;
   latest_plan_snapshot?: PlanSnapshot;
   messages: unknown[];
 }
@@ -296,8 +309,10 @@ export interface CreateSessionResponse {
   provider?: ProviderId;
   resolved_model: string;
   governance: GovernanceConfig;
+  execution_backend: string;
   streaming_mode: StreamingMode;
   partial_stream_recovery_mode: PartialStreamRecoveryMode;
+  durability: SessionDurabilityInfo;
 }
 
 export interface ProviderDescriptor {

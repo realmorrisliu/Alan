@@ -17,6 +17,7 @@ use tower_http::{
 };
 use tracing::{info, warn};
 
+use super::api_contract::paths;
 use super::relay::{self, RelayClientConfig, RelayHub};
 use super::remote_control::{RemoteAccessControl, remote_access_middleware};
 use super::state::AppState;
@@ -74,156 +75,132 @@ pub async fn run_server_with_loaded_config(loaded_config: LoadedConfig) -> Resul
     // Build router
     let mut app = Router::new()
         // Health check
-        .route("/health", get(routes::health))
+        .route(paths::HEALTH, get(routes::health))
         .route(
-            "/api/v1/connections/catalog",
+            paths::CONNECTIONS_CATALOG,
             get(connection_routes::get_catalog),
         )
         .route(
-            "/api/v1/connections",
+            paths::CONNECTIONS,
             get(connection_routes::list_connections).post(connection_routes::create_connection),
         )
         .route(
-            "/api/v1/connections/current",
+            paths::CONNECTIONS_CURRENT,
             get(connection_routes::get_connection_current),
         )
         .route(
-            "/api/v1/connections/default/set",
+            paths::CONNECTIONS_DEFAULT_SET,
             post(connection_routes::set_connection_default),
         )
         .route(
-            "/api/v1/connections/default/clear",
+            paths::CONNECTIONS_DEFAULT_CLEAR,
             post(connection_routes::clear_connection_default),
         )
         .route(
-            "/api/v1/connections/pin",
+            paths::CONNECTIONS_PIN,
             post(connection_routes::pin_connection),
         )
         .route(
-            "/api/v1/connections/unpin",
+            paths::CONNECTIONS_UNPIN,
             post(connection_routes::unpin_connection),
         )
         .route(
-            "/api/v1/connections/events",
+            paths::CONNECTIONS_EVENTS,
             get(connection_routes::stream_connection_events),
         )
         .route(
-            "/api/v1/connections/events/read",
+            paths::CONNECTIONS_EVENTS_READ,
             get(connection_routes::read_connection_events),
         )
         .route(
-            "/api/v1/connections/{profile_id}",
+            paths::CONNECTION,
             get(connection_routes::get_connection)
                 .patch(connection_routes::update_connection)
                 .delete(connection_routes::delete_connection),
         )
         .route(
-            "/api/v1/connections/{profile_id}/activate",
+            paths::CONNECTION_ACTIVATE,
             post(connection_routes::activate_connection),
         )
         .route(
-            "/api/v1/connections/{profile_id}/credential/status",
+            paths::CONNECTION_CREDENTIAL_STATUS,
             get(connection_routes::get_connection_credential_status),
         )
         .route(
-            "/api/v1/connections/{profile_id}/credential/secret",
+            paths::CONNECTION_CREDENTIAL_SECRET,
             post(connection_routes::post_connection_secret),
         )
         .route(
-            "/api/v1/connections/{profile_id}/credential/login/browser/start",
+            paths::CONNECTION_BROWSER_LOGIN_START,
             post(connection_routes::start_connection_browser_login),
         )
         .route(
-            "/api/v1/connections/{profile_id}/credential/login/device/start",
+            paths::CONNECTION_DEVICE_LOGIN_START,
             post(connection_routes::start_connection_device_login),
         )
         .route(
-            "/api/v1/connections/{profile_id}/credential/login/device/complete",
+            paths::CONNECTION_DEVICE_LOGIN_COMPLETE,
             post(connection_routes::complete_connection_device_login),
         )
         .route(
-            "/api/v1/connections/{profile_id}/credential/logout",
+            paths::CONNECTION_CREDENTIAL_LOGOUT,
             post(connection_routes::logout_connection_credential),
         )
         .route(
-            "/api/v1/connections/{profile_id}/test",
+            paths::CONNECTION_TEST,
             post(connection_routes::test_connection),
         )
         // API routes
         .route(
-            "/api/v1/sessions",
+            paths::SESSIONS,
             post(routes::create_session).get(routes::list_sessions),
         )
-        .route("/api/v1/skills/catalog", get(routes::get_skill_catalog))
+        .route(paths::SKILLS_CATALOG, get(routes::get_skill_catalog))
         .route(
-            "/api/v1/skills/changed",
+            paths::SKILLS_CHANGED,
             get(routes::get_skill_catalog_changed),
         )
         .route(
-            "/api/v1/skills/overrides",
+            paths::SKILLS_OVERRIDES,
             post(routes::write_skill_override_route),
         )
-        .route("/api/v1/sessions/{id}", get(routes::get_session))
+        .route(paths::SESSION, get(routes::get_session))
+        .route(paths::SESSION_CHILD_RUNS, get(routes::list_child_runs))
+        .route(paths::SESSION_CHILD_RUN, get(routes::get_child_run))
         .route(
-            "/api/v1/sessions/{id}/child_runs",
-            get(routes::list_child_runs),
-        )
-        .route(
-            "/api/v1/sessions/{id}/child_runs/{child_run_id}",
-            get(routes::get_child_run),
-        )
-        .route(
-            "/api/v1/sessions/{id}/child_runs/{child_run_id}/terminate",
+            paths::SESSION_CHILD_RUN_TERMINATE,
             post(routes::terminate_child_run),
         )
-        .route("/api/v1/sessions/{id}/read", get(routes::read_session))
+        .route(paths::SESSION_READ, get(routes::read_session))
         .route(
-            "/api/v1/sessions/{id}/reconnect_snapshot",
+            paths::SESSION_RECONNECT_SNAPSHOT,
             get(routes::reconnect_snapshot),
         )
+        .route(paths::SESSION_HISTORY, get(routes::get_session_history))
+        .route(paths::SESSION_EVENTS_READ, get(routes::read_events))
+        .route(paths::SESSION, delete(routes::delete_session))
+        .route(paths::SESSION_RESUME, post(routes::resume_session))
+        .route(paths::SESSION_FORK, post(routes::fork_session))
+        .route(paths::SESSION_ROLLBACK, post(routes::rollback_session))
+        .route(paths::SESSION_COMPACT, post(routes::compact_session))
         .route(
-            "/api/v1/sessions/{id}/history",
-            get(routes::get_session_history),
-        )
-        .route(
-            "/api/v1/sessions/{id}/events/read",
-            get(routes::read_events),
-        )
-        .route("/api/v1/sessions/{id}", delete(routes::delete_session))
-        .route("/api/v1/sessions/{id}/resume", post(routes::resume_session))
-        .route("/api/v1/sessions/{id}/fork", post(routes::fork_session))
-        .route(
-            "/api/v1/sessions/{id}/rollback",
-            post(routes::rollback_session),
-        )
-        .route(
-            "/api/v1/sessions/{id}/compact",
-            post(routes::compact_session),
-        )
-        .route(
-            "/api/v1/sessions/{id}/schedule_at",
+            paths::SESSION_SCHEDULE_AT,
             post(routes::schedule_session_at),
         )
         .route(
-            "/api/v1/sessions/{id}/sleep_until",
+            paths::SESSION_SLEEP_UNTIL,
             post(routes::sleep_session_until),
         )
-        .route(
-            "/api/v1/sessions/{id}/submit",
-            post(routes::submit_operation),
-        )
-        .route("/api/v1/sessions/{id}/events", get(routes::stream_events))
-        .route("/api/v1/sessions/{id}/ws", get(websocket::ws_handler))
+        .route(paths::SESSION_SUBMIT, post(routes::submit_operation))
+        .route(paths::SESSION_EVENTS, get(routes::stream_events))
+        .route(paths::SESSION_WS, get(websocket::ws_handler))
         .with_state(state);
 
     if relay_hub.enabled() {
         let relay_router = Router::new()
-            .route("/api/v1/relay/nodes", get(relay::relay_list_nodes_handler))
-            .route("/api/v1/relay/tunnel", get(relay::relay_tunnel_handler))
-            .route(
-                "/api/v1/relay/nodes/{node_id}/{*path}",
-                any(relay::relay_proxy_handler),
-            )
+            .route(paths::RELAY_NODES, get(relay::relay_list_nodes_handler))
+            .route(paths::RELAY_TUNNEL, get(relay::relay_tunnel_handler))
+            .route(paths::RELAY_PROXY, any(relay::relay_proxy_handler))
             .layer(Extension(relay_hub.clone()));
         app = app.merge(relay_router);
     }

@@ -30,6 +30,7 @@ use tokio::sync::{Mutex, RwLock, mpsc, oneshot};
 use tracing::{debug, info, warn};
 use uuid::Uuid;
 
+use super::api_contract;
 use crate::host_config::HostConfig;
 
 const HEADER_NODE_ID: &str = "x-alan-node-id";
@@ -450,7 +451,7 @@ impl RelayHub {
         request_path: &str,
         switch_mode: NodeSwitchMode,
     ) -> Result<(), SessionRouteConflict> {
-        let Some(session_id) = extract_session_id_from_path(request_path) else {
+        let Some(session_id) = api_contract::extract_session_id_from_path(request_path) else {
             return Ok(());
         };
         if switch_mode.allows_rebind() {
@@ -486,7 +487,7 @@ impl RelayHub {
         }
 
         if method == Method::DELETE
-            && let Some(session_id) = extract_session_id_from_path(request_path)
+            && let Some(session_id) = api_contract::extract_session_id_from_path(request_path)
         {
             let mut bindings = self.inner.session_bindings.write().await;
             if bindings
@@ -648,19 +649,25 @@ pub async fn relay_proxy_handler(
     let Some(path) = build_forward_path(&tail_path, &uri) else {
         return relay_error(
             RelayErrorCode::BadRequest,
-            "relay proxy path must target /api/v1/*",
+            "relay proxy path must target a daemon API path",
         );
     };
-    if is_streaming_forward_path(&path) {
+    if is_streaming_forward_path(&method, &path) {
         return relay_error(
             RelayErrorCode::BadRequest,
             "relay MVP does not support streaming /events; use /events/read polling",
         );
     }
-    if is_websocket_forward_path(&path) {
+    if is_websocket_forward_path(&method, &path) {
         return relay_error(
             RelayErrorCode::BadRequest,
             "relay MVP does not support websocket /ws proxying; use polling APIs",
+        );
+    }
+    if !is_allowed_forward_path(&method, &path) {
+        return relay_error(
+            RelayErrorCode::BadRequest,
+            "relay proxy path must target a relay-forwardable daemon API endpoint",
         );
     }
 
@@ -715,8 +722,12 @@ pub async fn relay_proxy_handler(
                 switch_mode,
             )
             .await;
-            let response =
-                rewrite_relay_response_urls(&node_id, &path_for_response_rewrite, response);
+            let response = rewrite_relay_response_urls(
+                &node_id,
+                &method_for_binding,
+                &path_for_response_rewrite,
+                response,
+            );
             build_proxy_http_response(&node_id, response)
         }
         Err(err) => match err {
@@ -952,8 +963,9 @@ async fn run_relay_client_once(config: &RelayClientConfig) -> anyhow::Result<()>
     };
 
     let url = format!(
-        "{}/api/v1/relay/tunnel",
-        config.relay_url.trim_end_matches('/')
+        "{}{}",
+        config.relay_url.trim_end_matches('/'),
+        api_contract::paths::RELAY_TUNNEL
     );
     let mut request = url.clone().into_client_request()?;
     request.headers_mut().insert(
@@ -1188,20 +1200,19 @@ async fn execute_local_proxy_request(
         );
     }
 
-    if !is_allowed_forward_path(&path) {
-        return response_for_error(
-            StatusCode::BAD_REQUEST,
-            "invalid proxied path; expected /api/v1/* excluding /api/v1/relay/*, /events, and /ws"
-                .to_string(),
-        );
-    }
-
     let parsed_method = match Method::from_bytes(method.as_bytes()) {
         Ok(method) => method,
         Err(_) => {
             return response_for_error(StatusCode::BAD_REQUEST, "invalid HTTP method".to_string());
         }
     };
+
+    if !is_allowed_forward_path(&parsed_method, &path) {
+        return response_for_error(
+            StatusCode::BAD_REQUEST,
+            "invalid proxied path; expected a relay-forwardable daemon API endpoint".to_string(),
+        );
+    }
 
     let url = format!("{}{}", config.local_base_url.trim_end_matches('/'), path);
     let mut request = client.request(parsed_method, url);
@@ -1313,19 +1324,9 @@ fn parse_node_switch_mode(headers: &HeaderMap) -> Result<NodeSwitchMode, String>
     ))
 }
 
-fn extract_session_id_from_path(path: &str) -> Option<&str> {
-    let path = path_without_query(path);
-    let remainder = path.strip_prefix("/api/v1/sessions/")?;
-    let session_id = remainder.split('/').next().unwrap_or("").trim();
-    if session_id.is_empty() {
-        return None;
-    }
-    Some(session_id)
-}
-
 fn collect_binding_session_ids(request_path: &str, response_body: Option<&str>) -> Vec<String> {
     let mut session_ids = HashSet::new();
-    if let Some(session_id) = extract_session_id_from_path(request_path) {
+    if let Some(session_id) = api_contract::extract_session_id_from_path(request_path) {
         session_ids.insert(session_id.to_string());
     }
 
@@ -1372,7 +1373,7 @@ fn relay_error(code: RelayErrorCode, message: &str) -> Response<Body> {
 
 fn build_forward_path(tail_path: &str, uri: &Uri) -> Option<String> {
     let normalized = format!("/{}", tail_path.trim_start_matches('/'));
-    if !is_relay_forward_prefix_allowed(&normalized) {
+    if !api_contract::is_api_path(&normalized) {
         return None;
     }
 
@@ -1386,35 +1387,28 @@ fn build_forward_path(tail_path: &str, uri: &Uri) -> Option<String> {
     Some(path)
 }
 
-fn is_allowed_forward_path(path: &str) -> bool {
-    is_relay_forward_prefix_allowed(path)
-        && !is_streaming_forward_path(path)
-        && !is_websocket_forward_path(path)
+fn is_allowed_forward_path(method: &Method, path: &str) -> bool {
+    api_contract::match_endpoint(method, path).is_some_and(|endpoint| endpoint.relay.forwardable)
 }
 
-fn is_relay_forward_prefix_allowed(path: &str) -> bool {
-    path.starts_with("/api/v1/") && !path.starts_with("/api/v1/relay/")
+fn is_websocket_forward_path(method: &Method, path: &str) -> bool {
+    api_contract::match_endpoint(method, path).is_some_and(|endpoint| endpoint.relay.websocket)
 }
 
-fn path_without_query(path: &str) -> &str {
-    path.split('?').next().unwrap_or(path)
-}
-
-fn is_websocket_forward_path(path: &str) -> bool {
-    path_without_query(path).ends_with("/ws")
-}
-
-fn is_session_lifecycle_path(path: &str) -> bool {
-    let path = path_without_query(path);
-    path == "/api/v1/sessions" || (path.starts_with("/api/v1/sessions/") && path.ends_with("/fork"))
+fn response_url_fields_for_path(method: &Method, path: &str) -> &'static [&'static str] {
+    api_contract::match_endpoint(method, path)
+        .map(|endpoint| endpoint.relay.response_url_fields)
+        .unwrap_or_default()
 }
 
 fn rewrite_relay_response_urls(
     node_id: &str,
+    method: &Method,
     request_path: &str,
     mut response: RelayNodeResponse,
 ) -> RelayNodeResponse {
-    if !is_session_lifecycle_path(request_path) {
+    let response_url_fields = response_url_fields_for_path(method, request_path);
+    if response_url_fields.is_empty() {
         return response;
     }
 
@@ -1432,19 +1426,18 @@ fn rewrite_relay_response_urls(
         return response;
     };
 
-    let relay_prefix = format!("/api/v1/relay/nodes/{node_id}");
     let mut changed = false;
-    for field in ["websocket_url", "events_url", "submit_url"] {
-        let Some(value) = object.get_mut(field) else {
+    for field in response_url_fields {
+        let Some(value) = object.get_mut(*field) else {
             continue;
         };
         let Some(url) = value.as_str() else {
             continue;
         };
-        if !url.starts_with("/api/v1/sessions/") {
+        let Some(relay_url) = api_contract::relay_prefixed_session_url(node_id, url) else {
             continue;
-        }
-        *value = serde_json::Value::String(format!("{relay_prefix}{url}"));
+        };
+        *value = serde_json::Value::String(relay_url);
         changed = true;
     }
 
@@ -1460,8 +1453,8 @@ fn rewrite_relay_response_urls(
     response
 }
 
-fn is_streaming_forward_path(path: &str) -> bool {
-    path_without_query(path).ends_with("/events")
+fn is_streaming_forward_path(method: &Method, path: &str) -> bool {
+    api_contract::match_endpoint(method, path).is_some_and(|endpoint| endpoint.relay.streaming)
 }
 
 fn collect_forward_headers(headers: &HeaderMap, node_id: &str) -> Vec<RelayHeader> {
@@ -1625,12 +1618,15 @@ mod tests {
     #[test]
     fn extract_session_id_from_path_handles_query_and_empty_values() {
         assert_eq!(
-            extract_session_id_from_path("/api/v1/sessions/s1/submit?mode=test"),
+            api_contract::extract_session_id_from_path("/api/v1/sessions/s1/submit?mode=test"),
             Some("s1")
         );
-        assert_eq!(extract_session_id_from_path("/api/v1/sessions"), None);
         assert_eq!(
-            extract_session_id_from_path("/api/v1/sessions//submit"),
+            api_contract::extract_session_id_from_path("/api/v1/sessions"),
+            None
+        );
+        assert_eq!(
+            api_contract::extract_session_id_from_path("/api/v1/sessions//submit"),
             None
         );
     }
@@ -2126,7 +2122,8 @@ mod tests {
             ),
         };
 
-        let rewritten = rewrite_relay_response_urls("node-a", "/api/v1/sessions", response);
+        let rewritten =
+            rewrite_relay_response_urls("node-a", &Method::POST, "/api/v1/sessions", response);
         let body = rewritten.body.expect("body should be present");
         let json: serde_json::Value =
             serde_json::from_str(&body).expect("body should be valid json");

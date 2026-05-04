@@ -554,6 +554,8 @@ Overlay catalogs currently extend `openai_chat_completions_compatible` models on
 ## HTTP API
 
 The daemon exposes REST, WebSocket, connection-management, and skill-catalog endpoints.
+Canonical route ownership lives in `crates/alan/src/daemon/api_contract.rs`;
+the examples below remain the stable public paths.
 
 ```bash
 # Health check

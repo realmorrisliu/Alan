@@ -1,5 +1,6 @@
 //! `alan daemon stop|status` + daemon lifecycle utilities.
 
+use crate::daemon::api_contract::paths;
 use crate::host_config::HostConfig;
 use anyhow::{Context, Result};
 use std::path::PathBuf;
@@ -187,7 +188,7 @@ pub async fn daemon_status() -> Result<()> {
 
 /// Check if the daemon is healthy via HTTP.
 async fn check_daemon_health() -> bool {
-    let url = format!("{}/health", daemon_url());
+    let url = format!("{}{}", daemon_url(), paths::HEALTH);
     let client = reqwest::Client::new();
     matches!(
         client

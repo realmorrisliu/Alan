@@ -21,6 +21,10 @@ use axum::{
 use serde::Serialize;
 use tracing::{debug, warn};
 
+use super::api_contract::{self, EndpointId};
+
+pub use super::api_contract::SessionScope;
+
 const HEADER_NODE_ID: &str = "x-alan-node-id";
 const HEADER_CLIENT_ID: &str = "x-alan-client-id";
 const HEADER_TRACE_ID: &str = "x-alan-trace-id";
@@ -28,41 +32,6 @@ const HEADER_TRANSPORT_MODE: &str = "x-alan-transport-mode";
 
 const ENV_REMOTE_AUTH_ENABLED: &str = "ALAN_REMOTE_AUTH_ENABLED";
 const ENV_REMOTE_AUTH_TOKENS: &str = "ALAN_REMOTE_AUTH_TOKENS";
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum SessionScope {
-    Read,
-    Write,
-    Resume,
-    Admin,
-    HostAuthRead,
-    HostAuthWrite,
-}
-
-impl SessionScope {
-    fn parse(raw: &str) -> Option<Self> {
-        match raw.trim() {
-            "session.read" => Some(Self::Read),
-            "session.write" => Some(Self::Write),
-            "session.resume" => Some(Self::Resume),
-            "session.admin" => Some(Self::Admin),
-            "host.auth.read" => Some(Self::HostAuthRead),
-            "host.auth.write" => Some(Self::HostAuthWrite),
-            _ => None,
-        }
-    }
-
-    fn as_str(&self) -> &'static str {
-        match self {
-            Self::Read => "session.read",
-            Self::Write => "session.write",
-            Self::Resume => "session.resume",
-            Self::Admin => "session.admin",
-            Self::HostAuthRead => "host.auth.read",
-            Self::HostAuthWrite => "host.auth.write",
-        }
-    }
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TransportMode {
@@ -426,8 +395,12 @@ fn extract_bearer_token(headers: &HeaderMap) -> Option<&str> {
 }
 
 fn is_submit_or_ws_route(method: &Method, path: &str) -> bool {
-    (method == Method::POST && path.ends_with("/submit"))
-        || (method == Method::GET && path.ends_with("/ws"))
+    endpoint_for_request(method, path).is_some_and(|endpoint| {
+        matches!(
+            endpoint.id,
+            EndpointId::SessionSubmit | EndpointId::SessionWebSocket
+        )
+    })
 }
 
 fn allows_resume_capable_scope(scopes: Option<&HashSet<SessionScope>>) -> bool {
@@ -451,73 +424,15 @@ fn request_scope_satisfied(
 }
 
 fn required_scope_for_request(method: &Method, path: &str) -> Option<SessionScope> {
-    if let Some(forwarded_path) = relay_proxy_forwarded_path(path) {
-        return required_scope_for_non_relay_path(method, &forwarded_path);
-    }
-    required_scope_for_non_relay_path(method, path)
+    endpoint_for_request(method, path).and_then(|endpoint| endpoint.remote_scope)
 }
 
-fn relay_proxy_forwarded_path(path: &str) -> Option<String> {
-    let remainder = path.strip_prefix("/api/v1/relay/nodes/")?;
-    let (_, forwarded_path) = remainder.split_once('/')?;
-    let forwarded_path = forwarded_path.trim_start_matches('/');
-    if forwarded_path.is_empty() {
-        return None;
-    }
-    Some(format!("/{}", forwarded_path))
-}
-
-fn is_relay_tunnel_path(path: &str) -> bool {
-    path.trim_end_matches('/') == "/api/v1/relay/tunnel"
-}
-
-fn required_scope_for_non_relay_path(method: &Method, path: &str) -> Option<SessionScope> {
-    // Non-session routes are not subject to remote-session scope checks.
-    if !path.starts_with("/api/v1/") {
-        return None;
-    }
-    // Node tunnel registration uses independent node auth and is not a client session API.
-    if is_relay_tunnel_path(path) {
-        return None;
-    }
-    if path.starts_with("/api/v1/connections") {
-        if method == Method::GET {
-            return Some(SessionScope::HostAuthRead);
-        }
-        return Some(SessionScope::HostAuthWrite);
-    }
-
-    if method == Method::DELETE {
-        return Some(SessionScope::Admin);
-    }
-
-    if method == Method::POST {
-        if path == "/api/v1/skills/overrides" {
-            return Some(SessionScope::Admin);
-        }
-        if path.ends_with("/resume") {
-            return Some(SessionScope::Resume);
-        }
-        if path.ends_with("/fork")
-            || path.ends_with("/rollback")
-            || path.ends_with("/compact")
-            || path.ends_with("/schedule_at")
-            || path.ends_with("/sleep_until")
-        {
-            return Some(SessionScope::Admin);
-        }
-        return Some(SessionScope::Write);
-    }
-
-    if method == Method::GET {
-        if path.ends_with("/ws") {
-            // WebSocket sessions can submit operations bidirectionally.
-            return Some(SessionScope::Write);
-        }
-        return Some(SessionScope::Read);
-    }
-
-    Some(SessionScope::Write)
+fn endpoint_for_request(
+    method: &Method,
+    path: &str,
+) -> Option<&'static api_contract::EndpointDescriptor> {
+    api_contract::match_forwarded_endpoint(method, path)
+        .or_else(|| api_contract::match_endpoint(method, path))
 }
 
 pub fn required_scope_for_op(op: &alan_protocol::Op) -> SessionScope {
@@ -593,6 +508,13 @@ mod tests {
             Some(SessionScope::Resume)
         );
         assert_eq!(
+            required_scope_for_request(
+                &Method::POST,
+                "/api/v1/sessions/s1/child_runs/c1/terminate"
+            ),
+            Some(SessionScope::Write)
+        );
+        assert_eq!(
             required_scope_for_request(&Method::GET, "/api/v1/skills/catalog"),
             Some(SessionScope::Read)
         );
@@ -605,11 +527,27 @@ mod tests {
             Some(SessionScope::HostAuthRead)
         );
         assert_eq!(
+            required_scope_for_request(&Method::HEAD, "/api/v1/connections/chatgpt-main"),
+            Some(SessionScope::HostAuthRead)
+        );
+        assert_eq!(
             required_scope_for_request(
                 &Method::POST,
                 "/api/v1/connections/chatgpt-main/credential/login/device/start"
             ),
             Some(SessionScope::HostAuthWrite)
+        );
+        assert_eq!(
+            required_scope_for_request(&Method::GET, "/api/v1/connections/newer/route"),
+            None
+        );
+        assert_eq!(
+            required_scope_for_request(&Method::HEAD, "/api/v1/connections/newer/route"),
+            None
+        );
+        assert_eq!(
+            required_scope_for_request(&Method::POST, "/api/v1/connections/newer/route"),
+            None
         );
         assert_eq!(
             required_scope_for_request(&Method::POST, "/api/v1/skills/overrides"),
@@ -625,6 +563,10 @@ mod tests {
         );
         assert_eq!(
             required_scope_for_request(&Method::GET, "/api/v1/sessions/s1/ws"),
+            Some(SessionScope::Write)
+        );
+        assert_eq!(
+            required_scope_for_request(&Method::HEAD, "/api/v1/sessions/s1/ws"),
             Some(SessionScope::Write)
         );
         assert_eq!(
@@ -656,9 +598,38 @@ mod tests {
         assert_eq!(
             required_scope_for_request(
                 &Method::POST,
+                "/api/v1/relay/nodes/node-a/api/v1/sessions/s1/child_runs/c1/terminate"
+            ),
+            Some(SessionScope::Write)
+        );
+        assert_eq!(
+            required_scope_for_request(
+                &Method::POST,
                 "/api/v1/relay/nodes/node-a//api/v1/sessions/s1/submit"
             ),
             Some(SessionScope::Write)
+        );
+        assert_eq!(
+            required_scope_for_request(
+                &Method::GET,
+                "/api/v1/relay/nodes/node-a/api/v1/sessions/s1/submit"
+            ),
+            None
+        );
+        assert_eq!(
+            required_scope_for_request(&Method::POST, "/api/v1/relay/nodes/node-a/api/v1/unknown"),
+            None
+        );
+        assert_eq!(
+            required_scope_for_request(&Method::POST, "/api/v1/unknown"),
+            None
+        );
+        assert_eq!(
+            required_scope_for_request(
+                &Method::POST,
+                "/api/v1/relay/nodes/node-a/api/v1/connections/newer/route"
+            ),
+            None
         );
         assert_eq!(required_scope_for_request(&Method::GET, "/health"), None);
     }
@@ -743,6 +714,46 @@ mod tests {
     }
 
     #[test]
+    fn authorize_request_enforces_get_scopes_for_head_requests() {
+        let mut token_scopes = HashMap::new();
+        token_scopes.insert("token-r".to_string(), HashSet::from([SessionScope::Read]));
+        token_scopes.insert(
+            "token-host-r".to_string(),
+            HashSet::from([SessionScope::HostAuthRead]),
+        );
+        let control = RemoteAccessControl {
+            enabled: true,
+            token_scopes,
+        };
+
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::AUTHORIZATION,
+            HeaderValue::from_static("Bearer token-r"),
+        );
+        let context = control
+            .authorize_request(&Method::HEAD, "/api/v1/sessions", &headers)
+            .unwrap();
+        assert_eq!(context.required_scope, Some(SessionScope::Read));
+        assert!(context.authenticated);
+
+        let err = control
+            .authorize_request(&Method::HEAD, "/api/v1/connections/chatgpt-main", &headers)
+            .unwrap_err();
+        assert_eq!(err.status, StatusCode::FORBIDDEN);
+
+        headers.insert(
+            header::AUTHORIZATION,
+            HeaderValue::from_static("Bearer token-host-r"),
+        );
+        let context = control
+            .authorize_request(&Method::HEAD, "/api/v1/connections/chatgpt-main", &headers)
+            .unwrap();
+        assert_eq!(context.required_scope, Some(SessionScope::HostAuthRead));
+        assert!(context.authenticated);
+    }
+
+    #[test]
     fn authorize_request_allows_resume_scope_for_submit_and_ws_routes() {
         let mut token_scopes = HashMap::new();
         token_scopes.insert(
@@ -771,6 +782,51 @@ mod tests {
             .unwrap();
         assert_eq!(ws_context.required_scope, Some(SessionScope::Write));
         assert!(ws_context.authenticated);
+    }
+
+    #[test]
+    fn authorize_request_allows_write_scope_for_child_run_terminate() {
+        let mut token_scopes = HashMap::new();
+        token_scopes.insert(
+            "token-read".to_string(),
+            HashSet::from([SessionScope::Read]),
+        );
+        token_scopes.insert(
+            "token-write".to_string(),
+            HashSet::from([SessionScope::Write]),
+        );
+        let control = RemoteAccessControl {
+            enabled: true,
+            token_scopes,
+        };
+
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::AUTHORIZATION,
+            HeaderValue::from_static("Bearer token-write"),
+        );
+        let context = control
+            .authorize_request(
+                &Method::POST,
+                "/api/v1/sessions/s1/child_runs/c1/terminate",
+                &headers,
+            )
+            .unwrap();
+        assert_eq!(context.required_scope, Some(SessionScope::Write));
+        assert!(context.authenticated);
+
+        headers.insert(
+            header::AUTHORIZATION,
+            HeaderValue::from_static("Bearer token-read"),
+        );
+        let err = control
+            .authorize_request(
+                &Method::POST,
+                "/api/v1/sessions/s1/child_runs/c1/terminate",
+                &headers,
+            )
+            .unwrap_err();
+        assert_eq!(err.status, StatusCode::FORBIDDEN);
     }
 
     #[test]

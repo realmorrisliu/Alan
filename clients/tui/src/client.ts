@@ -8,6 +8,7 @@
 
 import { WebSocket } from "ws";
 import { DaemonManager, getDaemon } from "./daemon.js";
+import { apiPaths } from "./generated/api-contract";
 import type {
   ClientCapabilities,
   ChildRunListResponse,
@@ -261,7 +262,7 @@ export class AlanClient {
         after_event_id: afterEventId,
       });
       const response = await fetch(
-        `${this.baseUrl}/api/v1/sessions/${sessionId}/events/read?${params.toString()}`,
+        `${this.baseUrl}${apiPaths.sessionEventsRead(sessionId)}?${params.toString()}`,
       );
       if (!response.ok) {
         throw await this.buildReplayReadError(sessionId, response);
@@ -392,7 +393,7 @@ export class AlanClient {
   ): Promise<CreateSessionResponse> {
     await this.ensureDaemon();
 
-    const response = await fetch(`${this.baseUrl}/api/v1/sessions`, {
+    const response = await fetch(`${this.baseUrl}${apiPaths.sessions()}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(request || {}),
@@ -419,7 +420,7 @@ export class AlanClient {
   public async listSessions(): Promise<SessionListItem[]> {
     await this.ensureDaemon();
 
-    const response = await fetch(`${this.baseUrl}/api/v1/sessions`);
+    const response = await fetch(`${this.baseUrl}${apiPaths.sessions()}`);
 
     if (!response.ok) {
       throw new Error(`Failed to list sessions: ${response.statusText}`);
@@ -433,7 +434,7 @@ export class AlanClient {
     await this.ensureDaemon();
 
     const response = await fetch(
-      `${this.baseUrl}/api/v1/sessions/${sessionId}/read`,
+      `${this.baseUrl}${apiPaths.sessionRead(sessionId)}`,
     );
 
     if (!response.ok) {
@@ -449,7 +450,7 @@ export class AlanClient {
     await this.ensureDaemon();
 
     const response = await fetch(
-      `${this.baseUrl}/api/v1/sessions/${sessionId}/child_runs`,
+      `${this.baseUrl}${apiPaths.sessionChildRuns(sessionId)}`,
     );
 
     if (!response.ok) {
@@ -469,7 +470,7 @@ export class AlanClient {
     await this.ensureDaemon();
 
     const response = await fetch(
-      `${this.baseUrl}/api/v1/sessions/${sessionId}/child_runs/${childRunId}`,
+      `${this.baseUrl}${apiPaths.sessionChildRun(sessionId, childRunId)}`,
     );
 
     if (!response.ok) {
@@ -490,7 +491,7 @@ export class AlanClient {
     await this.ensureDaemon();
 
     const response = await fetch(
-      `${this.baseUrl}/api/v1/sessions/${sessionId}/child_runs/${childRunId}/terminate`,
+      `${this.baseUrl}${apiPaths.sessionChildRunTerminate(sessionId, childRunId)}`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -512,7 +513,7 @@ export class AlanClient {
     await this.ensureDaemon();
 
     const response = await fetch(
-      `${this.baseUrl}/api/v1/sessions/${sessionId}/submit`,
+      `${this.baseUrl}${apiPaths.sessionSubmit(sessionId)}`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -538,7 +539,7 @@ export class AlanClient {
   public async getConnectionCatalog(): Promise<ConnectionCatalogResponse> {
     await this.ensureDaemon();
 
-    const response = await fetch(`${this.baseUrl}/api/v1/connections/catalog`);
+    const response = await fetch(`${this.baseUrl}${apiPaths.connectionsCatalog()}`);
     if (!response.ok) {
       throw new Error(
         `Failed to read connection catalog: ${await this.readErrorMessage(response)}`,
@@ -551,7 +552,7 @@ export class AlanClient {
   public async listConnections(): Promise<ConnectionListResponse> {
     await this.ensureDaemon();
 
-    const response = await fetch(`${this.baseUrl}/api/v1/connections`);
+    const response = await fetch(`${this.baseUrl}${apiPaths.connections()}`);
     if (!response.ok) {
       throw new Error(
         `Failed to list connections: ${await this.readErrorMessage(response)}`,
@@ -566,7 +567,7 @@ export class AlanClient {
   ): Promise<ConnectionCurrentState> {
     await this.ensureDaemon();
 
-    const url = new URL(`${this.baseUrl}/api/v1/connections/current`);
+    const url = new URL(`${this.baseUrl}${apiPaths.connectionsCurrent()}`);
     if (workspaceDir) {
       url.searchParams.set("workspace_dir", workspaceDir);
     }
@@ -587,7 +588,7 @@ export class AlanClient {
     await this.ensureDaemon();
 
     const response = await fetch(
-      `${this.baseUrl}/api/v1/connections/${encodeURIComponent(profileId)}`,
+      `${this.baseUrl}${apiPaths.connection(profileId)}`,
     );
     if (!response.ok) {
       throw new Error(
@@ -604,7 +605,7 @@ export class AlanClient {
     await this.ensureDaemon();
 
     const response = await fetch(
-      `${this.baseUrl}/api/v1/connections`,
+      `${this.baseUrl}${apiPaths.connections()}`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -627,7 +628,7 @@ export class AlanClient {
     await this.ensureDaemon();
 
     const response = await fetch(
-      `${this.baseUrl}/api/v1/connections/${encodeURIComponent(profileId)}`,
+      `${this.baseUrl}${apiPaths.connection(profileId)}`,
       {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -647,7 +648,7 @@ export class AlanClient {
     await this.ensureDaemon();
 
     const response = await fetch(
-      `${this.baseUrl}/api/v1/connections/${encodeURIComponent(profileId)}`,
+      `${this.baseUrl}${apiPaths.connection(profileId)}`,
       {
         method: "DELETE",
       },
@@ -668,7 +669,7 @@ export class AlanClient {
     await this.ensureDaemon();
 
     const response = await fetch(
-      `${this.baseUrl}/api/v1/connections/${encodeURIComponent(profileId)}/activate`,
+      `${this.baseUrl}${apiPaths.connectionActivate(profileId)}`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -689,7 +690,7 @@ export class AlanClient {
   ): Promise<ConnectionCurrentState> {
     await this.ensureDaemon();
 
-    const response = await fetch(`${this.baseUrl}/api/v1/connections/default/set`, {
+    const response = await fetch(`${this.baseUrl}${apiPaths.connectionsDefaultSet()}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(request),
@@ -709,7 +710,7 @@ export class AlanClient {
     await this.ensureDaemon();
 
     const response = await fetch(
-      `${this.baseUrl}/api/v1/connections/default/clear`,
+      `${this.baseUrl}${apiPaths.connectionsDefaultClear()}`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -730,7 +731,7 @@ export class AlanClient {
   ): Promise<ConnectionCurrentState> {
     await this.ensureDaemon();
 
-    const response = await fetch(`${this.baseUrl}/api/v1/connections/pin`, {
+    const response = await fetch(`${this.baseUrl}${apiPaths.connectionsPin()}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(request),
@@ -749,7 +750,7 @@ export class AlanClient {
   ): Promise<ConnectionCurrentState> {
     await this.ensureDaemon();
 
-    const response = await fetch(`${this.baseUrl}/api/v1/connections/unpin`, {
+    const response = await fetch(`${this.baseUrl}${apiPaths.connectionsUnpin()}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(request),
@@ -769,7 +770,7 @@ export class AlanClient {
     await this.ensureDaemon();
 
     const response = await fetch(
-      `${this.baseUrl}/api/v1/connections/${encodeURIComponent(profileId)}/credential/status`,
+      `${this.baseUrl}${apiPaths.connectionCredentialStatus(profileId)}`,
     );
     if (!response.ok) {
       throw new Error(
@@ -787,7 +788,7 @@ export class AlanClient {
     await this.ensureDaemon();
 
     const response = await fetch(
-      `${this.baseUrl}/api/v1/connections/${encodeURIComponent(profileId)}/credential/secret`,
+      `${this.baseUrl}${apiPaths.connectionCredentialSecret(profileId)}`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -810,7 +811,7 @@ export class AlanClient {
     await this.ensureDaemon();
 
     const response = await fetch(
-      `${this.baseUrl}/api/v1/connections/${encodeURIComponent(profileId)}/credential/login/browser/start`,
+      `${this.baseUrl}${apiPaths.connectionBrowserLoginStart(profileId)}`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -832,7 +833,7 @@ export class AlanClient {
     await this.ensureDaemon();
 
     const response = await fetch(
-      `${this.baseUrl}/api/v1/connections/${encodeURIComponent(profileId)}/credential/login/device/start`,
+      `${this.baseUrl}${apiPaths.connectionDeviceLoginStart(profileId)}`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -855,7 +856,7 @@ export class AlanClient {
     await this.ensureDaemon();
 
     const response = await fetch(
-      `${this.baseUrl}/api/v1/connections/${encodeURIComponent(profileId)}/credential/login/device/complete`,
+      `${this.baseUrl}${apiPaths.connectionDeviceLoginComplete(profileId)}`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -877,7 +878,7 @@ export class AlanClient {
     await this.ensureDaemon();
 
     const response = await fetch(
-      `${this.baseUrl}/api/v1/connections/${encodeURIComponent(profileId)}/credential/logout`,
+      `${this.baseUrl}${apiPaths.connectionCredentialLogout(profileId)}`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -897,7 +898,7 @@ export class AlanClient {
     await this.ensureDaemon();
 
     const response = await fetch(
-      `${this.baseUrl}/api/v1/connections/${encodeURIComponent(profileId)}/test`,
+      `${this.baseUrl}${apiPaths.connectionTest(profileId)}`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -971,7 +972,7 @@ export class AlanClient {
     }
     this.currentSessionId = sessionId;
     const version = ++this.connectionVersion;
-    const wsUrl = `${this.wsUrl}/api/v1/sessions/${sessionId}/ws`;
+    const wsUrl = `${this.wsUrl}${apiPaths.sessionWebSocket(sessionId)}`;
 
     return new Promise((resolve, reject) => {
       let ready = false;
@@ -1169,7 +1170,7 @@ export class AlanClient {
    */
   async isDaemonRunning(): Promise<boolean> {
     try {
-      const response = await fetch(`${this.baseUrl}/health`, {
+      const response = await fetch(`${this.baseUrl}${apiPaths.health()}`, {
         signal: AbortSignal.timeout(1000),
       });
       return response.ok;

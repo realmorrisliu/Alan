@@ -24,6 +24,10 @@ fmt-check:
 guard-agent-root-layout:
     ./scripts/check-agent-root-layout-strings.sh
 
+# Check daemon API route ownership guardrails
+guard-daemon-api-contract:
+    ./scripts/check-daemon-api-route-strings.sh
+
 # Run clippy
 lint:
     cargo clippy --workspace --all-targets --all-features -- -D warnings

@@ -14,6 +14,8 @@ export interface EventHandlerMap {
   tool_call_completed: (event: EventEnvelope) => void;
   plan_updated: (event: EventEnvelope) => void;
   session_rolled_back: (event: EventEnvelope) => void;
+  compaction_observed: (event: EventEnvelope) => void;
+  memory_flush_observed: (event: EventEnvelope) => void;
   yield: (event: EventEnvelope) => void;
   error: (event: EventEnvelope) => void;
   warning: (event: EventEnvelope) => void;
@@ -27,6 +29,8 @@ export const USER_VISIBLE_EVENT_TYPES = [
   "tool_call_completed",
   "plan_updated",
   "session_rolled_back",
+  "compaction_observed",
+  "memory_flush_observed",
   "warning",
   "error",
 ] as const;

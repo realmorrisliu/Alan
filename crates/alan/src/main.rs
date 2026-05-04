@@ -112,6 +112,13 @@ enum DaemonAction {
     Stop,
     /// Show daemon status
     Status,
+    /// Emit the daemon API contract for generated clients
+    #[command(name = "api-contract", hide = true)]
+    ApiContract {
+        /// Emit TypeScript endpoint helpers instead of JSON
+        #[arg(long)]
+        typescript: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -766,6 +773,19 @@ async fn main() -> Result<()> {
             }
             DaemonAction::Status => {
                 cli::daemon::daemon_status().await?;
+            }
+            DaemonAction::ApiContract { typescript } => {
+                if typescript {
+                    print!(
+                        "{}",
+                        daemon::api_contract::render_typescript_endpoint_helpers()
+                    );
+                } else {
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&daemon::api_contract::endpoint_manifest())?
+                    );
+                }
             }
         },
         Some(Commands::Init { path, name, silent }) => {
