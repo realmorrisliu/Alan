@@ -103,6 +103,8 @@ pub struct SessionEntry {
     pub provider: Option<alan_runtime::LlmProvider>,
     /// Bound resolved model for this session.
     pub resolved_model: String,
+    /// Effective reasoning effort for this session, if resolved.
+    pub reasoning_effort: Option<alan_protocol::ReasoningEffort>,
     /// Governance configuration for this session runtime.
     pub governance: alan_protocol::GovernanceConfig,
     /// Active execution backend for this session runtime.
@@ -169,6 +171,7 @@ pub struct CreateSessionFromRolloutOptions {
     pub resume_rollout_path: Option<PathBuf>,
     pub agent_name: Option<String>,
     pub profile_id: Option<String>,
+    pub reasoning_effort: Option<alan_protocol::ReasoningEffort>,
     pub governance: Option<alan_protocol::GovernanceConfig>,
     pub streaming_mode: Option<alan_runtime::StreamingMode>,
     pub partial_stream_recovery_mode: Option<alan_runtime::PartialStreamRecoveryMode>,
@@ -468,6 +471,7 @@ impl SessionEntry {
         profile_id: Option<String>,
         provider: Option<alan_runtime::LlmProvider>,
         resolved_model: String,
+        reasoning_effort: Option<alan_protocol::ReasoningEffort>,
         governance: alan_protocol::GovernanceConfig,
         streaming_mode: alan_runtime::StreamingMode,
         partial_stream_recovery_mode: alan_runtime::PartialStreamRecoveryMode,
@@ -489,6 +493,7 @@ impl SessionEntry {
             profile_id,
             provider,
             resolved_model,
+            reasoning_effort,
             governance,
             execution_backend: alan_runtime::tools::Sandbox::backend_name_static().to_string(),
             streaming_mode,
@@ -599,6 +604,7 @@ impl AppState {
                 binding.profile_id,
                 binding.provider,
                 binding.resolved_model,
+                binding.reasoning_effort,
                 binding.governance,
                 binding.streaming_mode.unwrap_or(self.config.streaming_mode),
                 binding
@@ -1511,6 +1517,7 @@ impl AppState {
             resume_rollout_path,
             agent_name,
             profile_id,
+            reasoning_effort,
             governance,
             streaming_mode,
             partial_stream_recovery_mode,
@@ -1542,6 +1549,7 @@ impl AppState {
             governance: governance.clone(),
             agent_name: agent_name.clone(),
             connection_profile: profile_id.clone(),
+            reasoning_effort,
             streaming_mode: Some(effective_streaming_mode),
             partial_stream_recovery_mode: Some(effective_partial_stream_recovery_mode),
             durability_required: self.config.durability.required,
@@ -1554,6 +1562,7 @@ impl AppState {
             resolved_profile_id,
             resolved_provider,
             resolved_model,
+            effective_reasoning_effort,
         } = self
             .runtime_manager
             .start_runtime(
@@ -1606,6 +1615,7 @@ impl AppState {
             resolved_profile_id.clone(),
             resolved_provider,
             resolved_model.clone(),
+            effective_reasoning_effort,
             governance.clone(),
             effective_streaming_mode,
             effective_partial_stream_recovery_mode,
@@ -1634,6 +1644,7 @@ impl AppState {
             profile_id: resolved_profile_id,
             provider: resolved_provider,
             resolved_model,
+            reasoning_effort: effective_reasoning_effort,
             streaming_mode: Some(effective_streaming_mode),
             partial_stream_recovery_mode: Some(effective_partial_stream_recovery_mode),
             rollout_path,
@@ -1692,6 +1703,7 @@ impl AppState {
                         governance: entry.governance.clone(),
                         agent_name: entry.agent_name.clone(),
                         connection_profile: entry.profile_id.clone(),
+                        reasoning_effort: entry.reasoning_effort,
                         streaming_mode: Some(entry.streaming_mode),
                         partial_stream_recovery_mode: Some(entry.partial_stream_recovery_mode),
                         durability_required: entry.durability_required,
@@ -1709,7 +1721,10 @@ impl AppState {
         // Fallback to start_runtime() handles races where runtime exits between checks.
         let mut fallback_rollout_path = persisted_rollout_path.clone();
         let RuntimeStartResult {
-            handle, startup, ..
+            handle,
+            startup,
+            effective_reasoning_effort,
+            ..
         } = match self.runtime_manager.get_handle(id).await {
             Ok(handle) => RuntimeStartResult {
                 handle,
@@ -1731,6 +1746,10 @@ impl AppState {
                 resolved_profile_id: None,
                 resolved_provider: None,
                 resolved_model: String::new(),
+                effective_reasoning_effort: {
+                    let sessions = self.sessions.read().await;
+                    sessions.get(id).and_then(|entry| entry.reasoning_effort)
+                },
             },
             Err(get_err) => {
                 warn!(
@@ -1803,6 +1822,7 @@ impl AppState {
             entry.submission_tx = handle.submission_tx;
             entry.set_durability(startup.durability);
             entry.execution_backend = startup.execution_backend.clone();
+            entry.reasoning_effort = effective_reasoning_effort;
             entry.event_bridge_task = Some(new_bridge);
             entry.rollout_path = rollout_path.clone();
             entry.active = true;
@@ -2606,6 +2626,7 @@ Body
             None,
             None,
             "gpt-5.4".to_string(),
+            Some(alan_protocol::ReasoningEffort::Medium),
             alan_protocol::GovernanceConfig {
                 profile: alan_protocol::GovernanceProfile::Conservative,
                 policy_path: None,
@@ -2914,6 +2935,7 @@ Body
                 profile_id: None,
                 provider: None,
                 resolved_model: String::new(),
+                reasoning_effort: None,
                 streaming_mode: Some(alan_runtime::StreamingMode::Auto),
                 partial_stream_recovery_mode: Some(
                     alan_runtime::PartialStreamRecoveryMode::ContinueOnce,
@@ -3265,6 +3287,7 @@ Body
                 profile_id: None,
                 provider: None,
                 resolved_model: String::new(),
+                reasoning_effort: None,
                 streaming_mode: Some(alan_runtime::StreamingMode::Auto),
                 partial_stream_recovery_mode: Some(
                     alan_runtime::PartialStreamRecoveryMode::ContinueOnce,
@@ -3302,6 +3325,7 @@ Body
                 profile_id: None,
                 provider: None,
                 resolved_model: String::new(),
+                reasoning_effort: None,
                 streaming_mode: Some(alan_runtime::StreamingMode::Auto),
                 partial_stream_recovery_mode: Some(
                     alan_runtime::PartialStreamRecoveryMode::ContinueOnce,
@@ -3342,6 +3366,7 @@ Body
                 profile_id: None,
                 provider: None,
                 resolved_model: String::new(),
+                reasoning_effort: None,
                 streaming_mode: Some(alan_runtime::StreamingMode::Auto),
                 partial_stream_recovery_mode: Some(
                     alan_runtime::PartialStreamRecoveryMode::ContinueOnce,
@@ -3385,6 +3410,7 @@ Body
                 profile_id: None,
                 provider: None,
                 resolved_model: String::new(),
+                reasoning_effort: None,
                 streaming_mode: Some(alan_runtime::StreamingMode::Auto),
                 partial_stream_recovery_mode: Some(
                     alan_runtime::PartialStreamRecoveryMode::ContinueOnce,

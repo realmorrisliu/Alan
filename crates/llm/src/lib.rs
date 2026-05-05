@@ -38,6 +38,7 @@
 //! }
 //! ```
 
+pub use alan_protocol::{ReasoningControls, ReasoningEffort};
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -118,6 +119,7 @@ pub struct ProviderCapabilities {
     pub supports_provider_response_status: bool,
     pub supports_reasoning_text: bool,
     pub supports_reasoning_signature: bool,
+    pub supports_reasoning_effort_control: bool,
     pub supports_redacted_thinking: bool,
     pub supports_multimodal_input: bool,
     pub supports_document_input: bool,
@@ -166,6 +168,8 @@ pub struct GenerationRequest {
     pub max_tokens: Option<i32>,
     /// Thinking budget in tokens (provider-specific; e.g. Anthropic budget or OpenAI effort hint)
     pub thinking_budget_tokens: Option<u32>,
+    /// Canonical cross-provider reasoning controls.
+    pub reasoning: ReasoningControls,
     /// Provider-specific extra parameters
     pub extra_params: HashMap<String, serde_json::Value>,
 }
@@ -240,6 +244,7 @@ impl GenerationRequest {
             temperature: None,
             max_tokens: None,
             thinking_budget_tokens: None,
+            reasoning: ReasoningControls::default(),
             extra_params: HashMap::new(),
         }
     }
@@ -313,6 +318,20 @@ impl GenerationRequest {
     /// Set provider-specific thinking/reasoning budget tokens.
     pub fn with_thinking_budget_tokens(mut self, tokens: u32) -> Self {
         self.thinking_budget_tokens = Some(tokens);
+        self.reasoning.budget_tokens = Some(tokens);
+        self
+    }
+
+    /// Set canonical named reasoning effort.
+    pub fn with_reasoning_effort(mut self, effort: ReasoningEffort) -> Self {
+        self.reasoning.effort = Some(effort);
+        self
+    }
+
+    /// Set canonical reasoning controls.
+    pub fn with_reasoning_controls(mut self, controls: ReasoningControls) -> Self {
+        self.reasoning = controls;
+        self.thinking_budget_tokens = controls.budget_tokens;
         self
     }
 
@@ -950,6 +969,7 @@ impl factory::ProviderType {
                 supports_provider_response_status: false,
                 supports_reasoning_text: false,
                 supports_reasoning_signature: false,
+                supports_reasoning_effort_control: true,
                 supports_redacted_thinking: false,
                 supports_multimodal_input: false,
                 supports_document_input: false,
@@ -968,6 +988,7 @@ impl factory::ProviderType {
                 supports_provider_response_status: true,
                 supports_reasoning_text: true,
                 supports_reasoning_signature: true,
+                supports_reasoning_effort_control: true,
                 supports_redacted_thinking: false,
                 supports_multimodal_input: false,
                 supports_document_input: false,
@@ -986,6 +1007,7 @@ impl factory::ProviderType {
                 supports_provider_response_status: true,
                 supports_reasoning_text: true,
                 supports_reasoning_signature: true,
+                supports_reasoning_effort_control: true,
                 supports_redacted_thinking: false,
                 supports_multimodal_input: true,
                 supports_document_input: true,
@@ -1004,6 +1026,7 @@ impl factory::ProviderType {
                 supports_provider_response_status: false,
                 supports_reasoning_text: true,
                 supports_reasoning_signature: false,
+                supports_reasoning_effort_control: true,
                 supports_redacted_thinking: false,
                 supports_multimodal_input: true,
                 supports_document_input: true,
@@ -1022,6 +1045,7 @@ impl factory::ProviderType {
                 supports_provider_response_status: false,
                 supports_reasoning_text: false,
                 supports_reasoning_signature: false,
+                supports_reasoning_effort_control: true,
                 supports_redacted_thinking: false,
                 supports_multimodal_input: false,
                 supports_document_input: false,
@@ -1040,6 +1064,7 @@ impl factory::ProviderType {
                 supports_provider_response_status: false,
                 supports_reasoning_text: true,
                 supports_reasoning_signature: true,
+                supports_reasoning_effort_control: true,
                 supports_redacted_thinking: false,
                 supports_multimodal_input: false,
                 supports_document_input: false,
@@ -1058,6 +1083,7 @@ impl factory::ProviderType {
                 supports_provider_response_status: false,
                 supports_reasoning_text: true,
                 supports_reasoning_signature: true,
+                supports_reasoning_effort_control: true,
                 supports_redacted_thinking: true,
                 supports_multimodal_input: true,
                 supports_document_input: true,
@@ -1340,6 +1366,24 @@ mod tests {
             request.extra_params.get("context_management"),
             Some(&serde_json::json!({ "compact_threshold": 8192 }))
         );
+    }
+
+    #[test]
+    fn test_generation_request_reasoning_controls_sync_legacy_budget() {
+        let cleared = GenerationRequest::new()
+            .with_thinking_budget_tokens(2048)
+            .with_reasoning_controls(ReasoningControls::default());
+
+        assert_eq!(cleared.reasoning, ReasoningControls::default());
+        assert_eq!(cleared.thinking_budget_tokens, None);
+
+        let budgeted = GenerationRequest::new().with_reasoning_controls(ReasoningControls {
+            effort: None,
+            budget_tokens: Some(512),
+        });
+
+        assert_eq!(budgeted.reasoning.budget_tokens, Some(512));
+        assert_eq!(budgeted.thinking_budget_tokens, Some(512));
     }
 
     #[test]

@@ -148,6 +148,7 @@ export type ContentPart = ContentTextPart | ContentStructuredPart;
 
 export interface TurnContext {
   workspace_id?: string;
+  reasoning_effort?: ReasoningEffort;
 }
 
 export interface DynamicToolSpec {
@@ -164,6 +165,13 @@ export interface GovernanceConfig {
 
 export type StreamingMode = "auto" | "on" | "off";
 export type PartialStreamRecoveryMode = "continue_once" | "off";
+export type ReasoningEffort =
+  | "none"
+  | "minimal"
+  | "low"
+  | "medium"
+  | "high"
+  | "xhigh";
 export type ProviderId =
   | "chatgpt"
   | "google_gemini_generate_content"
@@ -201,6 +209,7 @@ export interface SessionListItem {
   profile_id?: string;
   provider?: ProviderId;
   resolved_model: string;
+  reasoning_effort?: ReasoningEffort;
   governance: GovernanceConfig;
   execution_backend: string;
   streaming_mode: StreamingMode;
@@ -225,6 +234,7 @@ export interface SessionReadResponse {
   profile_id?: string;
   provider?: ProviderId;
   resolved_model: string;
+  reasoning_effort?: ReasoningEffort;
   governance: GovernanceConfig;
   execution_backend: string;
   streaming_mode: StreamingMode;
@@ -294,6 +304,7 @@ export interface CreateSessionRequest {
   workspace_dir?: string;
   agent_name?: string;
   profile_id?: string;
+  reasoning_effort?: ReasoningEffort;
   governance?: GovernanceConfig;
   streaming_mode?: StreamingMode;
   partial_stream_recovery_mode?: PartialStreamRecoveryMode;
@@ -308,6 +319,7 @@ export interface CreateSessionResponse {
   profile_id?: string;
   provider?: ProviderId;
   resolved_model: string;
+  reasoning_effort?: ReasoningEffort;
   governance: GovernanceConfig;
   execution_backend: string;
   streaming_mode: StreamingMode;

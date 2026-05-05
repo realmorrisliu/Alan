@@ -127,6 +127,7 @@ fn sample_create_session_response() -> CreateSessionResponse {
         profile_id: Some("chatgpt-main".to_string()),
         provider: Some(LlmProvider::Chatgpt),
         resolved_model: "gpt-5.3-codex".to_string(),
+        reasoning_effort: Some(alan_protocol::ReasoningEffort::Medium),
         durability: sample_durability(),
     }
 }
@@ -144,6 +145,7 @@ fn sample_session_list_item() -> SessionListItem {
         profile_id: Some("chatgpt-main".to_string()),
         provider: Some(LlmProvider::Chatgpt),
         resolved_model: "gpt-5.3-codex".to_string(),
+        reasoning_effort: Some(alan_protocol::ReasoningEffort::Medium),
         durability: sample_durability(),
     }
 }
@@ -161,6 +163,7 @@ fn sample_session_read_response() -> SessionReadResponse {
         profile_id: Some("chatgpt-main".to_string()),
         provider: Some(LlmProvider::Chatgpt),
         resolved_model: "gpt-5.3-codex".to_string(),
+        reasoning_effort: Some(alan_protocol::ReasoningEffort::Medium),
         durability: sample_durability(),
         rollout_path: Some("/tmp/workspace/.alan/sessions/sess-1.jsonl".to_string()),
         latest_compaction_attempt: None,

@@ -72,6 +72,8 @@ pub struct RuntimeConfig {
     pub policy_engine: crate::policy::PolicyEngine,
     /// Budget tokens for provider-specific thinking/reasoning. None = disabled.
     pub thinking_budget_tokens: Option<u32>,
+    /// Named cross-provider reasoning effort. None = use provider default or legacy budget.
+    pub model_reasoning_effort: Option<alan_protocol::ReasoningEffort>,
     /// Streaming strategy (`auto`/`on`/`off`).
     pub streaming_mode: crate::config::StreamingMode,
     /// Recovery strategy when streaming is interrupted after visible output.
@@ -107,6 +109,7 @@ impl Default for RuntimeConfig {
                 crate::policy::PolicyProfile::Autonomous,
             ),
             thinking_budget_tokens: None,
+            model_reasoning_effort: None,
             streaming_mode: crate::config::StreamingMode::Auto,
             partial_stream_recovery_mode: crate::config::PartialStreamRecoveryMode::ContinueOnce,
             durability_required: false,
@@ -136,6 +139,7 @@ impl From<&crate::config::Config> for RuntimeConfig {
                 crate::policy::PolicyProfile::Autonomous,
             ),
             thinking_budget_tokens: config.thinking_budget_tokens,
+            model_reasoning_effort: config.effective_model_reasoning_effort(),
             streaming_mode: config.streaming_mode,
             partial_stream_recovery_mode: config.partial_stream_recovery_mode,
             durability_required: config.durability.required,

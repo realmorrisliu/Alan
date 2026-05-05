@@ -846,10 +846,37 @@ where
     state
         .turn_state
         .set_active_skills(prompt_build.active_skills.clone());
+    let active_skill_ids = prompt_build
+        .active_skills
+        .iter()
+        .map(|skill| skill.metadata.id.clone())
+        .collect::<Vec<_>>();
     let _domain_prompt = prompt_build.domain_prompt;
     let system_prompt = prompt_build.system_prompt;
 
     let tools = turn_tool_definitions(state);
+    let tool_names = tools
+        .iter()
+        .map(|tool| tool.name.clone())
+        .collect::<Vec<_>>();
+    let reasoning_effort = state
+        .turn_state
+        .active_turn_reasoning_effort()
+        .or(state.runtime_config.model_reasoning_effort);
+    let model = state.core_config.effective_model().to_string();
+    let memory_enabled = state.core_config.memory.enabled;
+    let context_items = state.session.tape.context_items().to_vec();
+    let context_delta = state.session.tape.last_context_delta().clone();
+    state.session.record_turn_context_if_changed(
+        &model,
+        reasoning_effort,
+        &system_prompt,
+        &context_items,
+        &tool_names,
+        memory_enabled,
+        &active_skill_ids,
+        &context_delta,
+    );
 
     let max_tool_loops = if state.runtime_config.max_tool_loops == 0 {
         None
@@ -978,15 +1005,31 @@ where
                 .with_previous_response_id(previous_response_id)
                 .with_store(true);
         }
-        request.thinking_budget_tokens = state.runtime_config.thinking_budget_tokens;
+        if let Some(effort) = reasoning_effort {
+            if !provider_capabilities.supports_reasoning_effort_control {
+                anyhow::bail!(
+                    "provider `{}` does not support reasoning effort controls",
+                    provider
+                );
+            }
+            state
+                .core_config
+                .validate_reasoning_effort_for_resolved_model(effort)?;
+            request.reasoning.effort = Some(effort);
+        } else if let Some(thinking_budget_tokens) = state.runtime_config.thinking_budget_tokens {
+            request = request.with_thinking_budget_tokens(thinking_budget_tokens);
+        }
 
         let request_start = Instant::now();
+        let reasoning_effort_log = reasoning_effort.map(|effort| effort.to_string());
         info!(
             messages = messages.len(),
             estimated_prompt_tokens,
             context_revision,
             tools = tools.len(),
             provider,
+            reasoning_effort = reasoning_effort_log.as_deref(),
+            reasoning_budget_tokens = request.reasoning.budget_tokens,
             "LLM request"
         );
 
@@ -1740,6 +1783,7 @@ mod tests {
     use crate::{
         config::Config,
         llm::LlmClient,
+        rollout::{RolloutItem, RolloutRecorder},
         runtime::{RuntimeConfig, TurnState},
         session::Session,
         skills::{ResolvedCapabilityView, ScopedPackageDir, SkillScope},
@@ -3010,6 +3054,202 @@ description: {description}
             .responses_continuation()
             .expect("continuation");
         assert_eq!(continuation.last_response_id, "resp_next");
+    }
+
+    #[tokio::test]
+    async fn test_run_turn_populates_generation_request_reasoning_effort() {
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let provider = CapturingResponsesProvider {
+            requests: Arc::clone(&requests),
+            response: GenerationResponse {
+                content: "answer".to_string(),
+                thinking: None,
+                thinking_signature: None,
+                redacted_thinking: Vec::new(),
+                tool_calls: vec![],
+                usage: None,
+                finish_reason: None,
+                warnings: Vec::new(),
+                provider_response_id: None,
+                provider_response_status: None,
+            },
+            provider_name: "openai_responses",
+        };
+        let mut state = create_test_state_with_provider(provider);
+        state.runtime_config.streaming_mode = crate::config::StreamingMode::Off;
+        state.runtime_config.model_reasoning_effort = Some(alan_protocol::ReasoningEffort::High);
+        let cancel = CancellationToken::new();
+
+        let mut emit = |_event: Event| async {};
+        run_turn_with_cancel(
+            &mut state,
+            TurnRunKind::NewTurn,
+            Some(vec![ContentPart::text("input")]),
+            &mut emit,
+            &cancel,
+            None,
+        )
+        .await
+        .unwrap();
+
+        let requests = requests.lock().unwrap();
+        let request = requests.last().expect("captured request");
+        assert_eq!(
+            request.reasoning.effort,
+            Some(alan_protocol::ReasoningEffort::High)
+        );
+        assert_eq!(request.reasoning.budget_tokens, None);
+    }
+
+    #[tokio::test]
+    async fn test_run_turn_uses_turn_reasoning_effort_before_session_effort() {
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let provider = CapturingResponsesProvider {
+            requests: Arc::clone(&requests),
+            response: GenerationResponse {
+                content: "answer".to_string(),
+                thinking: None,
+                thinking_signature: None,
+                redacted_thinking: Vec::new(),
+                tool_calls: vec![],
+                usage: None,
+                finish_reason: None,
+                warnings: Vec::new(),
+                provider_response_id: None,
+                provider_response_status: None,
+            },
+            provider_name: "openai_responses",
+        };
+        let mut state = create_test_state_with_provider(provider);
+        let temp_dir = TempDir::new().unwrap();
+        state.session = Session::new_with_recorder_in_dir("gpt-5.4", temp_dir.path())
+            .await
+            .unwrap();
+        state.runtime_config.streaming_mode = crate::config::StreamingMode::Off;
+        state.runtime_config.model_reasoning_effort = Some(alan_protocol::ReasoningEffort::High);
+        state
+            .turn_state
+            .set_active_turn_reasoning_effort(Some(alan_protocol::ReasoningEffort::Low));
+        let cancel = CancellationToken::new();
+
+        let mut emit = |_event: Event| async {};
+        run_turn_with_cancel(
+            &mut state,
+            TurnRunKind::NewTurn,
+            Some(vec![ContentPart::text("input")]),
+            &mut emit,
+            &cancel,
+            None,
+        )
+        .await
+        .unwrap();
+
+        {
+            let requests = requests.lock().unwrap();
+            let request = requests.last().expect("captured request");
+            assert_eq!(
+                request.reasoning.effort,
+                Some(alan_protocol::ReasoningEffort::Low)
+            );
+            assert_eq!(request.reasoning.budget_tokens, None);
+        }
+
+        state.session.flush().await;
+        let rollout_path = state.session.rollout_path().expect("rollout path");
+        let persisted_effort = RolloutRecorder::load_history(rollout_path)
+            .await
+            .unwrap()
+            .into_iter()
+            .find_map(|item| match item {
+                RolloutItem::TurnContext(ctx) => ctx.reasoning_effort,
+                _ => None,
+            });
+        assert_eq!(persisted_effort, Some(alan_protocol::ReasoningEffort::Low));
+    }
+
+    #[tokio::test]
+    async fn test_run_turn_preserves_legacy_thinking_budget_without_effort() {
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let provider = CapturingResponsesProvider {
+            requests: Arc::clone(&requests),
+            response: GenerationResponse {
+                content: "answer".to_string(),
+                thinking: None,
+                thinking_signature: None,
+                redacted_thinking: Vec::new(),
+                tool_calls: vec![],
+                usage: None,
+                finish_reason: None,
+                warnings: Vec::new(),
+                provider_response_id: None,
+                provider_response_status: None,
+            },
+            provider_name: "openai_responses",
+        };
+        let mut state = create_test_state_with_provider(provider);
+        state.runtime_config.streaming_mode = crate::config::StreamingMode::Off;
+        state.runtime_config.thinking_budget_tokens = Some(2048);
+        let cancel = CancellationToken::new();
+
+        let mut emit = |_event: Event| async {};
+        run_turn_with_cancel(
+            &mut state,
+            TurnRunKind::NewTurn,
+            Some(vec![ContentPart::text("input")]),
+            &mut emit,
+            &cancel,
+            None,
+        )
+        .await
+        .unwrap();
+
+        let requests = requests.lock().unwrap();
+        let request = requests.last().expect("captured request");
+        assert_eq!(request.reasoning.effort, None);
+        assert_eq!(request.reasoning.budget_tokens, Some(2048));
+        assert_eq!(request.thinking_budget_tokens, Some(2048));
+    }
+
+    #[tokio::test]
+    async fn test_run_turn_omits_reasoning_controls_when_unset() {
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let provider = CapturingResponsesProvider {
+            requests: Arc::clone(&requests),
+            response: GenerationResponse {
+                content: "answer".to_string(),
+                thinking: None,
+                thinking_signature: None,
+                redacted_thinking: Vec::new(),
+                tool_calls: vec![],
+                usage: None,
+                finish_reason: None,
+                warnings: Vec::new(),
+                provider_response_id: None,
+                provider_response_status: None,
+            },
+            provider_name: "openai_responses",
+        };
+        let mut state = create_test_state_with_provider(provider);
+        state.runtime_config.streaming_mode = crate::config::StreamingMode::Off;
+        let cancel = CancellationToken::new();
+
+        let mut emit = |_event: Event| async {};
+        run_turn_with_cancel(
+            &mut state,
+            TurnRunKind::NewTurn,
+            Some(vec![ContentPart::text("input")]),
+            &mut emit,
+            &cancel,
+            None,
+        )
+        .await
+        .unwrap();
+
+        let requests = requests.lock().unwrap();
+        let request = requests.last().expect("captured request");
+        assert_eq!(request.reasoning.effort, None);
+        assert_eq!(request.reasoning.budget_tokens, None);
+        assert_eq!(request.thinking_budget_tokens, None);
     }
 
     #[tokio::test]

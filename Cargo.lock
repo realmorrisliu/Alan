@@ -87,6 +87,7 @@ name = "alan-llm"
 version = "0.1.0"
 dependencies = [
  "alan-auth",
+ "alan-protocol",
  "anyhow",
  "async-trait",
  "axum",

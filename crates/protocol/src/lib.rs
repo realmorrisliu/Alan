@@ -11,6 +11,7 @@ mod event;
 mod host_auth;
 mod memory;
 mod op;
+mod reasoning;
 mod spawn;
 
 pub use adaptive::{
@@ -34,6 +35,7 @@ pub use op::{
     DynamicToolSpec, GovernanceConfig, GovernanceProfile, InputMode, Op, PlanItem, PlanItemStatus,
     Submission, ToolCapability, TurnContext,
 };
+pub use reasoning::{ReasoningControls, ReasoningEffort};
 pub use spawn::{
     SpawnHandle, SpawnLaunchInputs, SpawnRuntimeOverrides, SpawnSpec, SpawnTarget,
     SpawnToolProfileOverride,

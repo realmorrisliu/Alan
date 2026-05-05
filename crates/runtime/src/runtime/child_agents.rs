@@ -1134,6 +1134,9 @@ fn build_child_agent_config(parent: &RuntimeLoopState, spec: &SpawnSpec) -> Agen
     if let Some(budget_tokens) = spec.launch.budget_tokens {
         child_agent_config.set_thinking_budget_override(Some(budget_tokens));
     }
+    if let Some(effort) = spec.runtime_overrides.model_reasoning_effort {
+        child_agent_config.set_model_reasoning_effort_override(Some(effort));
+    }
     if let Some(policy_path) = spec.runtime_overrides.policy_path.clone() {
         child_agent_config.runtime_config.governance.policy_path = Some(policy_path);
     }
@@ -2351,6 +2354,51 @@ thinking_budget_tokens = 1024
 
         let recorded = requests.0.lock().unwrap();
         assert_eq!(recorded[0].thinking_budget_tokens, Some(512));
+    }
+
+    #[tokio::test]
+    async fn spawn_child_runtime_applies_reasoning_effort_override_after_overlay() {
+        let temp = TempDir::new().unwrap();
+        let requests = RecordedRequests::default();
+        let response = completed_response("Child finished cleanly.");
+        let parent = make_parent_state(&temp, requests.clone(), response.clone());
+        let root_dir = temp.path().join("repo/.alan/agents/grader");
+        std::fs::write(
+            root_dir.join("agent.toml"),
+            r#"
+model_reasoning_effort = "high"
+"#,
+        )
+        .unwrap();
+        let seen_config = Arc::new(Mutex::new(None::<crate::Config>));
+        let seen_config_for_factory = seen_config.clone();
+        let mut spec = launch_spec(root_dir);
+        spec.runtime_overrides.model_reasoning_effort = Some(alan_protocol::ReasoningEffort::Low);
+
+        let child = spawn_child_runtime_with_client_factory(&parent, spec, |config| {
+            *seen_config_for_factory.lock().unwrap() = Some(config.clone());
+            Ok(LlmClient::new(RecordingProvider::new(
+                requests.clone(),
+                response.clone(),
+            )))
+        })
+        .await
+        .unwrap();
+        let result = child.join().await.unwrap();
+
+        assert_eq!(result.status, ChildRuntimeStatus::Completed);
+        let seen_config = seen_config.lock().unwrap().clone().unwrap();
+        assert_eq!(
+            seen_config.effective_model_reasoning_effort(),
+            Some(alan_protocol::ReasoningEffort::Low)
+        );
+
+        let recorded = requests.0.lock().unwrap();
+        assert_eq!(
+            recorded[0].reasoning.effort,
+            Some(alan_protocol::ReasoningEffort::Low)
+        );
+        assert_eq!(recorded[0].reasoning.budget_tokens, None);
     }
 
     #[test]
