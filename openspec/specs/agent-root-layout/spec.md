@@ -1,7 +1,11 @@
 # agent-root-layout Specification
 
 ## Purpose
-TBD - created by archiving change unify-agent-root-paths. Update Purpose after archive.
+Define Alan's durable external agent-root layout contract: canonical default and
+named root paths, default agent semantics, overlay order, asset loading and
+writing, singular `.alan/agent/` removal, and repository hygiene. This
+capability owns user-visible layout behavior; implementation guardrails for how
+code constructs these paths live in `agent-root-layout-contract`.
 ## Requirements
 ### Requirement: Canonical agent root directories
 Alan SHALL store every default and named agent definition root under an `agents`
@@ -124,4 +128,3 @@ state from authored agent definitions using the canonical `.alan/agents/` layout
 - **WHEN** a workspace contains files under `.alan/agent/`
 - **THEN** repository ignore rules do not allowlist that path as an authored agent root
 - **AND** documentation instructs users to move authored files to `.alan/agents/default/`
-

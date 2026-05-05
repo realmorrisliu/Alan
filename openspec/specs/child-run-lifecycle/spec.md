@@ -1,7 +1,9 @@
 # child-run-lifecycle Specification
 
 ## Purpose
-TBD - created by archiving change sub-agent-lifecycle-control. Update Purpose after archive.
+Define delegated child-run lifecycle behavior: registration before first
+submission, liveness and timeout classification, progress metadata, daemon and
+TUI control surfaces, and governed parent-initiated termination.
 ## Requirements
 ### Requirement: Child Run Registration
 The system SHALL create a child-run record before submitting the first operation to a delegated child runtime.
@@ -84,4 +86,3 @@ The parent runtime SHALL expose a governed virtual tool for terminating a known 
 #### Scenario: Parent terminates terminal child
 - **WHEN** the parent runtime invokes child termination for a child run that is already terminal
 - **THEN** the tool returns the existing terminal state and records no duplicate termination transition
-

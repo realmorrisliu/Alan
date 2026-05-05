@@ -1,7 +1,10 @@
 # daemon-api-contract Specification
 
 ## Purpose
-TBD - created by archiving change centralize-daemon-api-contract. Update Purpose after archive.
+Define Alan daemon API route contract requirements: endpoint metadata, shared URL
+construction, remote access scope, relay policy, generated client helpers,
+payload drift checks, public route compatibility, and raw route-string
+guardrails.
 ## Requirements
 ### Requirement: Canonical Endpoint Registry
 The daemon SHALL define a canonical endpoint registry that lists every supported
@@ -111,4 +114,3 @@ construction code outside the approved contract or generated files.
   a new raw `/api/v1/...` route string
 - **THEN** the route string guardrail fails and points to the endpoint contract
   helper surface
-

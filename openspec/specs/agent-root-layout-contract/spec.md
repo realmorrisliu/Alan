@@ -1,7 +1,11 @@
 # agent-root-layout-contract Specification
 
 ## Purpose
-TBD - created by archiving change centralize-agent-root-layout-contract. Update Purpose after archive.
+Define the implementation boundary that keeps production code using
+runtime-owned typed agent-root layout APIs instead of duplicating canonical path
+construction. This capability depends on `agent-root-layout` for external path
+semantics and owns code-level centralization, non-Rust mirror constraints, and
+guardrails.
 ## Requirements
 ### Requirement: Runtime-owned agent-root layout
 Alan SHALL expose a runtime-owned typed API for canonical agent-root layout
@@ -75,4 +79,3 @@ layout strings in Rust production code outside approved layout-owner locations.
 - **WHEN** tests, documentation, or OpenSpec artifacts use literal canonical paths to describe the external contract
 - **THEN** the guardrail allows those paths through an explicit scope or allowlist
 - **AND** the allowed usage does not become a production-code layout owner
-

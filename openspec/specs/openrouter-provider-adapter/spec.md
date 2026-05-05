@@ -92,7 +92,10 @@ compatible client.
 Alan SHALL map Alan generation requests to OpenRouter SDK chat requests without
 requiring runtime code to depend on OpenRouter SDK types. Reasoning control
 precedence and validation are owned by `provider-request-controls`; this
-capability covers the OpenRouter-specific wire projection.
+capability covers the OpenRouter-specific wire projection. Normalized request
+controls, including effective reasoning effort, are supplied on
+`GenerationRequest` by `provider-request-controls`; the OpenRouter adapter only
+translates those controls to supported OpenRouter SDK fields.
 
 #### Scenario: Basic message projection
 - **WHEN** a request contains a system prompt and user, assistant, context, and tool messages
@@ -109,6 +112,10 @@ capability covers the OpenRouter-specific wire projection.
 #### Scenario: Reasoning budget projection
 - **WHEN** a request contains `thinking_budget_tokens`
 - **THEN** the OpenRouter adapter maps the budget to OpenRouter reasoning request fields supported by the SDK
+
+#### Scenario: Reasoning effort projection
+- **WHEN** a request contains normalized effective reasoning effort
+- **THEN** the OpenRouter adapter maps the effort to OpenRouter reasoning request fields supported by the SDK without recomputing Alan-level precedence or defaults
 
 #### Scenario: Unsupported provider extra parameter
 - **WHEN** a request contains an OpenRouter `extra_params` key that the adapter does not support
