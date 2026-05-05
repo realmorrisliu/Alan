@@ -536,9 +536,13 @@ extension ShellStateSnapshot {
 }
 
 extension ShellStateSnapshot {
+    private static func defaultShellWorkingDirectory() -> String {
+        FileManager.default.homeDirectoryForCurrentUser.path
+    }
+
     static func bootstrapDefault(
         windowID: String = "window_main",
-        workingDirectory: String = FileManager.default.currentDirectoryPath
+        workingDirectory: String = defaultShellWorkingDirectory()
     ) -> ShellStateSnapshot {
         let spaceID = "space_main"
         let tabID = "tab_main"
@@ -646,7 +650,7 @@ extension ShellStateSnapshot {
         launchTarget: ShellLaunchTarget,
         title: String?,
         workingDirectory: String?,
-        defaultWorkingDirectory: String = FileManager.default.currentDirectoryPath,
+        defaultWorkingDirectory: String = defaultShellWorkingDirectory(),
         now: Date = .now
     ) -> ShellStateMutationResult {
         let spaceIndex = spaces.count + 1
@@ -698,7 +702,7 @@ extension ShellStateSnapshot {
     func creatingAlanSpace(
         title: String?,
         workingDirectory: String?,
-        defaultWorkingDirectory: String = FileManager.default.currentDirectoryPath,
+        defaultWorkingDirectory: String = defaultShellWorkingDirectory(),
         now: Date = .now
     ) -> ShellStateMutationResult {
         creatingSpace(
@@ -713,7 +717,7 @@ extension ShellStateSnapshot {
     func creatingTerminalSpace(
         title: String?,
         workingDirectory: String?,
-        defaultWorkingDirectory: String = FileManager.default.currentDirectoryPath,
+        defaultWorkingDirectory: String = defaultShellWorkingDirectory(),
         now: Date = .now
     ) -> ShellStateMutationResult {
         creatingSpace(
@@ -730,7 +734,7 @@ extension ShellStateSnapshot {
         in requestedSpaceID: String?,
         title: String?,
         workingDirectory: String?,
-        defaultWorkingDirectory: String = FileManager.default.currentDirectoryPath,
+        defaultWorkingDirectory: String = defaultShellWorkingDirectory(),
         now: Date = .now
     ) throws -> ShellStateMutationResult {
         let targetSpaceID = requestedSpaceID ?? focusedSpaceID ?? spaces.first?.spaceID
@@ -790,7 +794,7 @@ extension ShellStateSnapshot {
         in requestedSpaceID: String?,
         title: String?,
         workingDirectory: String?,
-        defaultWorkingDirectory: String = FileManager.default.currentDirectoryPath,
+        defaultWorkingDirectory: String = defaultShellWorkingDirectory(),
         now: Date = .now
     ) throws -> ShellStateMutationResult {
         try openingTab(
@@ -807,7 +811,7 @@ extension ShellStateSnapshot {
         in requestedSpaceID: String?,
         title: String?,
         workingDirectory: String?,
-        defaultWorkingDirectory: String = FileManager.default.currentDirectoryPath,
+        defaultWorkingDirectory: String = defaultShellWorkingDirectory(),
         now: Date = .now
     ) throws -> ShellStateMutationResult {
         try openingTab(
@@ -823,7 +827,7 @@ extension ShellStateSnapshot {
     func splittingPane(
         _ paneID: String,
         direction: ShellSplitDirection,
-        defaultWorkingDirectory: String = FileManager.default.currentDirectoryPath,
+        defaultWorkingDirectory: String = defaultShellWorkingDirectory(),
         now: Date = .now
     ) throws -> ShellStateMutationResult {
         guard let pane = pane(paneID: paneID),
@@ -1323,7 +1327,7 @@ extension ShellStateSnapshot {
     }
 
     func migratingLegacyAlanBootstrapIfNeeded(
-        defaultWorkingDirectory: String = FileManager.default.currentDirectoryPath
+        defaultWorkingDirectory: String = defaultShellWorkingDirectory()
     ) -> ShellStateSnapshot {
         guard spaces.count == 1,
               panes.count == 1,

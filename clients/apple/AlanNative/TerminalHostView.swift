@@ -109,7 +109,26 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
         super.viewDidMoveToWindow()
         installWindowObservers()
         window?.acceptsMouseMovedEvents = true
+        focusTerminalSoon()
         publishRuntimeSnapshot()
+    }
+
+    override func becomeFirstResponder() -> Bool {
+        let result = super.becomeFirstResponder()
+        if result {
+            synchronizeLiveHost()
+            publishRuntimeSnapshot()
+        }
+        return result
+    }
+
+    override func resignFirstResponder() -> Bool {
+        let result = super.resignFirstResponder()
+        if result {
+            synchronizeLiveHost()
+            publishRuntimeSnapshot()
+        }
+        return result
     }
 
     override func viewDidChangeBackingProperties() {
@@ -163,6 +182,7 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
         syncStatusBadge()
         syncOverlayVisibility()
         synchronizeLiveHost()
+        focusTerminalSoon()
         reportMetadataIfNeeded(paneMetadata)
         publishRuntimeSnapshot()
     }
@@ -170,7 +190,11 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
     private func reportMetadataIfNeeded(_ snapshot: TerminalPaneMetadataSnapshot) {
         guard lastReportedMetadata != snapshot else { return }
         lastReportedMetadata = snapshot
-        metadataObserver?(snapshot)
+        guard let metadataObserver else { return }
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.lastReportedMetadata == snapshot else { return }
+            metadataObserver(snapshot)
+        }
     }
 
     private func configureView() {
@@ -339,6 +363,15 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
                 object: window,
                 queue: .main
             ) { [weak self] _ in
+                self?.synchronizeLiveHost()
+                self?.publishRuntimeSnapshot()
+            },
+            center.addObserver(
+                forName: NSWindow.didChangeOcclusionStateNotification,
+                object: window,
+                queue: .main
+            ) { [weak self] _ in
+                self?.synchronizeLiveHost()
                 self?.publishRuntimeSnapshot()
             },
         ]
@@ -383,7 +416,7 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
 
     private func reportRuntimeIfNeeded(
         _ snapshot: TerminalHostRuntimeSnapshot,
-        runtimeObserver: (TerminalHostRuntimeSnapshot) -> Void
+        runtimeObserver: @escaping (TerminalHostRuntimeSnapshot) -> Void
     ) {
         if let lastReportedRuntime,
            runtimeSnapshotEqualsIgnoringTimestamp(lastReportedRuntime, snapshot)
@@ -392,7 +425,15 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
         }
 
         lastReportedRuntime = snapshot
-        runtimeObserver(snapshot)
+        DispatchQueue.main.async { [weak self] in
+            guard let self,
+                  let lastReportedRuntime = self.lastReportedRuntime,
+                  self.runtimeSnapshotEqualsIgnoringTimestamp(lastReportedRuntime, snapshot)
+            else {
+                return
+            }
+            runtimeObserver(snapshot)
+        }
     }
 
     private func runtimeSnapshotEqualsIgnoringTimestamp(
@@ -476,8 +517,16 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
         window?.firstResponder === self
     }
 
+    private func focusTerminalSoon() {
+        guard pane != nil else { return }
+        DispatchQueue.main.async { [weak self] in
+            self?.requestTerminalFocus()
+        }
+    }
+
     private func requestTerminalFocus() {
         window?.makeFirstResponder(self)
+        synchronizeLiveHost()
         publishRuntimeSnapshot()
     }
 
@@ -836,6 +885,9 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
     }
 
     private func unshiftedCodepointFromEvent(_ event: NSEvent) -> UInt32 {
+        guard event.type != .flagsChanged else {
+            return 0
+        }
         guard let chars = event.characters(byApplyingModifiers: []) ?? event.charactersIgnoringModifiers ?? event.characters,
               let scalar = chars.unicodeScalars.first else {
             return 0
