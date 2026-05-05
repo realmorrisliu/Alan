@@ -192,6 +192,8 @@ pub(crate) fn build_openrouter_chat_request(
         reasoning,
         mut extra_params,
     } = request;
+    let thinking_budget_tokens =
+        crate::effective_thinking_budget_tokens(reasoning, thinking_budget_tokens);
 
     let mut projected_messages = Vec::new();
     if let Some(system_prompt) = system_prompt.filter(|value| !value.is_empty()) {
@@ -211,8 +213,8 @@ pub(crate) fn build_openrouter_chat_request(
     if let Some(effort) = reasoning.effort {
         extra_params.remove("reasoning_effort");
         builder.reasoning_effort(openrouter_effort(effort));
-    } else if let Some(thinking_budget_tokens) = reasoning.budget_tokens.or(thinking_budget_tokens)
-    {
+    } else if let Some(thinking_budget_tokens) = thinking_budget_tokens {
+        extra_params.remove("reasoning_effort");
         builder.reasoning(ReasoningConfig::with_max_tokens(thinking_budget_tokens));
     }
 
@@ -1035,6 +1037,31 @@ mod tests {
         assert_eq!(value["provider"]["allow_fallbacks"], false);
         assert_eq!(value["transforms"][0], "middle-out");
         assert_eq!(value["reasoning"]["effort"], "high");
+    }
+
+    #[test]
+    fn canonical_budget_overrides_reasoning_effort_extra_parameter() {
+        let request = GenerationRequest::new()
+            .with_user_message("hello")
+            .with_thinking_budget_tokens(512)
+            .with_extra_param("reasoning_effort", json!("high"));
+
+        let projected = build_openrouter_chat_request("openrouter/model", request).unwrap();
+        let value = serde_json::to_value(projected).unwrap();
+
+        assert_eq!(value["reasoning"]["max_tokens"], 512);
+        assert!(value["reasoning"].get("effort").is_none());
+    }
+
+    #[test]
+    fn legacy_budget_field_projects_reasoning_budget() {
+        let mut request = GenerationRequest::new().with_user_message("hello");
+        request.thinking_budget_tokens = Some(512);
+
+        let projected = build_openrouter_chat_request("openrouter/model", request).unwrap();
+        let value = serde_json::to_value(projected).unwrap();
+
+        assert_eq!(value["reasoning"]["max_tokens"], 512);
     }
 
     #[test]

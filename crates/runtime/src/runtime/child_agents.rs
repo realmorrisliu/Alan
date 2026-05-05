@@ -1463,6 +1463,24 @@ mod tests {
         tokio::sync::broadcast::channel(8).0.subscribe()
     }
 
+    fn test_startup_metadata(
+        session_id: impl Into<String>,
+        rollout_path: Option<PathBuf>,
+        durable: bool,
+    ) -> RuntimeStartupMetadata {
+        RuntimeStartupMetadata {
+            session_id: session_id.into(),
+            rollout_path,
+            durability: super::super::engine::SessionDurabilityState {
+                durable,
+                required: false,
+            },
+            execution_backend: crate::tools::Sandbox::backend_name_static().to_string(),
+            request_controls: crate::ResolvedRequestControls::default(),
+            warnings: Vec::new(),
+        }
+    }
+
     #[derive(Clone, Default)]
     struct RecordedRequests(Arc<Mutex<Vec<GenerationRequest>>>);
 
@@ -2389,7 +2407,13 @@ model_reasoning_effort = "high"
         assert_eq!(result.status, ChildRuntimeStatus::Completed);
         let seen_config = seen_config.lock().unwrap().clone().unwrap();
         assert_eq!(
-            seen_config.effective_model_reasoning_effort(),
+            crate::resolve_session_request_controls(
+                &seen_config,
+                crate::provider_capabilities_for_config(&seen_config),
+                crate::RequestControlIntent::default(),
+            )
+            .unwrap()
+            .reasoning_effort(),
             Some(alan_protocol::ReasoningEffort::Low)
         );
 
@@ -2641,16 +2665,7 @@ model_reasoning_effort = "high"
 
         let controller = ChildRuntimeController {
             runtime: None,
-            startup_metadata: RuntimeStartupMetadata {
-                session_id: "child-session".to_string(),
-                rollout_path: None,
-                durability: super::super::engine::SessionDurabilityState {
-                    durable: false,
-                    required: false,
-                },
-                execution_backend: crate::tools::Sandbox::backend_name_static().to_string(),
-                warnings: Vec::new(),
-            },
+            startup_metadata: test_startup_metadata("child-session", None, false),
             event_rx: rx,
             liveness_rx: test_liveness_rx(),
             submission_id,
@@ -2682,16 +2697,7 @@ model_reasoning_effort = "high"
 
         let controller = ChildRuntimeController {
             runtime: None,
-            startup_metadata: RuntimeStartupMetadata {
-                session_id: "child-session".to_string(),
-                rollout_path: None,
-                durability: super::super::engine::SessionDurabilityState {
-                    durable: false,
-                    required: false,
-                },
-                execution_backend: crate::tools::Sandbox::backend_name_static().to_string(),
-                warnings: Vec::new(),
-            },
+            startup_metadata: test_startup_metadata("child-session", None, false),
             event_rx: rx,
             liveness_rx: test_liveness_rx(),
             submission_id,
@@ -2733,16 +2739,11 @@ model_reasoning_effort = "high"
 
         let controller = ChildRuntimeController {
             runtime: None,
-            startup_metadata: RuntimeStartupMetadata {
-                session_id: "child-session".to_string(),
-                rollout_path: Some(rollout.path().to_path_buf()),
-                durability: super::super::engine::SessionDurabilityState {
-                    durable: true,
-                    required: false,
-                },
-                execution_backend: crate::tools::Sandbox::backend_name_static().to_string(),
-                warnings: Vec::new(),
-            },
+            startup_metadata: test_startup_metadata(
+                "child-session",
+                Some(rollout.path().to_path_buf()),
+                true,
+            ),
             event_rx: rx,
             liveness_rx: test_liveness_rx(),
             submission_id,
@@ -2804,16 +2805,7 @@ model_reasoning_effort = "high"
 
         let controller = ChildRuntimeController {
             runtime: None,
-            startup_metadata: RuntimeStartupMetadata {
-                session_id: "child-session".to_string(),
-                rollout_path: None,
-                durability: super::super::engine::SessionDurabilityState {
-                    durable: false,
-                    required: false,
-                },
-                execution_backend: crate::tools::Sandbox::backend_name_static().to_string(),
-                warnings: Vec::new(),
-            },
+            startup_metadata: test_startup_metadata("child-session", None, false),
             event_rx: rx,
             liveness_rx: test_liveness_rx(),
             submission_id,
@@ -2855,16 +2847,7 @@ model_reasoning_effort = "high"
 
         let controller = ChildRuntimeController {
             runtime: None,
-            startup_metadata: RuntimeStartupMetadata {
-                session_id: "child-session".to_string(),
-                rollout_path: None,
-                durability: super::super::engine::SessionDurabilityState {
-                    durable: false,
-                    required: false,
-                },
-                execution_backend: crate::tools::Sandbox::backend_name_static().to_string(),
-                warnings: Vec::new(),
-            },
+            startup_metadata: test_startup_metadata("child-session", None, false),
             event_rx: rx,
             liveness_rx: test_liveness_rx(),
             submission_id,
@@ -2916,16 +2899,7 @@ model_reasoning_effort = "high"
 
         let controller = ChildRuntimeController {
             runtime: None,
-            startup_metadata: RuntimeStartupMetadata {
-                session_id: "child-session".to_string(),
-                rollout_path: None,
-                durability: super::super::engine::SessionDurabilityState {
-                    durable: false,
-                    required: false,
-                },
-                execution_backend: crate::tools::Sandbox::backend_name_static().to_string(),
-                warnings: Vec::new(),
-            },
+            startup_metadata: test_startup_metadata("child-session", None, false),
             event_rx: rx,
             liveness_rx: test_liveness_rx(),
             submission_id,
@@ -2969,16 +2943,7 @@ model_reasoning_effort = "high"
 
         let controller = ChildRuntimeController {
             runtime: None,
-            startup_metadata: RuntimeStartupMetadata {
-                session_id: "child-session".to_string(),
-                rollout_path: None,
-                durability: super::super::engine::SessionDurabilityState {
-                    durable: false,
-                    required: false,
-                },
-                execution_backend: crate::tools::Sandbox::backend_name_static().to_string(),
-                warnings: Vec::new(),
-            },
+            startup_metadata: test_startup_metadata("child-session", None, false),
             event_rx: rx,
             liveness_rx: test_liveness_rx(),
             submission_id,
@@ -3088,16 +3053,7 @@ model_reasoning_effort = "high"
 
         let controller = ChildRuntimeController {
             runtime: None,
-            startup_metadata: RuntimeStartupMetadata {
-                session_id: "child-session".to_string(),
-                rollout_path: None,
-                durability: super::super::engine::SessionDurabilityState {
-                    durable: false,
-                    required: false,
-                },
-                execution_backend: crate::tools::Sandbox::backend_name_static().to_string(),
-                warnings: Vec::new(),
-            },
+            startup_metadata: test_startup_metadata("child-session", None, false),
             event_rx: rx,
             liveness_rx,
             submission_id,

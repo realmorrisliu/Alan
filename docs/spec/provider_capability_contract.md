@@ -238,34 +238,40 @@ apply" and is distinct from explicit `none`.
 
 Normative rules:
 
-1. Alan must resolve effective effort before provider dispatch from turn
-   override, session/runtime override, agent config, model catalog default, then
-   provider default.
-2. If a resolved model catalog entry declares supported efforts, Alan must
+1. `alan-runtime` owns effective request-control resolution. Config, daemon
+   routes, clients, and provider adapters may carry request-control intent or
+   metadata, but they must not independently decide the final effective value.
+2. Alan must resolve effective controls before provider dispatch from turn
+   override, session/runtime override, agent config, legacy budget intent, model
+   catalog default, then provider default.
+3. If a resolved model catalog entry declares supported efforts, Alan must
    reject explicit unsupported effort before making the provider request.
-3. `thinking_budget_tokens` is a provider-specific compatibility control, not
+4. `thinking_budget_tokens` is a provider-specific compatibility control, not
    Alan's canonical cross-provider reasoning API.
-4. A configuration that explicitly sets both `model_reasoning_effort` and
+5. A configuration that explicitly sets both `model_reasoning_effort` and
    `thinking_budget_tokens` is ambiguous and must be rejected.
-5. Compatibility providers must not silently drop explicit effort. They may
+6. Compatibility providers must not silently drop explicit effort. They may
    receive effort only when Alan has model/provider metadata declaring support;
    otherwise the request must fail before dispatch.
-6. Reasoning-effort metadata may be logged or persisted as request/session
+7. Reasoning-effort metadata may be logged or persisted as request/session
    metadata, but Alan must not expose hidden reasoning content as a side effect
    of enabling effort controls.
 
 Provider projection rules:
 
-1. OpenAI Responses maps effort to `reasoning.effort`.
-2. OpenAI Chat Completions maps effort to `reasoning_effort`.
-3. Managed ChatGPT Responses may use the Responses-shaped field only when the
+1. Provider adapters consume normalized `GenerationRequest.reasoning` controls
+   and project them to provider-specific wire fields. They must not re-run
+   Alan-level precedence, model default, or config conflict logic.
+2. OpenAI Responses maps effort to `reasoning.effort`.
+3. OpenAI Chat Completions maps effort to `reasoning_effort`.
+4. Managed ChatGPT Responses may use the Responses-shaped field only when the
    live capability matrix says effort control is supported.
-4. Anthropic Messages maps effort to extended-thinking budget presets unless an
+5. Anthropic Messages maps effort to extended-thinking budget presets unless an
    explicit legacy budget is the only configured control, and the adapter must
    keep Anthropic minimum-budget and `max_tokens` constraints explicit.
-5. Gemini 3 maps effort to `thinkingConfig.thinkingLevel`; Gemini 2.5 maps
+6. Gemini 3 maps effort to `thinkingConfig.thinkingLevel`; Gemini 2.5 maps
    effort to `thinkingConfig.thinkingBudget`.
-6. OpenRouter and OpenAI-compatible endpoints use explicit extension fields
+7. OpenRouter and OpenAI-compatible endpoints use explicit extension fields
    only for verified model/provider combinations.
 
 Migration guidance:

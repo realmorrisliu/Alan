@@ -859,17 +859,19 @@ where
         .iter()
         .map(|tool| tool.name.clone())
         .collect::<Vec<_>>();
-    let reasoning_effort = state
-        .turn_state
-        .active_turn_reasoning_effort()
-        .or(state.runtime_config.model_reasoning_effort);
+    let turn_request_controls = crate::resolve_turn_request_controls(
+        &state.core_config,
+        state.llm_client.capabilities(),
+        state.runtime_config.request_control_intent,
+        state.turn_state.active_turn_request_control_intent(),
+    )?;
     let model = state.core_config.effective_model().to_string();
     let memory_enabled = state.core_config.memory.enabled;
     let context_items = state.session.tape.context_items().to_vec();
     let context_delta = state.session.tape.last_context_delta().clone();
     state.session.record_turn_context_if_changed(
         &model,
-        reasoning_effort,
+        turn_request_controls.reasoning_effort(),
         &system_prompt,
         &context_items,
         &tool_names,
@@ -1005,23 +1007,13 @@ where
                 .with_previous_response_id(previous_response_id)
                 .with_store(true);
         }
-        if let Some(effort) = reasoning_effort {
-            if !provider_capabilities.supports_reasoning_effort_control {
-                anyhow::bail!(
-                    "provider `{}` does not support reasoning effort controls",
-                    provider
-                );
-            }
-            state
-                .core_config
-                .validate_reasoning_effort_for_resolved_model(effort)?;
-            request.reasoning.effort = Some(effort);
-        } else if let Some(thinking_budget_tokens) = state.runtime_config.thinking_budget_tokens {
-            request = request.with_thinking_budget_tokens(thinking_budget_tokens);
-        }
+        let request_controls = turn_request_controls.clone();
+        request = request.with_reasoning_controls(request_controls.reasoning);
 
         let request_start = Instant::now();
-        let reasoning_effort_log = reasoning_effort.map(|effort| effort.to_string());
+        let reasoning_effort_log = request_controls
+            .reasoning_effort()
+            .map(|effort| effort.to_string());
         info!(
             messages = messages.len(),
             estimated_prompt_tokens,
@@ -1029,7 +1021,8 @@ where
             tools = tools.len(),
             provider,
             reasoning_effort = reasoning_effort_log.as_deref(),
-            reasoning_budget_tokens = request.reasoning.budget_tokens,
+            reasoning_budget_tokens = request_controls.budget_tokens(),
+            request_control_source = ?request_controls.source,
             "LLM request"
         );
 
@@ -3077,7 +3070,9 @@ description: {description}
         };
         let mut state = create_test_state_with_provider(provider);
         state.runtime_config.streaming_mode = crate::config::StreamingMode::Off;
-        state.runtime_config.model_reasoning_effort = Some(alan_protocol::ReasoningEffort::High);
+        state.runtime_config.request_control_intent = crate::RequestControlIntent::reasoning_effort(
+            Some(alan_protocol::ReasoningEffort::High),
+        );
         let cancel = CancellationToken::new();
 
         let mut emit = |_event: Event| async {};
@@ -3126,10 +3121,14 @@ description: {description}
             .await
             .unwrap();
         state.runtime_config.streaming_mode = crate::config::StreamingMode::Off;
-        state.runtime_config.model_reasoning_effort = Some(alan_protocol::ReasoningEffort::High);
-        state
-            .turn_state
-            .set_active_turn_reasoning_effort(Some(alan_protocol::ReasoningEffort::Low));
+        state.runtime_config.request_control_intent = crate::RequestControlIntent::reasoning_effort(
+            Some(alan_protocol::ReasoningEffort::High),
+        );
+        state.turn_state.set_active_turn_request_control_intent(
+            crate::RequestControlIntent::reasoning_effort(Some(
+                alan_protocol::ReasoningEffort::Low,
+            )),
+        );
         let cancel = CancellationToken::new();
 
         let mut emit = |_event: Event| async {};
@@ -3188,7 +3187,8 @@ description: {description}
         };
         let mut state = create_test_state_with_provider(provider);
         state.runtime_config.streaming_mode = crate::config::StreamingMode::Off;
-        state.runtime_config.thinking_budget_tokens = Some(2048);
+        state.runtime_config.request_control_intent =
+            crate::RequestControlIntent::thinking_budget_tokens(Some(2048));
         let cancel = CancellationToken::new();
 
         let mut emit = |_event: Event| async {};
@@ -3230,6 +3230,7 @@ description: {description}
             provider_name: "openai_responses",
         };
         let mut state = create_test_state_with_provider(provider);
+        state.core_config.llm_provider = crate::config::LlmProvider::OpenRouter;
         state.runtime_config.streaming_mode = crate::config::StreamingMode::Off;
         let cancel = CancellationToken::new();
 

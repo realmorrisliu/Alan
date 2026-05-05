@@ -327,6 +327,23 @@ export interface CreateSessionResponse {
   durability: SessionDurabilityInfo;
 }
 
+export interface ForkSessionResponse {
+  session_id: string;
+  forked_from_session_id: string;
+  websocket_url: string;
+  events_url: string;
+  submit_url: string;
+  agent_name?: string;
+  profile_id?: string;
+  provider?: ProviderId;
+  resolved_model: string;
+  reasoning_effort?: ReasoningEffort;
+  governance: GovernanceConfig;
+  streaming_mode: StreamingMode;
+  partial_stream_recovery_mode: PartialStreamRecoveryMode;
+  durability: SessionDurabilityInfo;
+}
+
 export interface ProviderDescriptor {
   provider_id: ProviderId;
   display_name: string;

@@ -1741,6 +1741,7 @@ impl AppState {
                                 alan_runtime::tools::Sandbox::backend_name_static().to_string()
                             })
                     },
+                    request_controls: alan_runtime::ResolvedRequestControls::default(),
                     warnings: Vec::new(),
                 },
                 resolved_profile_id: None,

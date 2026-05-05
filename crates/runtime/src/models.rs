@@ -156,7 +156,7 @@ impl ModelCatalog {
             .collect()
     }
 
-    fn load_with_overlay_paths(
+    pub(crate) fn load_with_overlay_paths(
         global_overlay: Option<&Path>,
         workspace_overlay: Option<&Path>,
     ) -> anyhow::Result<Self> {

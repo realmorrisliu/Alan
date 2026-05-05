@@ -4,7 +4,7 @@ use super::agent_loop::{DeferredRuntimeAction, NormalizedToolCall};
 use crate::approval::{PendingConfirmation, PendingDynamicToolCall, PendingStructuredInputRequest};
 use crate::skills::ActiveSkillEnvelope;
 use crate::tape::ContentPart;
-use alan_protocol::{PlanItem, ReasoningEffort, Submission};
+use alan_protocol::{PlanItem, Submission};
 
 const MAX_QUEUED_NEXT_TURN_INPUTS: usize = 16;
 const AUTO_MID_TURN_COMPACTION_LIMIT: u32 = 2;
@@ -60,8 +60,8 @@ pub(crate) struct TurnState {
     active_turn_message_start: Option<usize>,
     /// Active skills resolved for the current turn.
     active_skills: Vec<ActiveSkillEnvelope>,
-    /// Optional reasoning effort override scoped to the active logical turn.
-    active_turn_reasoning_effort: Option<ReasoningEffort>,
+    /// Optional request-control intent scoped to the active logical turn.
+    active_turn_request_control_intent: crate::RequestControlIntent,
     /// Latest explicit plan/progress state published during the current session.
     plan_snapshot: Option<PlanSnapshot>,
     /// Best-effort follow-up work queued after a turn completes.
@@ -81,7 +81,7 @@ impl TurnState {
         self.buffered_inband_submissions.clear();
         self.active_turn_message_start = None;
         self.active_skills.clear();
-        self.active_turn_reasoning_effort = None;
+        self.active_turn_request_control_intent = crate::RequestControlIntent::default();
         self.reset_auto_mid_turn_compaction_state();
     }
 
@@ -171,12 +171,15 @@ impl TurnState {
         self.active_turn_message_start
     }
 
-    pub(crate) fn set_active_turn_reasoning_effort(&mut self, effort: Option<ReasoningEffort>) {
-        self.active_turn_reasoning_effort = effort;
+    pub(crate) fn set_active_turn_request_control_intent(
+        &mut self,
+        intent: crate::RequestControlIntent,
+    ) {
+        self.active_turn_request_control_intent = intent;
     }
 
-    pub(crate) fn active_turn_reasoning_effort(&self) -> Option<ReasoningEffort> {
-        self.active_turn_reasoning_effort
+    pub(crate) fn active_turn_request_control_intent(&self) -> crate::RequestControlIntent {
+        self.active_turn_request_control_intent
     }
 
     pub(crate) fn note_tape_compaction(&mut self, retention_start: usize) {

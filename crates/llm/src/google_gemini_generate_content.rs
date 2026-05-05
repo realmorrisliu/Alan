@@ -697,10 +697,10 @@ impl LlmProvider for GoogleGeminiGenerateContentClient {
         let thinking_config = build_gemini_thinking_config(
             &self.model,
             request.reasoning.effort,
-            request
-                .reasoning
-                .budget_tokens
-                .or(request.thinking_budget_tokens),
+            crate::effective_thinking_budget_tokens(
+                request.reasoning,
+                request.thinking_budget_tokens,
+            ),
         )?;
         // Convert messages to Gemini format
         let contents: Vec<Content> = request
@@ -865,10 +865,10 @@ impl LlmProvider for GoogleGeminiGenerateContentClient {
         let thinking_config = build_gemini_thinking_config(
             &self.model,
             request.reasoning.effort,
-            request
-                .reasoning
-                .budget_tokens
-                .or(request.thinking_budget_tokens),
+            crate::effective_thinking_budget_tokens(
+                request.reasoning,
+                request.thinking_budget_tokens,
+            ),
         )?;
         // Convert messages to Gemini format
         let contents: Vec<Content> = request

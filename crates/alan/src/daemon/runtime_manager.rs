@@ -34,6 +34,14 @@ struct RuntimeEntry {
     controller: RuntimeController,
     /// Startup metadata describing durability/warnings for this runtime.
     startup: RuntimeStartupMetadata,
+    /// Resolved connection profile id reported at startup.
+    resolved_profile_id: Option<String>,
+    /// Resolved provider reported at startup.
+    resolved_provider: Option<alan_runtime::LlmProvider>,
+    /// Resolved model reported at startup.
+    resolved_model: String,
+    /// Resolved reasoning effort reported at startup.
+    effective_reasoning_effort: Option<alan_protocol::ReasoningEffort>,
     /// Creation timestamp
     #[allow(dead_code)]
     created_at: Instant,
@@ -155,21 +163,10 @@ impl RuntimeManager {
                 return Ok(RuntimeStartResult {
                     handle: entry.controller.handle.clone(),
                     startup: entry.startup.clone(),
-                    resolved_profile_id: None,
-                    resolved_provider: None,
-                    resolved_model: self
-                        .config
-                        .runtime_config_template
-                        .agent_config
-                        .core_config
-                        .effective_model()
-                        .to_string(),
-                    effective_reasoning_effort: self
-                        .config
-                        .runtime_config_template
-                        .agent_config
-                        .core_config
-                        .effective_model_reasoning_effort(),
+                    resolved_profile_id: entry.resolved_profile_id.clone(),
+                    resolved_provider: entry.resolved_provider,
+                    resolved_model: entry.resolved_model.clone(),
+                    effective_reasoning_effort: entry.effective_reasoning_effort,
                 });
             }
         }
@@ -251,7 +248,6 @@ impl RuntimeManager {
         let resolved_core_config =
             alan_runtime::runtime::effective_core_config_for_runtime(&runtime_config)?;
         let resolved_model = resolved_core_config.effective_model().to_string();
-        let effective_reasoning_effort = resolved_core_config.effective_model_reasoning_effort();
         let resolved_connection = if let Some(home_paths) = runtime_config
             .agent_home_paths
             .clone()
@@ -286,14 +282,26 @@ impl RuntimeManager {
         };
 
         let handle = controller.handle.clone();
+        let effective_reasoning_effort = startup.request_controls.reasoning_effort();
 
         // Store runtime entry.
+        let resolved_profile_id = resolved_connection
+            .as_ref()
+            .map(|resolved| resolved.profile_id.clone());
+        let resolved_provider = resolved_connection
+            .as_ref()
+            .map(|resolved| resolved.provider);
+
         let entry = RuntimeEntry {
             session_id: session_id.clone(),
             workspace_root_path,
             workspace_alan_dir,
             controller,
             startup: startup.clone(),
+            resolved_profile_id: resolved_profile_id.clone(),
+            resolved_provider,
+            resolved_model: resolved_model.clone(),
+            effective_reasoning_effort,
             created_at: Instant::now(),
             last_activity: Instant::now(),
         };
@@ -305,12 +313,8 @@ impl RuntimeManager {
         Ok(RuntimeStartResult {
             handle,
             startup,
-            resolved_profile_id: resolved_connection
-                .as_ref()
-                .map(|resolved| resolved.profile_id.clone()),
-            resolved_provider: resolved_connection
-                .as_ref()
-                .map(|resolved| resolved.provider),
+            resolved_profile_id,
+            resolved_provider,
             resolved_model,
             effective_reasoning_effort,
         })

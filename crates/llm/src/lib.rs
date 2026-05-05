@@ -401,6 +401,13 @@ impl GenerationRequest {
     }
 }
 
+pub(crate) fn effective_thinking_budget_tokens(
+    reasoning: ReasoningControls,
+    thinking_budget_tokens: Option<u32>,
+) -> Option<u32> {
+    reasoning.budget_tokens.or(thinking_budget_tokens)
+}
+
 impl Default for GenerationRequest {
     fn default() -> Self {
         Self::new()
@@ -1384,6 +1391,22 @@ mod tests {
 
         assert_eq!(budgeted.reasoning.budget_tokens, Some(512));
         assert_eq!(budgeted.thinking_budget_tokens, Some(512));
+    }
+
+    #[test]
+    fn test_effective_thinking_budget_tokens_preserves_legacy_field() {
+        let mut request = GenerationRequest::new();
+        request.thinking_budget_tokens = Some(2048);
+        assert_eq!(
+            effective_thinking_budget_tokens(request.reasoning, request.thinking_budget_tokens),
+            Some(2048)
+        );
+
+        request.reasoning.budget_tokens = Some(512);
+        assert_eq!(
+            effective_thinking_budget_tokens(request.reasoning, request.thinking_budget_tokens),
+            Some(512)
+        );
     }
 
     #[test]

@@ -940,6 +940,8 @@ impl LlmProvider for AnthropicMessagesClient {
             reasoning,
             mut extra_params,
         } = request;
+        let thinking_budget_tokens =
+            crate::effective_thinking_budget_tokens(reasoning, thinking_budget_tokens);
 
         let messages =
             take_anthropic_messages_extra_param("anthropic_messages", &mut extra_params)?
@@ -955,7 +957,7 @@ impl LlmProvider for AnthropicMessagesClient {
 
         let (thinking, temperature, max_tokens) = build_thinking_params(
             reasoning.effort,
-            &reasoning.budget_tokens.or(thinking_budget_tokens),
+            &thinking_budget_tokens,
             temperature,
             max_tokens.unwrap_or(4096),
         )?;
@@ -995,6 +997,8 @@ impl LlmProvider for AnthropicMessagesClient {
             reasoning,
             mut extra_params,
         } = request;
+        let thinking_budget_tokens =
+            crate::effective_thinking_budget_tokens(reasoning, thinking_budget_tokens);
 
         let messages =
             take_anthropic_messages_extra_param("anthropic_messages", &mut extra_params)?
@@ -1010,7 +1014,7 @@ impl LlmProvider for AnthropicMessagesClient {
 
         let (thinking, temperature, max_tokens) = build_thinking_params(
             reasoning.effort,
-            &reasoning.budget_tokens.or(thinking_budget_tokens),
+            &thinking_budget_tokens,
             temperature,
             max_tokens.unwrap_or(4096),
         )?;

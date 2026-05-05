@@ -1118,6 +1118,7 @@ pub async fn fork_session(
         source_workspace_id,
         source_agent_name,
         source_profile_id,
+        inherited_reasoning_effort,
         source_governance,
         source_streaming_mode,
         source_partial_stream_recovery_mode,
@@ -1131,6 +1132,7 @@ pub async fn fork_session(
             entry.workspace_id.clone(),
             entry.agent_name.clone(),
             entry.profile_id.clone(),
+            entry.reasoning_effort,
             entry.governance.clone(),
             entry.streaming_mode,
             entry.partial_stream_recovery_mode,
@@ -1157,6 +1159,10 @@ pub async fn fork_session(
     } = JsonLikeFork::from_payload(payload);
     let effective_agent_name = agent_name.or(source_agent_name);
     let effective_profile_id = profile_id.or(source_profile_id);
+    let selected_reasoning_effort = match reasoning_effort {
+        Some(effort) => Some(effort),
+        None => inherited_reasoning_effort,
+    };
     let effective_governance = governance.unwrap_or(source_governance);
     let effective_streaming_mode = streaming_mode.unwrap_or(source_streaming_mode);
     let effective_partial_stream_recovery_mode =
@@ -1182,7 +1188,7 @@ pub async fn fork_session(
             resume_rollout_path: Some(rollout_path),
             agent_name: effective_agent_name,
             profile_id: effective_profile_id,
-            reasoning_effort,
+            reasoning_effort: selected_reasoning_effort,
             governance: Some(effective_governance.clone()),
             streaming_mode: Some(effective_streaming_mode),
             partial_stream_recovery_mode: Some(effective_partial_stream_recovery_mode),
@@ -4405,7 +4411,7 @@ Body
     }
 
     #[tokio::test]
-    async fn fork_session_without_reasoning_override_uses_destination_default() {
+    async fn fork_session_without_reasoning_override_preserves_source_metadata() {
         let state = test_state();
         let temp = tempfile::TempDir::new().unwrap();
         let (mut entry, _submission_rx) = session_entry(temp.path());
@@ -4444,7 +4450,7 @@ Body
 
         assert_eq!(
             resp.reasoning_effort,
-            Some(alan_protocol::ReasoningEffort::Medium)
+            Some(alan_protocol::ReasoningEffort::High)
         );
     }
 
