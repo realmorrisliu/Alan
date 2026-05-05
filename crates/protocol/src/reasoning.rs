@@ -48,16 +48,15 @@ impl fmt::Display for ReasoningEffort {
 
 /// Canonical reasoning controls carried through runtime and provider requests.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ReasoningControls {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub effort: Option<ReasoningEffort>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub budget_tokens: Option<u32>,
 }
 
 impl ReasoningControls {
     pub fn is_empty(&self) -> bool {
-        self.effort.is_none() && self.budget_tokens.is_none()
+        self.effort.is_none()
     }
 }
 
@@ -93,5 +92,12 @@ mod tests {
         let explicit_none: ReasoningControls =
             serde_json::from_value(json!({ "effort": "none" })).unwrap();
         assert_eq!(explicit_none.effort, Some(ReasoningEffort::None));
+    }
+
+    #[test]
+    fn reasoning_controls_reject_raw_budget_tokens() {
+        let err = serde_json::from_value::<ReasoningControls>(json!({ "budget_tokens": 512 }))
+            .unwrap_err();
+        assert!(err.to_string().contains("budget_tokens"));
     }
 }

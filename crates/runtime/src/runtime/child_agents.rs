@@ -2375,7 +2375,6 @@ model_reasoning_effort = "high"
             recorded[0].reasoning.effort,
             Some(alan_protocol::ReasoningEffort::Low)
         );
-        assert_eq!(recorded[0].reasoning.budget_tokens, None);
     }
 
     #[test]

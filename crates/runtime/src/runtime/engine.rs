@@ -2773,7 +2773,6 @@ required = true
             crate::ResolvedRequestControls {
                 reasoning: alan_protocol::ReasoningControls {
                     effort: Some(alan_protocol::ReasoningEffort::Medium),
-                    budget_tokens: None,
                 },
                 source: crate::RequestControlSource::SessionOverride,
                 diagnostics: Vec::new(),

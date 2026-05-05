@@ -3092,7 +3092,6 @@ description: {description}
             request.reasoning.effort,
             Some(alan_protocol::ReasoningEffort::High)
         );
-        assert_eq!(request.reasoning.budget_tokens, None);
     }
 
     #[tokio::test]
@@ -3149,7 +3148,6 @@ description: {description}
                 request.reasoning.effort,
                 Some(alan_protocol::ReasoningEffort::Low)
             );
-            assert_eq!(request.reasoning.budget_tokens, None);
         }
 
         state.session.flush().await;
@@ -3209,7 +3207,6 @@ description: {description}
             request.reasoning.effort,
             Some(alan_protocol::ReasoningEffort::High)
         );
-        assert_eq!(request.reasoning.budget_tokens, None);
     }
 
     #[tokio::test]
@@ -3251,7 +3248,6 @@ description: {description}
         let requests = requests.lock().unwrap();
         let request = requests.last().expect("captured request");
         assert_eq!(request.reasoning.effort, None);
-        assert_eq!(request.reasoning.budget_tokens, None);
     }
 
     #[tokio::test]

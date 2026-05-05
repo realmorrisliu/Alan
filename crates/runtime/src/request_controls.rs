@@ -162,7 +162,6 @@ fn effort_controls(
     ResolvedRequestControls {
         reasoning: ReasoningControls {
             effort: Some(effort),
-            budget_tokens: None,
         },
         source,
         diagnostics: Vec::new(),

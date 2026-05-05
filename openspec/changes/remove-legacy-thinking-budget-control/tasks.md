@@ -4,6 +4,7 @@
 - [x] 1.2 Remove `thinking_budget_tokens` from daemon session/fork/turn DTOs and client DTOs where exposed.
 - [x] 1.3 Remove public `GenerationRequest.thinking_budget_tokens` compatibility fields/builders and update call sites to use normalized reasoning controls.
 - [x] 1.4 Add clear errors that direct users from `thinking_budget_tokens` to `model_reasoning_effort`.
+- [x] 1.5 Remove raw `reasoning.budget_tokens` from canonical request controls so budget-only inputs cannot be accepted and ignored.
 
 ## 2. Resolver And Runtime
 

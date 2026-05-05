@@ -1364,12 +1364,11 @@ mod tests {
 
         assert_eq!(cleared.reasoning, ReasoningControls::default());
 
-        let budgeted = GenerationRequest::new().with_reasoning_controls(ReasoningControls {
-            effort: None,
-            budget_tokens: Some(512),
+        let efforted = GenerationRequest::new().with_reasoning_controls(ReasoningControls {
+            effort: Some(ReasoningEffort::High),
         });
 
-        assert_eq!(budgeted.reasoning.budget_tokens, Some(512));
+        assert_eq!(efforted.reasoning.effort, Some(ReasoningEffort::High));
     }
 
     #[test]
