@@ -1,20 +1,21 @@
 schema: spec-driven
 
-# Project context (optional)
-# This is shown to AI when creating artifacts.
-# Add your tech stack, conventions, style guides, domain knowledge, etc.
-# Example:
-#   context: |
-#     Tech stack: TypeScript, React, Node.js
-#     We use conventional commits
-#     Domain: e-commerce platform
+context: |
+  Alan uses OpenSpec changes for in-flight design and implementation work.
+  Long-lived behavior contracts belong in openspec/specs/.
 
-# Per-artifact rules (optional)
-# Add custom rules for specific artifacts.
-# Example:
-#   rules:
-#     proposal:
-#       - Keep proposals under 500 words
-#       - Always include a "Non-goals" section
-#     tasks:
-#       - Break tasks into chunks of max 2 hours
+rules:
+  proposal:
+    - Prefer modifying an existing capability over creating a new one when the behavior already has a clear owner.
+    - Name new capabilities after durable product/runtime contracts, not one-off implementation tasks.
+    - Call out superseded or folded changes when a later change consolidates an earlier one.
+  specs:
+    - Treat openspec/specs/ as the source of truth for merged behavior.
+    - Do not keep delta markers such as "ADDED Requirements" in long-lived specs.
+    - Avoid duplicate owners for the same behavior; cross-cutting contracts should own policy and provider-specific specs should own wire or adapter details.
+  tasks:
+    - Mark implementation, verification, PR review, and archive-readiness tasks explicitly.
+    - After a change is implemented and merged, sync its delta specs into openspec/specs/ before archiving it.
+  archive:
+    - Completed and merged changes should be moved to openspec/changes/archive/YYYY-MM-DD-change-name/.
+    - Active changes should represent only unmerged or intentionally ongoing work.

@@ -90,7 +90,9 @@ compatible client.
 
 ### Requirement: OpenRouter request projection
 Alan SHALL map Alan generation requests to OpenRouter SDK chat requests without
-requiring runtime code to depend on OpenRouter SDK types.
+requiring runtime code to depend on OpenRouter SDK types. Reasoning control
+precedence and validation are owned by `provider-request-controls`; this
+capability covers the OpenRouter-specific wire projection.
 
 #### Scenario: Basic message projection
 - **WHEN** a request contains a system prompt and user, assistant, context, and tool messages
