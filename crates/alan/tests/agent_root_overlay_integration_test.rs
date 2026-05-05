@@ -158,7 +158,7 @@ description: Overlay verification skill
 
 fn write_agent_root(
     root: &Path,
-    thinking_budget_tokens: u32,
+    model_reasoning_effort: &str,
     soul_text: &str,
     skill_body: &str,
     policy_yaml: Option<&str>,
@@ -166,7 +166,7 @@ fn write_agent_root(
     std::fs::create_dir_all(root.join("persona")).unwrap();
     std::fs::write(
         root.join("agent.toml"),
-        format!("thinking_budget_tokens = {thinking_budget_tokens}\n"),
+        format!("model_reasoning_effort = \"{model_reasoning_effort}\"\n"),
     )
     .unwrap();
     std::fs::write(root.join("persona/SOUL.md"), soul_text).unwrap();
@@ -187,28 +187,28 @@ fn prepare_overlay_chain(temp: &TempDir) -> (AlanHomePaths, PathBuf, PathBuf, Pa
 
     write_agent_root(
         &home_paths.global_agent_root_dir,
-        128,
+        "minimal",
         "global default soul",
         "global default skill body",
         None,
     );
     write_agent_root(
         &workspace_root.join(".alan/agents/default"),
-        256,
+        "low",
         "workspace default soul",
         "workspace default skill body",
         None,
     );
     write_agent_root(
         &home_paths.global_named_agents_dir.join(AGENT_NAME),
-        512,
+        "medium",
         "global named soul",
         "global named skill body",
         None,
     );
     write_agent_root(
         &workspace_root.join(".alan/agents").join(AGENT_NAME),
-        1024,
+        "high",
         "workspace named soul",
         "workspace named skill body",
         Some(
@@ -338,7 +338,10 @@ fn assert_overlay_request(request: &GenerationRequest) {
     assert!(system_prompt.contains("workspace named skill body"));
     assert!(!system_prompt.contains("global named skill body"));
     assert!(!system_prompt.contains("workspace default skill body"));
-    assert_eq!(request.thinking_budget_tokens, Some(1024));
+    assert_eq!(
+        request.reasoning.effort,
+        Some(alan_protocol::ReasoningEffort::High)
+    );
 }
 
 fn is_memory_promotion_request(request: &GenerationRequest) -> bool {

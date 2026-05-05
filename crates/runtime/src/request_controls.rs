@@ -13,39 +13,25 @@ use serde::{Deserialize, Serialize};
 pub struct RequestControlIntent {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reasoning_effort: Option<ReasoningEffort>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub thinking_budget_tokens: Option<u32>,
 }
 
 impl RequestControlIntent {
     pub fn from_config(config: &Config) -> Self {
         Self {
             reasoning_effort: config.model_reasoning_effort,
-            thinking_budget_tokens: config.thinking_budget_tokens,
         }
     }
 
     pub fn reasoning_effort(reasoning_effort: Option<ReasoningEffort>) -> Self {
-        Self {
-            reasoning_effort,
-            thinking_budget_tokens: None,
-        }
-    }
-
-    pub fn thinking_budget_tokens(thinking_budget_tokens: Option<u32>) -> Self {
-        Self {
-            reasoning_effort: None,
-            thinking_budget_tokens,
-        }
+        Self { reasoning_effort }
     }
 
     pub fn is_empty(self) -> bool {
-        self.reasoning_effort.is_none() && self.thinking_budget_tokens.is_none()
+        self.reasoning_effort.is_none()
     }
 
     pub fn apply_to_config(self, config: &mut Config) {
         config.model_reasoning_effort = self.reasoning_effort;
-        config.thinking_budget_tokens = self.thinking_budget_tokens;
     }
 }
 
@@ -56,7 +42,6 @@ pub enum RequestControlSource {
     TurnOverride,
     SessionOverride,
     AgentConfig,
-    LegacyBudget,
     ModelDefault,
     ProviderDefault,
 }
@@ -89,10 +74,6 @@ impl Default for ResolvedRequestControls {
 impl ResolvedRequestControls {
     pub fn reasoning_effort(&self) -> Option<ReasoningEffort> {
         self.reasoning.effort
-    }
-
-    pub fn budget_tokens(&self) -> Option<u32> {
-        self.reasoning.budget_tokens
     }
 }
 
@@ -157,18 +138,6 @@ pub fn resolve_request_controls(
         return Ok(effort_controls(effort, RequestControlSource::AgentConfig));
     }
 
-    if let Some(tokens) = input.turn_intent.thinking_budget_tokens {
-        return Ok(budget_controls(tokens, RequestControlSource::LegacyBudget));
-    }
-
-    if let Some(tokens) = input.session_intent.thinking_budget_tokens {
-        return Ok(budget_controls(tokens, RequestControlSource::LegacyBudget));
-    }
-
-    if let Some(tokens) = config_intent.thinking_budget_tokens {
-        return Ok(budget_controls(tokens, RequestControlSource::LegacyBudget));
-    }
-
     if let Some(effort) = input
         .config
         .effective_model_info()
@@ -193,18 +162,6 @@ fn effort_controls(
     ResolvedRequestControls {
         reasoning: ReasoningControls {
             effort: Some(effort),
-            budget_tokens: None,
-        },
-        source,
-        diagnostics: Vec::new(),
-    }
-}
-
-fn budget_controls(tokens: u32, source: RequestControlSource) -> ResolvedRequestControls {
-    ResolvedRequestControls {
-        reasoning: ReasoningControls {
-            effort: None,
-            budget_tokens: Some(tokens),
         },
         source,
         diagnostics: Vec::new(),
@@ -323,23 +280,7 @@ mod tests {
     }
 
     #[test]
-    fn legacy_budget_precedes_model_default() {
-        let mut config = openai_config();
-        config.thinking_budget_tokens = Some(2048);
-        let resolved = resolve_session_request_controls(
-            &config,
-            openai_caps(),
-            RequestControlIntent::default(),
-        )
-        .unwrap();
-
-        assert_eq!(resolved.reasoning.effort, None);
-        assert_eq!(resolved.reasoning.budget_tokens, Some(2048));
-        assert_eq!(resolved.source, RequestControlSource::LegacyBudget);
-    }
-
-    #[test]
-    fn model_default_applies_when_no_intent_or_budget() {
+    fn model_default_applies_when_no_explicit_intent() {
         let config = openai_config();
         let resolved = resolve_session_request_controls(
             &config,
@@ -441,7 +382,6 @@ default_reasoning_effort = "high"
             "validate_reasoning_effort_for_resolved_model",
             "active_turn_reasoning_effort",
             "runtime_config.model_reasoning_effort",
-            "runtime_config.thinking_budget_tokens",
         ] {
             assert!(
                 !turn_executor.contains(forbidden),

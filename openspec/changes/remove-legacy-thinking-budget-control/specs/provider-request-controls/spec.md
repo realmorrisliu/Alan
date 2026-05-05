@@ -89,6 +89,11 @@ budget fields.
 - **THEN** Alan provides no supported public request-control path for that field
 - **AND** provider projection cannot use a legacy budget fallback
 
+#### Scenario: Canonical controls reject raw budget-only input
+- **WHEN** protocol or generation-request code attempts to set `reasoning.budget_tokens`
+- **THEN** Alan rejects or cannot represent that raw budget-only control
+- **AND** callers must use named reasoning effort instead
+
 ### Requirement: Provider adapters only project normalized controls
 Provider adapters SHALL consume normalized request controls from
 `GenerationRequest` and project them to provider-specific payload fields.

@@ -516,7 +516,6 @@ pub fn build_generation_request(
         tools,
         temperature,
         max_tokens,
-        thinking_budget_tokens: None,
         reasoning: alan_llm::ReasoningControls::default(),
         extra_params: std::collections::HashMap::new(),
     }

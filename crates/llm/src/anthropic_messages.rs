@@ -596,14 +596,13 @@ fn take_anthropic_messages_extra_param(
 /// When thinking is enabled: temperature must be 1.0, max_tokens must > budget_tokens.
 fn build_thinking_params(
     reasoning_effort: Option<ReasoningEffort>,
-    thinking_budget_tokens: &Option<u32>,
     temperature: Option<f32>,
     max_tokens: i32,
 ) -> Result<(Option<ThinkingConfig>, Option<f32>, i32)> {
     let resolved_budget = match reasoning_effort {
         Some(ReasoningEffort::None) => None,
         Some(effort) => Some(anthropic_budget_for_effort(effort)),
-        None => *thinking_budget_tokens,
+        None => None,
     };
 
     match resolved_budget {
@@ -936,12 +935,9 @@ impl LlmProvider for AnthropicMessagesClient {
             tools: request_tools,
             temperature,
             max_tokens,
-            thinking_budget_tokens,
             reasoning,
             mut extra_params,
         } = request;
-        let thinking_budget_tokens =
-            crate::effective_thinking_budget_tokens(reasoning, thinking_budget_tokens);
 
         let messages =
             take_anthropic_messages_extra_param("anthropic_messages", &mut extra_params)?
@@ -955,12 +951,8 @@ impl LlmProvider for AnthropicMessagesClient {
             );
         }
 
-        let (thinking, temperature, max_tokens) = build_thinking_params(
-            reasoning.effort,
-            &thinking_budget_tokens,
-            temperature,
-            max_tokens.unwrap_or(4096),
-        )?;
+        let (thinking, temperature, max_tokens) =
+            build_thinking_params(reasoning.effort, temperature, max_tokens.unwrap_or(4096))?;
 
         let anthropic_request = AnthropicMessagesRequest {
             model: self.model.clone(),
@@ -993,12 +985,9 @@ impl LlmProvider for AnthropicMessagesClient {
             tools: request_tools,
             temperature,
             max_tokens,
-            thinking_budget_tokens,
             reasoning,
             mut extra_params,
         } = request;
-        let thinking_budget_tokens =
-            crate::effective_thinking_budget_tokens(reasoning, thinking_budget_tokens);
 
         let messages =
             take_anthropic_messages_extra_param("anthropic_messages", &mut extra_params)?
@@ -1012,12 +1001,8 @@ impl LlmProvider for AnthropicMessagesClient {
             );
         }
 
-        let (thinking, temperature, max_tokens) = build_thinking_params(
-            reasoning.effort,
-            &thinking_budget_tokens,
-            temperature,
-            max_tokens.unwrap_or(4096),
-        )?;
+        let (thinking, temperature, max_tokens) =
+            build_thinking_params(reasoning.effort, temperature, max_tokens.unwrap_or(4096))?;
 
         let anthropic_request = AnthropicMessagesRequest {
             model: self.model.clone(),
@@ -1796,15 +1781,18 @@ mod tests {
     }
 
     #[test]
-    fn test_build_thinking_params_enforces_min_budget() {
-        let err = build_thinking_params(None, &Some(512), Some(0.7), 2048).unwrap_err();
-        assert!(err.to_string().contains("budget_tokens >="));
+    fn test_build_thinking_params_omits_thinking_when_effort_unset() {
+        let (thinking, temperature, max_tokens) =
+            build_thinking_params(None, Some(0.7), 2048).unwrap();
+        assert!(thinking.is_none());
+        assert_eq!(temperature, Some(0.7));
+        assert_eq!(max_tokens, 2048);
     }
 
     #[test]
     fn test_build_thinking_params_adjusts_max_tokens_and_temperature() {
         let (thinking, temperature, max_tokens) =
-            build_thinking_params(None, &Some(1024), Some(0.2), 1000).unwrap();
+            build_thinking_params(Some(ReasoningEffort::Low), Some(0.2), 1000).unwrap();
 
         assert!(thinking.is_some());
         assert_eq!(temperature, Some(1.0));
@@ -1814,7 +1802,7 @@ mod tests {
     #[test]
     fn test_build_thinking_params_maps_reasoning_effort_to_budget() {
         let (thinking, temperature, max_tokens) =
-            build_thinking_params(Some(ReasoningEffort::High), &None, Some(0.2), 4096).unwrap();
+            build_thinking_params(Some(ReasoningEffort::High), Some(0.2), 4096).unwrap();
 
         assert_eq!(thinking.unwrap().budget_tokens, 8192);
         assert_eq!(temperature, Some(1.0));

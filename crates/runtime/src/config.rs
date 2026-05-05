@@ -352,9 +352,8 @@ pub struct Config {
     // ========================================================================
     // Thinking / Reasoning Controls
     // ========================================================================
-    /// Budget tokens for provider-specific thinking/reasoning. None = disabled.
-    #[serde(default)]
-    pub thinking_budget_tokens: Option<u32>,
+    #[serde(default, rename = "thinking_budget_tokens", skip_serializing)]
+    pub(crate) deprecated_thinking_budget_tokens: Option<u32>,
 
     /// Named cross-provider model reasoning effort. None = use model/provider default.
     #[serde(default)]
@@ -523,7 +522,7 @@ impl Default for Config {
             compaction_hard_trigger_ratio: None,
             prompt_snapshot_enabled: false,
             prompt_snapshot_max_chars: default_prompt_snapshot_max_chars(),
-            thinking_budget_tokens: None,
+            deprecated_thinking_budget_tokens: None,
             model_reasoning_effort: None,
             streaming_mode: default_streaming_mode(),
             partial_stream_recovery_mode: default_partial_stream_recovery_mode(),
@@ -1243,9 +1242,9 @@ impl Config {
     }
 
     fn validate_reasoning_controls(&self, source: String) -> anyhow::Result<()> {
-        if self.model_reasoning_effort.is_some() && self.thinking_budget_tokens.is_some() {
+        if self.deprecated_thinking_budget_tokens.is_some() {
             anyhow::bail!(
-                "configuration file {} sets both `model_reasoning_effort` and `thinking_budget_tokens`; remove one because named effort and token budget controls are ambiguous together",
+                "configuration file {} uses removed `thinking_budget_tokens`; replace it with `model_reasoning_effort`",
                 source
             );
         }
@@ -1792,7 +1791,7 @@ model_reasoning_effort = "high"
     }
 
     #[test]
-    fn test_config_from_file_rejects_reasoning_effort_and_budget_conflict() {
+    fn test_config_from_file_rejects_legacy_thinking_budget() {
         let temp = TempDir::new().unwrap();
         let config_path = temp.path().join("test_config.toml");
         std::fs::write(
@@ -1807,8 +1806,9 @@ thinking_budget_tokens = 2048
         let err = Config::from_file(&config_path).unwrap_err();
         assert!(
             err.to_string()
-                .contains("sets both `model_reasoning_effort`")
+                .contains("uses removed `thinking_budget_tokens`")
         );
+        assert!(err.to_string().contains("model_reasoning_effort"));
     }
 
     #[test]
@@ -1821,21 +1821,6 @@ thinking_budget_tokens = 2048
         )
         .unwrap();
         assert_eq!(resolved.reasoning_effort(), Some(ReasoningEffort::Medium));
-    }
-
-    #[test]
-    fn test_request_control_resolver_preserves_legacy_budget_behavior() {
-        let mut config = Config::for_openai_responses("sk-test", None, Some("gpt-5.4"));
-        config.thinking_budget_tokens = Some(2048);
-
-        let resolved = crate::resolve_session_request_controls(
-            &config,
-            crate::provider_capabilities_for_config(&config),
-            crate::RequestControlIntent::default(),
-        )
-        .unwrap();
-        assert_eq!(resolved.reasoning_effort(), None);
-        assert_eq!(resolved.budget_tokens(), Some(2048));
     }
 
     #[test]
@@ -2459,7 +2444,7 @@ supports_reasoning = true
         .unwrap();
 
         let overlay_path = temp.path().join("agent.toml");
-        std::fs::write(&overlay_path, "thinking_budget_tokens = 1024\n").unwrap();
+        std::fs::write(&overlay_path, "model_reasoning_effort = \"high\"\n").unwrap();
 
         let catalog = crate::ModelCatalog::load_with_overlays(Some(temp.path())).unwrap();
         let mut config =
@@ -2468,7 +2453,7 @@ supports_reasoning = true
 
         let overlaid = config.with_agent_root_overlays(&[overlay_path]).unwrap();
 
-        assert_eq!(overlaid.thinking_budget_tokens, Some(1024));
+        assert_eq!(overlaid.model_reasoning_effort, Some(ReasoningEffort::High));
         assert_eq!(overlaid.effective_model_info().unwrap().slug, "custom-kimi");
         assert_eq!(overlaid.effective_context_window_tokens(), 654_321);
     }

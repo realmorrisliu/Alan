@@ -1021,7 +1021,6 @@ where
             tools = tools.len(),
             provider,
             reasoning_effort = reasoning_effort_log.as_deref(),
-            reasoning_budget_tokens = request_controls.budget_tokens(),
             request_control_source = ?request_controls.source,
             "LLM request"
         );
@@ -3093,7 +3092,6 @@ description: {description}
             request.reasoning.effort,
             Some(alan_protocol::ReasoningEffort::High)
         );
-        assert_eq!(request.reasoning.budget_tokens, None);
     }
 
     #[tokio::test]
@@ -3150,7 +3148,6 @@ description: {description}
                 request.reasoning.effort,
                 Some(alan_protocol::ReasoningEffort::Low)
             );
-            assert_eq!(request.reasoning.budget_tokens, None);
         }
 
         state.session.flush().await;
@@ -3167,7 +3164,7 @@ description: {description}
     }
 
     #[tokio::test]
-    async fn test_run_turn_preserves_legacy_thinking_budget_without_effort() {
+    async fn test_run_turn_uses_session_reasoning_effort_without_budget_fallback() {
         let requests = Arc::new(Mutex::new(Vec::new()));
         let provider = CapturingResponsesProvider {
             requests: Arc::clone(&requests),
@@ -3187,8 +3184,9 @@ description: {description}
         };
         let mut state = create_test_state_with_provider(provider);
         state.runtime_config.streaming_mode = crate::config::StreamingMode::Off;
-        state.runtime_config.request_control_intent =
-            crate::RequestControlIntent::thinking_budget_tokens(Some(2048));
+        state.runtime_config.request_control_intent = crate::RequestControlIntent::reasoning_effort(
+            Some(alan_protocol::ReasoningEffort::High),
+        );
         let cancel = CancellationToken::new();
 
         let mut emit = |_event: Event| async {};
@@ -3205,9 +3203,10 @@ description: {description}
 
         let requests = requests.lock().unwrap();
         let request = requests.last().expect("captured request");
-        assert_eq!(request.reasoning.effort, None);
-        assert_eq!(request.reasoning.budget_tokens, Some(2048));
-        assert_eq!(request.thinking_budget_tokens, Some(2048));
+        assert_eq!(
+            request.reasoning.effort,
+            Some(alan_protocol::ReasoningEffort::High)
+        );
     }
 
     #[tokio::test]
@@ -3249,8 +3248,6 @@ description: {description}
         let requests = requests.lock().unwrap();
         let request = requests.last().expect("captured request");
         assert_eq!(request.reasoning.effort, None);
-        assert_eq!(request.reasoning.budget_tokens, None);
-        assert_eq!(request.thinking_budget_tokens, None);
     }
 
     #[tokio::test]

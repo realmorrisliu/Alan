@@ -549,27 +549,107 @@ fn request_has_json_content_type(headers: &HeaderMap) -> bool {
 fn parse_optional_json_body<T: DeserializeOwned>(
     headers: &HeaderMap,
     body: &Bytes,
-) -> Result<Option<T>, StatusCode> {
+) -> Result<Option<T>, JsonBodyError> {
     if body.is_empty() || body.iter().all(|byte| byte.is_ascii_whitespace()) {
         return Ok(None);
     }
 
     if !request_has_json_content_type(headers) {
-        return Err(StatusCode::UNSUPPORTED_MEDIA_TYPE);
+        return Err(JsonBodyError::UnsupportedMediaType);
     }
 
-    serde_json::from_slice(body)
+    let value =
+        serde_json::from_slice::<serde_json::Value>(body).map_err(|_| JsonBodyError::BadRequest)?;
+    if object_has_removed_thinking_budget(&value) {
+        return Err(JsonBodyError::RemovedThinkingBudget);
+    }
+
+    serde_json::from_value(value)
         .map(Some)
-        .map_err(|_| StatusCode::BAD_REQUEST)
+        .map_err(|_| JsonBodyError::BadRequest)
 }
 
-fn json_body_error_response(status: StatusCode) -> (StatusCode, Json<serde_json::Value>) {
-    let message = match status {
-        StatusCode::BAD_REQUEST => "Invalid JSON request body",
-        StatusCode::UNSUPPORTED_MEDIA_TYPE => "Expected application/json request body",
-        _ => "Invalid request body",
+fn parse_required_json_body<T, F>(
+    headers: &HeaderMap,
+    body: &Bytes,
+    contains_removed_thinking_budget: F,
+) -> Result<T, JsonBodyError>
+where
+    T: DeserializeOwned,
+    F: FnOnce(&serde_json::Value) -> bool,
+{
+    if body.is_empty() || body.iter().all(|byte| byte.is_ascii_whitespace()) {
+        return Err(JsonBodyError::BadRequest);
+    }
+
+    if !request_has_json_content_type(headers) {
+        return Err(JsonBodyError::UnsupportedMediaType);
+    }
+
+    let value =
+        serde_json::from_slice::<serde_json::Value>(body).map_err(|_| JsonBodyError::BadRequest)?;
+    if contains_removed_thinking_budget(&value) {
+        return Err(JsonBodyError::RemovedThinkingBudget);
+    }
+
+    serde_json::from_value(value).map_err(|_| JsonBodyError::BadRequest)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum JsonBodyError {
+    BadRequest,
+    UnsupportedMediaType,
+    RemovedThinkingBudget,
+}
+
+impl JsonBodyError {
+    fn status(self) -> StatusCode {
+        match self {
+            Self::BadRequest | Self::RemovedThinkingBudget => StatusCode::BAD_REQUEST,
+            Self::UnsupportedMediaType => StatusCode::UNSUPPORTED_MEDIA_TYPE,
+        }
+    }
+
+    fn message(self) -> &'static str {
+        match self {
+            Self::BadRequest => "Invalid JSON request body",
+            Self::UnsupportedMediaType => "Expected application/json request body",
+            Self::RemovedThinkingBudget => {
+                "Removed request field `thinking_budget_tokens`; use `model_reasoning_effort` in agent config or `reasoning_effort` on session/turn requests"
+            }
+        }
+    }
+}
+
+fn object_has_removed_thinking_budget(value: &serde_json::Value) -> bool {
+    value
+        .as_object()
+        .is_some_and(|object| object.contains_key("thinking_budget_tokens"))
+}
+
+fn submit_request_has_removed_thinking_budget(value: &serde_json::Value) -> bool {
+    if object_has_removed_thinking_budget(value) {
+        return true;
+    }
+
+    let Some(op) = value.get("op") else {
+        return false;
     };
-    (status, Json(serde_json::json!({ "error": message })))
+    object_has_removed_thinking_budget(op)
+        || op
+            .get("context")
+            .is_some_and(object_has_removed_thinking_budget)
+}
+
+fn json_body_error_status(error: JsonBodyError) -> StatusCode {
+    error.status()
+}
+
+fn json_body_error_response(error: JsonBodyError) -> (StatusCode, Json<serde_json::Value>) {
+    (
+        error.status(),
+        Json(serde_json::json!({ "error": error.message() })),
+    )
 }
 
 fn skill_catalog_error_response(err: anyhow::Error) -> (StatusCode, Json<serde_json::Value>) {
@@ -1108,11 +1188,12 @@ pub async fn fork_session(
     Path(session_id): Path<String>,
     headers: HeaderMap,
     body: Bytes,
-) -> Result<Json<ForkSessionResponse>, StatusCode> {
-    let payload = parse_optional_json_body::<ForkSessionRequest>(&headers, &body)?;
+) -> Result<Json<ForkSessionResponse>, (StatusCode, Json<serde_json::Value>)> {
+    let payload = parse_optional_json_body::<ForkSessionRequest>(&headers, &body)
+        .map_err(json_body_error_response)?;
     state.ensure_sessions_recovered().await.map_err(|err| {
         warn!(%session_id, error = %err, "Failed to recover sessions before fork");
-        StatusCode::INTERNAL_SERVER_ERROR
+        status_error_response(StatusCode::INTERNAL_SERVER_ERROR)
     })?;
     let (
         source_workspace_id,
@@ -1126,7 +1207,7 @@ pub async fn fork_session(
     ) = {
         let sessions = state.sessions.read().await;
         let Some(entry) = sessions.get(&session_id) else {
-            return Err(StatusCode::NOT_FOUND);
+            return Err(status_error_response(StatusCode::NOT_FOUND));
         };
         (
             entry.workspace_id.clone(),
@@ -1145,7 +1226,7 @@ pub async fn fork_session(
         .await
         .map_err(|err| {
             warn!(%session_id, error = %err, "Failed to update inbound activity before fork");
-            StatusCode::INTERNAL_SERVER_ERROR
+            status_error_response(StatusCode::INTERNAL_SERVER_ERROR)
         })?;
 
     let JsonLikeFork {
@@ -1172,14 +1253,18 @@ pub async fn fork_session(
         if path.exists() {
             Some(path)
         } else {
-            latest_rollout_path_for_workspace(&state, &session_id, &source_workspace_id).await?
+            latest_rollout_path_for_workspace(&state, &session_id, &source_workspace_id)
+                .await
+                .map_err(status_error_response)?
         }
     } else {
-        latest_rollout_path_for_workspace(&state, &session_id, &source_workspace_id).await?
+        latest_rollout_path_for_workspace(&state, &session_id, &source_workspace_id)
+            .await
+            .map_err(status_error_response)?
     };
 
     let Some(rollout_path) = rollout_path else {
-        return Err(StatusCode::CONFLICT);
+        return Err(status_error_response(StatusCode::CONFLICT));
     };
 
     let new_session_id = state
@@ -1196,13 +1281,13 @@ pub async fn fork_session(
         .await
         .map_err(|err| {
             warn!(%session_id, error = %err, "Failed to fork session");
-            status_for_session_creation_error(&err)
+            status_error_response(status_for_session_creation_error(&err))
         })?;
 
     let (agent_name, profile_id, provider, resolved_model, reasoning_effort, durability) = {
         let sessions = state.sessions.read().await;
         let Some(entry) = sessions.get(&new_session_id) else {
-            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+            return Err(status_error_response(StatusCode::INTERNAL_SERVER_ERROR));
         };
         (
             entry.agent_name.clone(),
@@ -1486,6 +1571,30 @@ pub struct SubmitResponse {
     pub accepted: bool,
 }
 
+/// HTTP route wrapper for submitting an operation to a session.
+pub async fn submit_operation_route(
+    State(state): State<AppState>,
+    Path(session_id): Path<String>,
+    remote_context: Option<Extension<RemoteRequestContext>>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<Json<SubmitResponse>, (StatusCode, Json<serde_json::Value>)> {
+    let request = parse_required_json_body::<SubmitRequest, _>(
+        &headers,
+        &body,
+        submit_request_has_removed_thinking_budget,
+    )
+    .map_err(json_body_error_response)?;
+    submit_operation(
+        State(state),
+        Path(session_id),
+        remote_context,
+        Json(request),
+    )
+    .await
+    .map_err(status_error_response)
+}
+
 /// Submit an operation to a session
 pub async fn submit_operation(
     State(state): State<AppState>,
@@ -1559,6 +1668,15 @@ pub async fn submit_operation(
     }
 }
 
+fn status_error_response(status: StatusCode) -> (StatusCode, Json<serde_json::Value>) {
+    (
+        status,
+        Json(serde_json::json!({
+            "error": status.canonical_reason().unwrap_or("Request failed")
+        })),
+    )
+}
+
 /// Request manual context compaction for a session.
 pub async fn compact_session(
     State(state): State<AppState>,
@@ -1566,7 +1684,8 @@ pub async fn compact_session(
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<Json<CompactSessionResponse>, StatusCode> {
-    let payload = parse_optional_json_body::<CompactSessionRequest>(&headers, &body)?;
+    let payload = parse_optional_json_body::<CompactSessionRequest>(&headers, &body)
+        .map_err(json_body_error_status)?;
     let focus = payload
         .and_then(|req| req.focus)
         .map(|focus| focus.trim().to_string())
@@ -2826,6 +2945,33 @@ Body
             resp.reasoning_effort,
             Some(alan_protocol::ReasoningEffort::High)
         );
+    }
+
+    #[tokio::test]
+    async fn create_session_rejects_legacy_thinking_budget_control() {
+        let state = test_state();
+
+        let (status, body) = match create_session(
+            State(state),
+            json_headers(),
+            Bytes::from(
+                serde_json::json!({
+                    "thinking_budget_tokens": 2048
+                })
+                .to_string(),
+            ),
+        )
+        .await
+        {
+            Ok(_) => panic!("legacy thinking budget control should be rejected"),
+            Err(err) => err,
+        };
+
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        let message = body.0["error"].as_str().unwrap_or_default();
+        assert!(message.contains("thinking_budget_tokens"));
+        assert!(message.contains("model_reasoning_effort"));
+        assert!(message.contains("reasoning_effort"));
     }
 
     #[tokio::test]
@@ -4213,6 +4359,63 @@ Body
     }
 
     #[tokio::test]
+    async fn submit_operation_route_rejects_legacy_thinking_budget_control() {
+        let state = test_state();
+        let temp = tempfile::TempDir::new().unwrap();
+        let (entry, mut submission_rx) = session_entry(temp.path());
+        state
+            .sessions
+            .write()
+            .await
+            .insert("sess-submit-legacy".to_string(), entry);
+
+        let app = Router::new()
+            .route("/api/v1/sessions/{id}/submit", post(submit_operation_route))
+            .with_state(state);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/sessions/sess-submit-legacy/submit")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "op": {
+                                "type": "turn",
+                                "parts": [
+                                    { "type": "text", "text": "hello" }
+                                ],
+                                "context": {
+                                    "thinking_budget_tokens": 2048
+                                }
+                            }
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let value: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        let message = value["error"].as_str().unwrap_or_default();
+        assert!(message.contains("thinking_budget_tokens"));
+        assert!(message.contains("model_reasoning_effort"));
+        assert!(message.contains("reasoning_effort"));
+        match tokio::time::timeout(std::time::Duration::from_millis(100), submission_rx.recv())
+            .await
+        {
+            Err(_) | Ok(None) => {}
+            Ok(Some(_)) => {
+                panic!("legacy request-control payload should not be forwarded to runtime")
+            }
+        }
+    }
+
+    #[tokio::test]
     async fn compact_session_submits_compact_with_options_without_focus() {
         let state = test_state();
         let temp = tempfile::TempDir::new().unwrap();
@@ -4411,6 +4614,34 @@ Body
     }
 
     #[tokio::test]
+    async fn fork_session_rejects_legacy_thinking_budget_control() {
+        let state = test_state();
+
+        let (status, body) = match fork_session(
+            State(state),
+            Path("sess-fork-legacy".to_string()),
+            json_headers(),
+            Bytes::from(
+                serde_json::json!({
+                    "thinking_budget_tokens": 2048
+                })
+                .to_string(),
+            ),
+        )
+        .await
+        {
+            Ok(_) => panic!("legacy thinking budget control should be rejected"),
+            Err(err) => err,
+        };
+
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        let message = body.0["error"].as_str().unwrap_or_default();
+        assert!(message.contains("thinking_budget_tokens"));
+        assert!(message.contains("model_reasoning_effort"));
+        assert!(message.contains("reasoning_effort"));
+    }
+
+    #[tokio::test]
     async fn fork_session_without_reasoning_override_preserves_source_metadata() {
         let state = test_state();
         let temp = tempfile::TempDir::new().unwrap();
@@ -4512,7 +4743,7 @@ Body
         .await
         .err()
         .unwrap();
-        assert_eq!(fork_err, StatusCode::NOT_FOUND);
+        assert_eq!(fork_err.0, StatusCode::NOT_FOUND);
     }
 
     #[tokio::test]

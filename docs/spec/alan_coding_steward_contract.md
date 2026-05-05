@@ -174,8 +174,10 @@ For coding workloads:
 4. `launch.timeout_secs` should default to a bounded value so the child cannot
    hold the parent hostage indefinitely; productized coding paths should only
    omit it intentionally.
-5. `launch.budget_tokens` is optional and should be used when the parent needs
-   a bounded reasoning budget for the worker.
+5. `runtime_overrides.model_reasoning_effort` should be used when the parent
+   needs a bounded reasoning level for the worker. The removed
+   `launch.budget_tokens` shortcut is rejected instead of being interpreted as a
+   reasoning control.
 
 ### Recommended Handle Profiles
 

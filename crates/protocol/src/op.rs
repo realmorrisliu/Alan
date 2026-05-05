@@ -81,7 +81,7 @@ pub struct DynamicToolSpec {
 
 /// User-submitted operations
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Op {
     // ========================================================================
     // New unified operations (Phase 2)
@@ -147,6 +147,7 @@ pub enum Op {
 
 /// Turn context metadata — attached to Turn ops.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 pub struct TurnContext {
     /// Optional workspace ID to route this turn to.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -461,6 +462,22 @@ mod tests {
             }
             _ => panic!("Expected Turn variant"),
         }
+    }
+
+    #[test]
+    fn test_op_rejects_legacy_thinking_budget_in_turn_context() {
+        let payload = json!({
+            "type": "turn",
+            "parts": [
+                { "type": "text", "text": "Hi" }
+            ],
+            "context": {
+                "thinking_budget_tokens": 2048
+            }
+        });
+
+        let err = serde_json::from_value::<Op>(payload).unwrap_err();
+        assert!(err.to_string().contains("thinking_budget_tokens"));
     }
 
     #[test]

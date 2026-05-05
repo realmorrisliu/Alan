@@ -166,8 +166,6 @@ pub struct GenerationRequest {
     pub tools: Vec<ToolDefinition>,
     pub temperature: Option<f32>,
     pub max_tokens: Option<i32>,
-    /// Thinking budget in tokens (provider-specific; e.g. Anthropic budget or OpenAI effort hint)
-    pub thinking_budget_tokens: Option<u32>,
     /// Canonical cross-provider reasoning controls.
     pub reasoning: ReasoningControls,
     /// Provider-specific extra parameters
@@ -243,7 +241,6 @@ impl GenerationRequest {
             tools: Vec::new(),
             temperature: None,
             max_tokens: None,
-            thinking_budget_tokens: None,
             reasoning: ReasoningControls::default(),
             extra_params: HashMap::new(),
         }
@@ -315,13 +312,6 @@ impl GenerationRequest {
         self
     }
 
-    /// Set provider-specific thinking/reasoning budget tokens.
-    pub fn with_thinking_budget_tokens(mut self, tokens: u32) -> Self {
-        self.thinking_budget_tokens = Some(tokens);
-        self.reasoning.budget_tokens = Some(tokens);
-        self
-    }
-
     /// Set canonical named reasoning effort.
     pub fn with_reasoning_effort(mut self, effort: ReasoningEffort) -> Self {
         self.reasoning.effort = Some(effort);
@@ -331,7 +321,6 @@ impl GenerationRequest {
     /// Set canonical reasoning controls.
     pub fn with_reasoning_controls(mut self, controls: ReasoningControls) -> Self {
         self.reasoning = controls;
-        self.thinking_budget_tokens = controls.budget_tokens;
         self
     }
 
@@ -399,13 +388,6 @@ impl GenerationRequest {
         );
         self
     }
-}
-
-pub(crate) fn effective_thinking_budget_tokens(
-    reasoning: ReasoningControls,
-    thinking_budget_tokens: Option<u32>,
-) -> Option<u32> {
-    reasoning.budget_tokens.or(thinking_budget_tokens)
 }
 
 impl Default for GenerationRequest {
@@ -1376,37 +1358,17 @@ mod tests {
     }
 
     #[test]
-    fn test_generation_request_reasoning_controls_sync_legacy_budget() {
-        let cleared = GenerationRequest::new()
-            .with_thinking_budget_tokens(2048)
-            .with_reasoning_controls(ReasoningControls::default());
+    fn test_generation_request_reasoning_controls_set_canonical_controls() {
+        let cleared =
+            GenerationRequest::new().with_reasoning_controls(ReasoningControls::default());
 
         assert_eq!(cleared.reasoning, ReasoningControls::default());
-        assert_eq!(cleared.thinking_budget_tokens, None);
 
-        let budgeted = GenerationRequest::new().with_reasoning_controls(ReasoningControls {
-            effort: None,
-            budget_tokens: Some(512),
+        let efforted = GenerationRequest::new().with_reasoning_controls(ReasoningControls {
+            effort: Some(ReasoningEffort::High),
         });
 
-        assert_eq!(budgeted.reasoning.budget_tokens, Some(512));
-        assert_eq!(budgeted.thinking_budget_tokens, Some(512));
-    }
-
-    #[test]
-    fn test_effective_thinking_budget_tokens_preserves_legacy_field() {
-        let mut request = GenerationRequest::new();
-        request.thinking_budget_tokens = Some(2048);
-        assert_eq!(
-            effective_thinking_budget_tokens(request.reasoning, request.thinking_budget_tokens),
-            Some(2048)
-        );
-
-        request.reasoning.budget_tokens = Some(512);
-        assert_eq!(
-            effective_thinking_budget_tokens(request.reasoning, request.thinking_budget_tokens),
-            Some(512)
-        );
+        assert_eq!(efforted.reasoning.effort, Some(ReasoningEffort::High));
     }
 
     #[test]
