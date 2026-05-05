@@ -300,15 +300,6 @@ extension AlanShellBindingProjection {
     }
 }
 
-extension Notification.Name {
-    static let alanShellSendText = Notification.Name("alan.shell.sendText")
-}
-
-enum AlanShellNotificationKey {
-    static let paneID = "paneID"
-    static let text = "text"
-}
-
 enum AlanShellLocalCommandSideEffect {
     case sendText(paneID: String, text: String)
 }
@@ -710,33 +701,7 @@ private enum AlanShellLocalCommandExecutor {
             }
 
         case .paneSendText:
-            guard let paneID = command.paneID,
-                  state.pane(paneID: paneID) != nil
-            else {
-                return AlanShellLocalCommandResult(
-                    response: failureResponse(
-                        for: .paneNotFound,
-                        command: command,
-                        state: state
-                    ),
-                    updatedState: nil,
-                    sideEffect: nil
-                )
-            }
-            let text = command.text ?? ""
-            return AlanShellLocalCommandResult(
-                response: response(
-                    for: command,
-                    state: state,
-                    applied: true,
-                    spaceID: state.focusedSpaceID,
-                    tabID: state.focusedTabID,
-                    paneID: paneID,
-                    acceptedBytes: text.lengthOfBytes(using: .utf8)
-                ),
-                updatedState: nil,
-                sideEffect: .sendText(paneID: paneID, text: text)
-            )
+            return nil
 
         case .attentionInbox:
             return AlanShellLocalCommandResult(
@@ -1157,8 +1122,19 @@ private func attentionRank(for attention: ShellAttentionState) -> Int {
 }
 
 final class AlanShellSocketServer {
+    private static let maxRequestBytes = 1_048_576
+    private static let readTimeoutSeconds = 5
+    private static let commandResponseTimeoutSeconds: TimeInterval = 5
+    private static let maxConcurrentClients = 4
+
     private let socketURL: URL
     private let queue = DispatchQueue(label: "dev.alan.shell.control.socket", qos: .userInitiated)
+    private let clientQueue = DispatchQueue(
+        label: "dev.alan.shell.control.socket.clients",
+        qos: .userInitiated,
+        attributes: .concurrent
+    )
+    private let clientSemaphore = DispatchSemaphore(value: AlanShellSocketServer.maxConcurrentClients)
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
     private let commandHandler: (AlanShellControlCommand) -> AlanShellControlResponse
@@ -1291,7 +1267,19 @@ final class AlanShellSocketServer {
 
             debugLog("socket accepted client fd=\(clientFD)")
             configureClient(fileDescriptor: clientFD)
-            handleClient(fileDescriptor: clientFD)
+            clientQueue.async { [weak self] in
+                guard let self else {
+                    AlanShellSocketServer.closeClient(clientFD)
+                    return
+                }
+                guard self.clientSemaphore.wait(timeout: .now() + 5) == .success else {
+                    self.debugLog("socket client rejected by concurrency limit fd=\(clientFD)")
+                    AlanShellSocketServer.closeClient(clientFD)
+                    return
+                }
+                defer { self.clientSemaphore.signal() }
+                self.handleClient(fileDescriptor: clientFD)
+            }
         }
     }
 
@@ -1303,6 +1291,22 @@ final class AlanShellSocketServer {
             SO_NOSIGPIPE,
             &noSigPipe,
             socklen_t(MemoryLayout<Int32>.size)
+        )
+
+        var timeout = timeval(tv_sec: Self.readTimeoutSeconds, tv_usec: 0)
+        setsockopt(
+            fileDescriptor,
+            SOL_SOCKET,
+            SO_RCVTIMEO,
+            &timeout,
+            socklen_t(MemoryLayout<timeval>.size)
+        )
+        setsockopt(
+            fileDescriptor,
+            SOL_SOCKET,
+            SO_SNDTIMEO,
+            &timeout,
+            socklen_t(MemoryLayout<timeval>.size)
         )
     }
 
@@ -1335,8 +1339,32 @@ final class AlanShellSocketServer {
             response = self.commandHandler(command)
             semaphore.signal()
         }
-        if semaphore.wait(timeout: .now() + 5) != .success {
+        if semaphore.wait(timeout: .now() + Self.commandResponseTimeoutSeconds) != .success {
             debugLog("socket response timeout fd=\(fileDescriptor)")
+            let timeoutResponse = AlanShellControlResponse(
+                requestID: command.requestID,
+                contractVersion: "0.1",
+                applied: false,
+                state: nil,
+                spaces: nil,
+                tabs: nil,
+                panes: nil,
+                pane: nil,
+                items: nil,
+                candidates: nil,
+                events: nil,
+                focusedPaneID: nil,
+                spaceID: command.spaceID,
+                tabID: command.tabID,
+                paneID: command.paneID,
+                acceptedBytes: nil,
+                latestEventID: nil,
+                errorCode: "command_timeout",
+                errorMessage: "Alan Shell control command timed out."
+            )
+            let responseData = (try? encoder.encode(timeoutResponse)) ?? Data()
+            AlanShellSocketServer.write(responseData, to: fileDescriptor)
+            AlanShellSocketServer.write(Data([0x0A]), to: fileDescriptor)
             AlanShellSocketServer.closeClient(fileDescriptor)
             return
         }
@@ -1379,6 +1407,10 @@ final class AlanShellSocketServer {
             let bytesRead = read(fileDescriptor, &buffer, buffer.count)
             if bytesRead > 0 {
                 data.append(buffer, count: bytesRead)
+                guard data.count <= Self.maxRequestBytes else {
+                    debugLog("socket request too large fd=\(fileDescriptor) bytes=\(data.count)")
+                    return nil
+                }
                 if data.contains(0x0A) {
                     debugLog("socket read newline fd=\(fileDescriptor) bytes=\(data.count)")
                     break
@@ -1493,6 +1525,7 @@ final class AlanShellControlPlane {
     private let commandHandler: (AlanShellControlCommand) -> AlanShellControlResponse
     private let stateAdoptionHandler: @MainActor (ShellStateSnapshot) -> Void
     private let bindingProjectionHandler: @MainActor (String, ShellAlanBinding?) -> Void
+    private let diagnosticHandler: @MainActor (String) -> Void
     private let socketServer: AlanShellSocketServer
     private var pollSource: DispatchSourceTimer?
     private var trackedPaneIDs: Set<String> = []
@@ -1505,7 +1538,8 @@ final class AlanShellControlPlane {
         fileManager: FileManager = .default,
         commandHandler: @escaping (AlanShellControlCommand) -> AlanShellControlResponse,
         stateAdoptionHandler: @escaping @MainActor (ShellStateSnapshot) -> Void,
-        bindingProjectionHandler: @escaping @MainActor (String, ShellAlanBinding?) -> Void
+        bindingProjectionHandler: @escaping @MainActor (String, ShellAlanBinding?) -> Void,
+        diagnosticHandler: @escaping @MainActor (String) -> Void = { _ in }
     ) {
         self.windowID = windowID
         self.fileManager = fileManager
@@ -1522,6 +1556,7 @@ final class AlanShellControlPlane {
         self.commandHandler = commandHandler
         self.stateAdoptionHandler = stateAdoptionHandler
         self.bindingProjectionHandler = bindingProjectionHandler
+        self.diagnosticHandler = diagnosticHandler
         self.socketServer = AlanShellSocketServer(
             socketURL: self.socketURL,
             commandHandler: commandHandler,
@@ -1530,19 +1565,7 @@ final class AlanShellControlPlane {
                     stateAdoptionHandler(state)
                 }
             },
-            sideEffectHandler: { sideEffect in
-                switch sideEffect {
-                case let .sendText(paneID, text):
-                    NotificationCenter.default.post(
-                        name: .alanShellSendText,
-                        object: nil,
-                        userInfo: [
-                            AlanShellNotificationKey.paneID: paneID,
-                            AlanShellNotificationKey.text: text,
-                        ]
-                    )
-                }
-            }
+            sideEffectHandler: { _ in }
         )
 
         ensureDirectories()
@@ -1581,8 +1604,12 @@ final class AlanShellControlPlane {
         let mergedState = mergeResult.merged
         synchronizePaneSupportDirectories(for: mergedState)
         recordEvents(from: mergeResult.previous, to: mergedState)
-        guard let data = try? encoder.encode(mergedState) else { return }
-        try? data.write(to: stateFileURL, options: .atomic)
+        do {
+            let data = try encoder.encode(mergedState)
+            try data.write(to: stateFileURL, options: .atomic)
+        } catch {
+            recordDiagnostic("Failed to persist shell state: \(error.localizedDescription)")
+        }
     }
 
     private func startPolling() {
@@ -1601,8 +1628,16 @@ final class AlanShellControlPlane {
 
     private func ensureDirectories() {
         [rootURL, panesURL, commandsURL, resultsURL].forEach { url in
-            try? fileManager.createDirectory(at: url, withIntermediateDirectories: true)
+            do {
+                try fileManager.createDirectory(at: url, withIntermediateDirectories: true)
+            } catch {
+                recordDiagnostic("Failed to create shell control directory \(url.path): \(error.localizedDescription)")
+            }
         }
+    }
+
+    private func recordDiagnostic(_ message: String) {
+        diagnosticHandler(message)
     }
 
     func specialCommandResponse(for command: AlanShellControlCommand) -> AlanShellControlResponse? {
@@ -1631,6 +1666,34 @@ final class AlanShellControlPlane {
         )
     }
 
+    func recordTextDelivery(
+        requestID: String,
+        spaceID: String?,
+        tabID: String?,
+        paneID: String,
+        delivery: TerminalRuntimeDeliveryResult
+    ) {
+        var payload: [String: AlanShellJSONValue] = [
+            "request_id": .string(requestID),
+            "delivery_code": .string(delivery.code.rawValue),
+            "accepted_bytes": .number(Double(delivery.acceptedBytes))
+        ]
+        if let errorCode = delivery.errorCode {
+            payload["error_code"] = .string(errorCode)
+        }
+        if let errorMessage = delivery.errorMessage {
+            payload["error_message"] = .string(errorMessage)
+        }
+
+        appendEvent(
+            type: "pane.text_delivery",
+            spaceID: spaceID,
+            tabID: tabID,
+            paneID: paneID,
+            payload: payload
+        )
+    }
+
     private func synchronizePaneSupportDirectories(for state: ShellStateSnapshot) {
         let paneIDs = Set(state.panes.map(\.paneID))
         let previousPaneIDs = trackedPaneIDs
@@ -1642,7 +1705,11 @@ final class AlanShellControlPlane {
                 paneID: paneID,
                 fileManager: fileManager
             )
-            try? fileManager.createDirectory(at: paneURL, withIntermediateDirectories: true)
+            do {
+                try fileManager.createDirectory(at: paneURL, withIntermediateDirectories: true)
+            } catch {
+                recordDiagnostic("Failed to create pane support directory \(paneURL.path): \(error.localizedDescription)")
+            }
         }
 
         let stalePaneIDs = Set(lastBindingPayloadByPaneID.keys).subtracting(paneIDs)
@@ -1656,7 +1723,11 @@ final class AlanShellControlPlane {
                 paneID: paneID,
                 fileManager: fileManager
             )
-            try? fileManager.removeItem(at: paneURL)
+            do {
+                try fileManager.removeItem(at: paneURL)
+            } catch {
+                recordDiagnostic("Failed to remove stale pane support directory \(paneURL.path): \(error.localizedDescription)")
+            }
         }
     }
 
@@ -1850,13 +1921,17 @@ final class AlanShellControlPlane {
         }
         if let data = try? encoder.encode(event),
            let line = String(data: data, encoding: .utf8) {
-            if fileManager.fileExists(atPath: eventsFileURL.path),
-               let handle = try? FileHandle(forWritingTo: eventsFileURL) {
-                defer { try? handle.close() }
-                _ = try? handle.seekToEnd()
-                try? handle.write(contentsOf: Data("\(line)\n".utf8))
-            } else {
-                try? Data("\(line)\n".utf8).write(to: eventsFileURL, options: .atomic)
+            do {
+                if fileManager.fileExists(atPath: eventsFileURL.path) {
+                    let handle = try FileHandle(forWritingTo: eventsFileURL)
+                    defer { try? handle.close() }
+                    _ = try handle.seekToEnd()
+                    try handle.write(contentsOf: Data("\(line)\n".utf8))
+                } else {
+                    try Data("\(line)\n".utf8).write(to: eventsFileURL, options: .atomic)
+                }
+            } catch {
+                recordDiagnostic("Failed to persist shell event log: \(error.localizedDescription)")
             }
         }
     }
@@ -1878,13 +1953,19 @@ final class AlanShellControlPlane {
     private func pollCommands() {
         ensureDirectories()
 
-        let commandFiles = (try? fileManager.contentsOfDirectory(
-            at: commandsURL,
-            includingPropertiesForKeys: [.creationDateKey, .contentModificationDateKey],
-            options: [.skipsHiddenFiles]
-        ))?
-        .filter { $0.pathExtension == "json" }
-        .sorted(by: compareCommandFiles) ?? []
+        let commandFiles: [URL]
+        do {
+            commandFiles = try fileManager.contentsOfDirectory(
+                at: commandsURL,
+                includingPropertiesForKeys: [.creationDateKey, .contentModificationDateKey],
+                options: [.skipsHiddenFiles]
+            )
+            .filter { $0.pathExtension == "json" }
+            .sorted(by: compareCommandFiles)
+        } catch {
+            recordDiagnostic("Failed to read shell command directory: \(error.localizedDescription)")
+            return
+        }
 
         for fileURL in commandFiles {
             handleCommandFile(at: fileURL)
@@ -1895,7 +1976,12 @@ final class AlanShellControlPlane {
         guard let data = try? Data(contentsOf: fileURL),
               let command = try? decoder.decode(AlanShellControlCommand.self, from: data)
         else {
-            try? fileManager.removeItem(at: fileURL)
+            recordDiagnostic("Ignored unreadable shell command file \(fileURL.lastPathComponent).")
+            do {
+                try fileManager.removeItem(at: fileURL)
+            } catch {
+                recordDiagnostic("Failed to remove unreadable shell command file \(fileURL.lastPathComponent): \(error.localizedDescription)")
+            }
             return
         }
 
@@ -1905,11 +1991,18 @@ final class AlanShellControlPlane {
             ?? commandHandler(command)
         let responseURL = resultsURL.appendingPathComponent("\(command.requestID).json")
 
-        if let responseData = try? encoder.encode(response) {
-            try? responseData.write(to: responseURL, options: .atomic)
+        do {
+            let responseData = try encoder.encode(response)
+            try responseData.write(to: responseURL, options: .atomic)
+        } catch {
+            recordDiagnostic("Failed to write shell command result \(responseURL.lastPathComponent): \(error.localizedDescription)")
         }
 
-        try? fileManager.removeItem(at: fileURL)
+        do {
+            try fileManager.removeItem(at: fileURL)
+        } catch {
+            recordDiagnostic("Failed to remove processed shell command file \(fileURL.lastPathComponent): \(error.localizedDescription)")
+        }
     }
 
     private func compareCommandFiles(_ lhs: URL, _ rhs: URL) -> Bool {
@@ -1941,6 +2034,7 @@ final class AlanShellControlPlane {
             }
 
             guard let data = try? Data(contentsOf: bindingURL) else {
+                recordDiagnostic("Failed to read Alan binding file for \(paneID).")
                 continue
             }
 
@@ -1950,6 +2044,7 @@ final class AlanShellControlPlane {
 
             guard let projection = try? decoder.decode(AlanShellBindingProjection.self, from: data) else {
                 lastBindingPayloadByPaneID[paneID] = data
+                recordDiagnostic("Ignored invalid Alan binding file for \(paneID).")
                 continue
             }
 

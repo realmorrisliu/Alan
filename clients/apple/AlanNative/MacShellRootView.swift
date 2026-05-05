@@ -42,8 +42,12 @@ struct MacShellRootView: View {
     private var showsInspector = false
 
     init() {
+        let windowContext = ShellWindowContext.make()
         _host = StateObject(
-            wrappedValue: ShellHostController.live(startupMode: .fresh)
+            wrappedValue: ShellHostController.live(
+                windowContext: windowContext,
+                startupMode: .fresh
+            )
         )
     }
 
@@ -1168,6 +1172,19 @@ private struct ShellInspectorView: View {
                             }
                         }
                     case .debug:
+                        if !host.controlPlaneDiagnostics.isEmpty {
+                            InspectorCard(title: "Control Diagnostics") {
+                                VStack(alignment: .leading, spacing: 8) {
+                                    ForEach(Array(host.controlPlaneDiagnostics.enumerated()), id: \.offset) { entry in
+                                        Text(entry.element)
+                                            .font(.system(size: 11, weight: .medium, design: .monospaced))
+                                            .foregroundStyle(ShellPalette.mutedInk)
+                                            .fixedSize(horizontal: false, vertical: true)
+                                    }
+                                }
+                            }
+                        }
+
                         InspectorCard(title: "Debug Snapshot") {
                             VStack(alignment: .leading, spacing: 12) {
                                 Text("Canonical local shell state exposed to `alan shell state`.")

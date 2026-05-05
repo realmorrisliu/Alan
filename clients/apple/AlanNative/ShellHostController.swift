@@ -34,6 +34,44 @@ private enum ShellPaneLiftResult {
 }
 
 @MainActor
+struct ShellWindowContext {
+    let windowID: String
+    let persistenceURL: URL
+    let terminalRuntimeRegistry: TerminalRuntimeRegistry
+
+    var controlRootURL: URL {
+        alanShellControlPlaneRootURL(windowID: windowID)
+    }
+
+    var socketURL: URL {
+        alanShellControlPlaneSocketURL(windowID: windowID)
+    }
+
+    var stateURL: URL {
+        controlRootURL.appendingPathComponent("state.json")
+    }
+
+    var eventsURL: URL {
+        controlRootURL.appendingPathComponent("events.jsonl")
+    }
+
+    static func make(
+        fileManager: FileManager = .default,
+        windowID: String = "window_\(UUID().uuidString.lowercased())",
+        terminalRuntimeRegistry: TerminalRuntimeRegistry? = nil
+    ) -> ShellWindowContext {
+        ShellWindowContext(
+            windowID: windowID,
+            persistenceURL: ShellHostController.defaultPersistenceURL(
+                windowID: windowID,
+                fileManager: fileManager
+            ),
+            terminalRuntimeRegistry: terminalRuntimeRegistry ?? TerminalRuntimeRegistry()
+        )
+    }
+}
+
+@MainActor
 final class ShellHostController: ObservableObject {
     enum StartupMode {
         case fresh
@@ -41,11 +79,15 @@ final class ShellHostController: ObservableObject {
     }
 
     private static let iso8601Formatter = ISO8601DateFormatter()
-    private static let persistenceFileName = "shell-state-v0.1.json"
+    private static let persistenceFilePrefix = "shell-state-"
+    private static let persistenceFileExtension = ".json"
+    private static let legacyPersistenceFileName = "shell-state-v0.1.json"
+    private static let defaultRestorationWindowID = "window_main"
 
     private let fileManager: FileManager
+    private let windowContext: ShellWindowContext
     private let persistenceURL: URL
-    private lazy var controlPlane = AlanShellControlPlane(windowID: shellState.windowID) { [weak self] command in
+    private lazy var controlPlane = AlanShellControlPlane(windowID: windowContext.windowID) { [weak self] command in
         self?.handleControlPlaneCommand(command)
             ?? AlanShellControlResponse(
                 requestID: command.requestID,
@@ -72,6 +114,8 @@ final class ShellHostController: ObservableObject {
         self?.adoptStateFromControlPlane(state)
     } bindingProjectionHandler: { [weak self] paneID, binding in
         self?.applyAlanBinding(binding, for: paneID)
+    } diagnosticHandler: { [weak self] message in
+        self?.recordControlPlaneDiagnostic(message)
     }
 
     @Published private(set) var shellState: ShellStateSnapshot
@@ -79,17 +123,25 @@ final class ShellHostController: ObservableObject {
     @Published var selectedTabID: String?
     @Published private(set) var lastCopiedAt: Date?
     @Published private(set) var terminalRuntime: TerminalHostRuntimeSnapshot = .placeholder
+    @Published private(set) var controlPlaneDiagnostics: [String] = []
 
-    private var runtimesByPaneID: [String: TerminalHostRuntimeSnapshot] = [:]
+    let terminalRuntimeRegistry: TerminalRuntimeRegistry
 
     init(
         shellState: ShellStateSnapshot,
         fileManager: FileManager = .default,
-        persistenceURL: URL? = nil
+        windowContext: ShellWindowContext? = nil,
+        persistenceURL: URL? = nil,
+        terminalRuntimeRegistry: TerminalRuntimeRegistry? = nil
     ) {
         self.fileManager = fileManager
-        self.persistenceURL = persistenceURL ?? Self.defaultPersistenceURL(fileManager: fileManager)
+        let resolvedContext = windowContext ?? ShellWindowContext.make(fileManager: fileManager)
+        self.windowContext = resolvedContext
+        self.persistenceURL = persistenceURL ?? resolvedContext.persistenceURL
         self.shellState = shellState
+        self.terminalRuntimeRegistry =
+            terminalRuntimeRegistry
+            ?? resolvedContext.terminalRuntimeRegistry
         self.selectedSpaceID = shellState.focusedSpaceID ?? shellState.spaces.first?.spaceID
         self.selectedTabID = shellState.focusedTabID ?? shellState.spaces.first?.tabs.first?.tabID
 
@@ -103,22 +155,28 @@ final class ShellHostController: ObservableObject {
 
     static func live(
         fileManager: FileManager = .default,
+        windowContext: ShellWindowContext? = nil,
         startupMode: StartupMode = .fresh
     ) -> ShellHostController {
-        let persistenceURL = defaultPersistenceURL(fileManager: fileManager)
+        let resolvedWindowContext =
+            windowContext
+            ?? restoredWindowContext(fileManager: fileManager, startupMode: startupMode)
+            ?? defaultWindowContext(fileManager: fileManager, startupMode: startupMode)
+        let persistenceURL = resolvedWindowContext.persistenceURL
         let shellState: ShellStateSnapshot
         switch startupMode {
         case .fresh:
-            shellState = .bootstrapDefault()
+            shellState = .bootstrapDefault(windowID: resolvedWindowContext.windowID)
         case .restorePrevious:
             shellState =
                 restoreShellState(fileManager: fileManager, persistenceURL: persistenceURL)
-                ?? .bootstrapDefault()
+                ?? .bootstrapDefault(windowID: resolvedWindowContext.windowID)
         }
 
         let controller = ShellHostController(
             shellState: shellState,
             fileManager: fileManager,
+            windowContext: resolvedWindowContext,
             persistenceURL: persistenceURL
         )
         if startupMode == .fresh {
@@ -222,8 +280,7 @@ final class ShellHostController: ObservableObject {
     }
 
     func runtime(for paneID: String?) -> TerminalHostRuntimeSnapshot {
-        guard let paneID else { return .placeholder }
-        return runtimesByPaneID[paneID] ?? .placeholder
+        terminalRuntimeRegistry.snapshot(for: paneID)
     }
 
     func select(spaceID: String) {
@@ -420,9 +477,7 @@ final class ShellHostController: ObservableObject {
     }
 
     func updateTerminalRuntime(_ runtime: TerminalHostRuntimeSnapshot) {
-        if let paneID = runtime.paneID {
-            runtimesByPaneID[paneID] = runtime
-        }
+        terminalRuntimeRegistry.updateSnapshot(runtime)
 
         if let paneID = runtime.paneID,
            runtime.isFocused,
@@ -710,7 +765,7 @@ final class ShellHostController: ObservableObject {
 
     private func adoptStateFromControlPlane(_ state: ShellStateSnapshot) {
         let paneIDs = Set(state.panes.map(\.paneID))
-        runtimesByPaneID = runtimesByPaneID.filter { paneIDs.contains($0.key) }
+        terminalRuntimeRegistry.releaseRuntimes(excluding: paneIDs)
 
         let hydratedPanes = state.panes.map { pane in
             guard paneNeedsBootContextProjection(pane) else { return pane }
@@ -759,6 +814,15 @@ final class ShellHostController: ObservableObject {
         )
         synchronizeSelection()
         publishControlPlaneState()
+    }
+
+    private func recordControlPlaneDiagnostic(_ message: String) {
+        let line = "\(Self.iso8601Formatter.string(from: .now)) \(message)"
+        guard controlPlaneDiagnostics.last != line else { return }
+        controlPlaneDiagnostics.append(line)
+        if controlPlaneDiagnostics.count > 12 {
+            controlPlaneDiagnostics.removeFirst(controlPlaneDiagnostics.count - 12)
+        }
     }
 
     private func synchronizeSelection() {
@@ -1469,7 +1533,7 @@ final class ShellHostController: ObservableObject {
 
         case .paneSendText:
             guard let paneID = command.paneID,
-                  shellState.panes.contains(where: { $0.paneID == paneID })
+                  let targetPane = pane(paneID: paneID)
             else {
                 return response(
                     requestID: command.requestID,
@@ -1481,22 +1545,24 @@ final class ShellHostController: ObservableObject {
             }
 
             let text = command.text ?? ""
-            NotificationCenter.default.post(
-                name: .alanShellSendText,
-                object: nil,
-                userInfo: [
-                    AlanShellNotificationKey.paneID: paneID,
-                    AlanShellNotificationKey.text: text,
-                ]
+            let delivery = terminalRuntimeRegistry.sendText(to: paneID, text: text)
+            controlPlane.recordTextDelivery(
+                requestID: command.requestID,
+                spaceID: targetPane.spaceID,
+                tabID: targetPane.tabID,
+                paneID: paneID,
+                delivery: delivery
             )
 
             return response(
                 requestID: command.requestID,
-                applied: true,
-                spaceID: shellState.focusedSpaceID,
-                tabID: shellState.focusedTabID,
+                applied: delivery.applied,
+                spaceID: targetPane.spaceID,
+                tabID: targetPane.tabID,
                 paneID: paneID,
-                acceptedBytes: text.lengthOfBytes(using: .utf8)
+                acceptedBytes: delivery.acceptedBytes,
+                errorCode: delivery.errorCode,
+                errorMessage: delivery.errorMessage
             )
 
         case .attentionInbox:
@@ -1517,6 +1583,15 @@ final class ShellHostController: ObservableObject {
                     errorMessage: "pane_id and attention are required."
                 )
             }
+            guard let targetPane = pane(paneID: paneID) else {
+                return response(
+                    requestID: command.requestID,
+                    applied: false,
+                    paneID: paneID,
+                    errorCode: "pane_not_found",
+                    errorMessage: "The requested pane does not exist."
+                )
+            }
             guard setAttention(attention, for: paneID) else {
                 return response(
                     requestID: command.requestID,
@@ -1529,8 +1604,8 @@ final class ShellHostController: ObservableObject {
             return response(
                 requestID: command.requestID,
                 applied: true,
-                spaceID: shellState.focusedSpaceID,
-                tabID: shellState.focusedTabID,
+                spaceID: targetPane.spaceID,
+                tabID: targetPane.tabID,
                 paneID: paneID
             )
 
@@ -1552,13 +1627,78 @@ final class ShellHostController: ObservableObject {
         }
     }
 
-    private static func defaultPersistenceURL(fileManager: FileManager) -> URL {
+    static func defaultPersistenceURL(windowID: String, fileManager: FileManager) -> URL {
+        let sanitizedWindowID = windowID
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: ":", with: "_")
+        return persistenceDirectory(fileManager: fileManager)
+            .appendingPathComponent("\(persistenceFilePrefix)\(sanitizedWindowID)\(persistenceFileExtension)")
+    }
+
+    private static func persistenceDirectory(fileManager: FileManager) -> URL {
         let appSupportURL =
             fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? fileManager.temporaryDirectory
-        return appSupportURL
-            .appendingPathComponent("AlanNative", isDirectory: true)
-            .appendingPathComponent(persistenceFileName)
+        return appSupportURL.appendingPathComponent("AlanNative", isDirectory: true)
+    }
+
+    private static func restoredWindowContext(
+        fileManager: FileManager,
+        startupMode: StartupMode
+    ) -> ShellWindowContext? {
+        guard startupMode == .restorePrevious else { return nil }
+
+        let directory = persistenceDirectory(fileManager: fileManager)
+        guard let urls = try? fileManager.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: [.contentModificationDateKey],
+            options: [.skipsHiddenFiles]
+        ) else {
+            return nil
+        }
+
+        let candidates = urls.compactMap { url -> (Date, ShellWindowContext)? in
+            guard isShellStatePersistenceURL(url),
+                  let state = restoreShellState(fileManager: fileManager, persistenceURL: url)
+            else {
+                return nil
+            }
+
+            let values = try? url.resourceValues(forKeys: [.contentModificationDateKey])
+            let modifiedAt = values?.contentModificationDate ?? .distantPast
+            return (
+                modifiedAt,
+                ShellWindowContext(
+                    windowID: state.windowID,
+                    persistenceURL: url,
+                    terminalRuntimeRegistry: TerminalRuntimeRegistry()
+                )
+            )
+        }
+
+        return candidates.max { lhs, rhs in lhs.0 < rhs.0 }?.1
+    }
+
+    private static func defaultWindowContext(
+        fileManager: FileManager,
+        startupMode: StartupMode
+    ) -> ShellWindowContext {
+        switch startupMode {
+        case .fresh:
+            return ShellWindowContext.make(fileManager: fileManager)
+        case .restorePrevious:
+            return ShellWindowContext.make(
+                fileManager: fileManager,
+                windowID: defaultRestorationWindowID
+            )
+        }
+    }
+
+    private static func isShellStatePersistenceURL(_ url: URL) -> Bool {
+        let fileName = url.lastPathComponent
+        return fileName == legacyPersistenceFileName
+            || (fileName.hasPrefix(persistenceFilePrefix)
+                && fileName.hasSuffix(persistenceFileExtension))
     }
 
     private static func restoreShellState(
