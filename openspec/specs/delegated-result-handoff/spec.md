@@ -1,7 +1,9 @@
 # delegated-result-handoff Specification
 
 ## Purpose
-TBD - created by archiving change sub-agent-lifecycle-control. Update Purpose after archive.
+Define how delegated child results are handed back to the parent runtime,
+including completed output fidelity, structured result shape, truncation
+metadata, child-run references, and failure or termination metadata.
 ## Requirements
 ### Requirement: Completed Child Output Fidelity
 The system SHALL preserve completed delegated child output as full inline text or an inspectable output reference instead of silently replacing it with an unlabeled short preview.
@@ -39,4 +41,3 @@ The system SHALL include child-run metadata and latest progress information when
 #### Scenario: Child is explicitly terminated
 - **WHEN** a delegated child is terminated by operator or parent request
 - **THEN** the delegated result distinguishes `terminated` from `timed_out` and includes termination actor, reason, and mode when available
-

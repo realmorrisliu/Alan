@@ -1,7 +1,9 @@
 # runtime-memory-surfaces Specification
 
 ## Purpose
-TBD - created by archiving change sub-agent-lifecycle-control. Update Purpose after archive.
+Define runtime memory and handoff surface behavior: agent-authored semantic
+continuation summaries, coherent fallback truncation, terminal turn-state
+refresh, and rollout references when compact surfaces omit detail.
 ## Requirements
 ### Requirement: Skill-Authored Semantic Memory Surfaces
 Memory and handoff surfaces SHALL prefer semantic summaries authored by the active agent through the memory skill or another explicit agent-visible memory workflow.
@@ -42,4 +44,3 @@ Memory surfaces SHALL stay compact continuation aids and point to rollouts when 
 #### Scenario: Detail exceeds memory budget
 - **WHEN** recent conversation detail exceeds the memory surface budget
 - **THEN** the memory surface keeps a coherent summary and identifies where to inspect the raw rollout for full detail
-

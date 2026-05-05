@@ -1,7 +1,11 @@
 # workspace-runtime-state-hygiene Specification
 
 ## Purpose
-TBD - created by archiving change sub-agent-lifecycle-control. Update Purpose after archive.
+Define workspace runtime-state hygiene requirements: generated `.alan` session
+and memory state should stay out of normal source control, authored agent
+definitions should remain trackable, Alan home should not become a nested
+workspace, and workspace identity comparisons should use canonical paths where
+available.
 ## Requirements
 ### Requirement: Generated Workspace State Ignore Rules
 Repository ignore rules SHALL ignore generated workspace `.alan` runtime state by default while allowing authored agent definitions to remain trackable.
@@ -43,4 +47,3 @@ The documentation SHALL explain which `.alan` paths are generated runtime state 
 #### Scenario: Developer reads workspace state docs
 - **WHEN** a developer checks the repository documentation for `.alan` workspace state
 - **THEN** the docs identify generated sessions/memory paths separately from authored agent roots, policies, and skills
-
