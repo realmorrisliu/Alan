@@ -188,10 +188,12 @@ pub(crate) fn build_openrouter_chat_request(
         tools,
         temperature,
         max_tokens,
-        thinking_budget_tokens: _,
+        thinking_budget_tokens,
         reasoning,
         mut extra_params,
     } = request;
+    let thinking_budget_tokens =
+        crate::effective_thinking_budget_tokens(reasoning, thinking_budget_tokens);
 
     let mut projected_messages = Vec::new();
     if let Some(system_prompt) = system_prompt.filter(|value| !value.is_empty()) {
@@ -211,7 +213,7 @@ pub(crate) fn build_openrouter_chat_request(
     if let Some(effort) = reasoning.effort {
         extra_params.remove("reasoning_effort");
         builder.reasoning_effort(openrouter_effort(effort));
-    } else if let Some(thinking_budget_tokens) = reasoning.budget_tokens {
+    } else if let Some(thinking_budget_tokens) = thinking_budget_tokens {
         extra_params.remove("reasoning_effort");
         builder.reasoning(ReasoningConfig::with_max_tokens(thinking_budget_tokens));
     }
@@ -1049,6 +1051,17 @@ mod tests {
 
         assert_eq!(value["reasoning"]["max_tokens"], 512);
         assert!(value["reasoning"].get("effort").is_none());
+    }
+
+    #[test]
+    fn legacy_budget_field_projects_reasoning_budget() {
+        let mut request = GenerationRequest::new().with_user_message("hello");
+        request.thinking_budget_tokens = Some(512);
+
+        let projected = build_openrouter_chat_request("openrouter/model", request).unwrap();
+        let value = serde_json::to_value(projected).unwrap();
+
+        assert_eq!(value["reasoning"]["max_tokens"], 512);
     }
 
     #[test]

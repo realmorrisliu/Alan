@@ -1479,10 +1479,12 @@ pub(crate) fn build_responses_request_for_model(
         tools,
         temperature,
         max_tokens,
-        thinking_budget_tokens: _,
+        thinking_budget_tokens,
         reasoning,
         mut extra_params,
     } = request;
+    let thinking_budget_tokens =
+        crate::effective_thinking_budget_tokens(reasoning, thinking_budget_tokens);
 
     let previous_response_id = take_string_extra_param("previous_response_id", &mut extra_params);
     let background = take_bool_extra_param("background", &mut extra_params);
@@ -1493,7 +1495,7 @@ pub(crate) fn build_responses_request_for_model(
 
     let reasoning = build_openai_responses_reasoning(
         reasoning.effort,
-        reasoning.budget_tokens,
+        thinking_budget_tokens,
         &mut extra_params,
     );
     let include = normalize_responses_include(
@@ -1533,14 +1535,16 @@ pub(crate) fn build_responses_input_tokens_request_for_model(
         tools,
         temperature: _,
         max_tokens: _,
-        thinking_budget_tokens: _,
+        thinking_budget_tokens,
         reasoning,
         mut extra_params,
     } = request;
+    let thinking_budget_tokens =
+        crate::effective_thinking_budget_tokens(reasoning, thinking_budget_tokens);
 
     let reasoning = build_openai_responses_reasoning(
         reasoning.effort,
-        reasoning.budget_tokens,
+        thinking_budget_tokens,
         &mut extra_params,
     );
     let (response_tools, tool_choice) = convert_tools_for_openai_responses(tools);
@@ -1662,10 +1666,12 @@ fn build_chat_completions_request_for_model(
         tools: request_tools,
         temperature,
         max_tokens,
-        thinking_budget_tokens: _,
+        thinking_budget_tokens,
         reasoning,
         mut extra_params,
     } = request;
+    let thinking_budget_tokens =
+        crate::effective_thinking_budget_tokens(reasoning, thinking_budget_tokens);
 
     let mut messages: Vec<serde_json::Value> = Vec::new();
     if let Some(system) = system_prompt {
@@ -1685,7 +1691,7 @@ fn build_chat_completions_request_for_model(
 
     let (tools, tool_choice) = convert_tools_for_openai_chat_completions(request_tools);
     let reasoning_effort =
-        build_reasoning_effort(reasoning.effort, reasoning.budget_tokens, &mut extra_params);
+        build_reasoning_effort(reasoning.effort, thinking_budget_tokens, &mut extra_params);
     let max_completion_tokens = build_max_completion_tokens(max_tokens, &mut extra_params);
 
     OpenAiChatCompletionsRequest {
@@ -2329,10 +2335,12 @@ impl OpenAiChatCompletionsClient {
             tools: request_tools,
             temperature,
             max_tokens,
-            thinking_budget_tokens: _,
+            thinking_budget_tokens,
             reasoning,
             mut extra_params,
         } = request;
+        let thinking_budget_tokens =
+            crate::effective_thinking_budget_tokens(reasoning, thinking_budget_tokens);
 
         let mut messages: Vec<serde_json::Value> = Vec::new();
         if let Some(system) = system_prompt {
@@ -2355,7 +2363,7 @@ impl OpenAiChatCompletionsClient {
 
         let (tools, tool_choice) = convert_tools_for_openai_chat_completions(request_tools);
         let reasoning_effort =
-            build_reasoning_effort(reasoning.effort, reasoning.budget_tokens, &mut extra_params);
+            build_reasoning_effort(reasoning.effort, thinking_budget_tokens, &mut extra_params);
         let max_completion_tokens = build_max_completion_tokens(max_tokens, &mut extra_params);
 
         let chat_request = OpenAiChatCompletionsRequest {
@@ -2385,10 +2393,12 @@ impl OpenAiChatCompletionsClient {
             tools: request_tools,
             temperature,
             max_tokens,
-            thinking_budget_tokens: _,
+            thinking_budget_tokens,
             reasoning,
             mut extra_params,
         } = request;
+        let thinking_budget_tokens =
+            crate::effective_thinking_budget_tokens(reasoning, thinking_budget_tokens);
 
         let mut messages: Vec<serde_json::Value> = Vec::new();
         if let Some(system) = system_prompt {
@@ -2411,7 +2421,7 @@ impl OpenAiChatCompletionsClient {
 
         let (tools, tool_choice) = convert_tools_for_openai_chat_completions(request_tools);
         let reasoning_effort =
-            build_reasoning_effort(reasoning.effort, reasoning.budget_tokens, &mut extra_params);
+            build_reasoning_effort(reasoning.effort, thinking_budget_tokens, &mut extra_params);
         let max_completion_tokens = build_max_completion_tokens(max_tokens, &mut extra_params);
 
         let chat_request = OpenAiChatCompletionsRequest {
@@ -3147,6 +3157,29 @@ mod tests {
 
         assert_eq!(built.reasoning_effort.as_deref(), Some("low"));
         assert!(!built.extra_params.contains_key("reasoning_effort"));
+    }
+
+    #[test]
+    fn test_build_responses_request_preserves_legacy_thinking_budget_field() {
+        let mut request = GenerationRequest::new().with_user_message("Hello");
+        request.thinking_budget_tokens = Some(512);
+
+        let built = build_responses_request_for_model("gpt-5.4".to_string(), request, false);
+
+        assert_eq!(
+            built.reasoning.map(|reasoning| reasoning.effort),
+            Some("low".to_string())
+        );
+    }
+
+    #[test]
+    fn test_build_chat_completions_request_preserves_legacy_thinking_budget_field() {
+        let mut request = GenerationRequest::new().with_user_message("Hello");
+        request.thinking_budget_tokens = Some(512);
+
+        let built = build_chat_completions_request_for_model("gpt-5.4".to_string(), request);
+
+        assert_eq!(built.reasoning_effort.as_deref(), Some("low"));
     }
 
     #[test]
