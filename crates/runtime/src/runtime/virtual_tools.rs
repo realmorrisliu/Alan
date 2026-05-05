@@ -941,7 +941,6 @@ fn build_delegated_spawn_spec(
                     .timeout_secs
                     .unwrap_or(DEFAULT_DELEGATED_TIMEOUT_SECS),
             ),
-            budget_tokens: None,
             output_dir: None,
         },
         handles: vec![SpawnHandle::Workspace, SpawnHandle::ApprovalScope],

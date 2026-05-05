@@ -1335,9 +1335,6 @@ fn render_launch_metadata(spec: &SpawnSpec) -> Option<String> {
     if let Some(output_dir) = spec.launch.output_dir.as_ref() {
         lines.push(format!("output_dir: {}", output_dir.display()));
     }
-    if let Some(budget_tokens) = spec.launch.budget_tokens {
-        lines.push(format!("budget_tokens: {budget_tokens}"));
-    }
 
     (!lines.is_empty()).then(|| format!("Execution Context\n{}", lines.join("\n")))
 }
@@ -1783,7 +1780,6 @@ mod tests {
                 cwd: None,
                 workspace_root: None,
                 timeout_secs: Some(30),
-                budget_tokens: None,
                 output_dir: None,
             },
             handles: Vec::new(),
@@ -2329,59 +2325,6 @@ tool_repeat_limit = 9
         let seen_config = seen_config.lock().unwrap().clone().unwrap();
         assert_eq!(seen_config.effective_model(), "gpt-5.4");
         assert_eq!(seen_config.tool_repeat_limit, 9);
-    }
-
-    #[tokio::test]
-    async fn spawn_child_runtime_ignores_launch_budget_for_reasoning_controls() {
-        let temp = TempDir::new().unwrap();
-        let requests = RecordedRequests::default();
-        let response = completed_response("Child finished cleanly.");
-        let parent = make_parent_state(&temp, requests.clone(), response.clone());
-        let root_dir = temp.path().join("repo/.alan/agents/grader");
-        std::fs::write(
-            root_dir.join("agent.toml"),
-            r#"
-	model_reasoning_effort = "high"
-	"#,
-        )
-        .unwrap();
-        let seen_config = Arc::new(Mutex::new(None::<crate::Config>));
-        let seen_config_for_factory = seen_config.clone();
-        let mut spec = launch_spec(root_dir);
-        spec.runtime_overrides.model = Some("gpt-5-mini".to_string());
-        spec.launch.budget_tokens = Some(512);
-
-        let child = spawn_child_runtime_with_client_factory(&parent, spec, |config| {
-            *seen_config_for_factory.lock().unwrap() = Some(config.clone());
-            Ok(LlmClient::new(RecordingProvider::new(
-                requests.clone(),
-                response.clone(),
-            )))
-        })
-        .await
-        .unwrap();
-        let result = child.join().await.unwrap();
-
-        assert_eq!(result.status, ChildRuntimeStatus::Completed);
-        let seen_config = seen_config.lock().unwrap().clone().unwrap();
-        assert_eq!(seen_config.effective_model(), "gpt-5-mini");
-        assert_eq!(
-            crate::resolve_session_request_controls(
-                &seen_config,
-                crate::provider_capabilities_for_config(&seen_config),
-                crate::RequestControlIntent::default(),
-            )
-            .unwrap()
-            .reasoning_effort(),
-            Some(alan_protocol::ReasoningEffort::High)
-        );
-
-        let recorded = requests.0.lock().unwrap();
-        assert_eq!(
-            recorded[0].reasoning.effort,
-            Some(alan_protocol::ReasoningEffort::High)
-        );
-        assert_eq!(recorded[0].reasoning.budget_tokens, None);
     }
 
     #[tokio::test]

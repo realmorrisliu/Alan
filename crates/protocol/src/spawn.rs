@@ -30,6 +30,7 @@ pub enum SpawnHandle {
 
 /// Launch inputs supplied for a child runtime.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(deny_unknown_fields)]
 pub struct SpawnLaunchInputs {
     pub task: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -38,8 +39,6 @@ pub struct SpawnLaunchInputs {
     pub workspace_root: Option<PathBuf>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timeout_secs: Option<u64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub budget_tokens: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub output_dir: Option<PathBuf>,
 }
@@ -120,7 +119,6 @@ mod tests {
                 cwd: Some(PathBuf::from("/tmp/workspace")),
                 workspace_root: Some(PathBuf::from("/tmp/workspace")),
                 timeout_secs: Some(120),
-                budget_tokens: Some(2048),
                 output_dir: Some(PathBuf::from("/tmp/workspace/out")),
             },
             handles: vec![
@@ -181,5 +179,16 @@ mod tests {
                 export_name: "reviewer".to_string(),
             }
         );
+    }
+
+    #[test]
+    fn spawn_launch_inputs_reject_legacy_budget_tokens() {
+        let payload = serde_json::json!({
+            "task": "Review the repository",
+            "budget_tokens": 2048
+        });
+
+        let err = serde_json::from_value::<SpawnLaunchInputs>(payload).unwrap_err();
+        assert!(err.to_string().contains("budget_tokens"));
     }
 }
