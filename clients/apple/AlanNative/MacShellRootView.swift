@@ -3,23 +3,163 @@ import SwiftUI
 #if os(macOS)
 import AppKit
 
+private extension Color {
+    static func shellAdaptive(
+        light: (Double, Double, Double),
+        dark: (Double, Double, Double),
+        alpha: Double = 1
+    ) -> Color {
+        shellAdaptive(light: light, lightAlpha: alpha, dark: dark, darkAlpha: alpha)
+    }
+
+    static func shellAdaptive(
+        light: (Double, Double, Double),
+        lightAlpha: Double,
+        dark: (Double, Double, Double),
+        darkAlpha: Double
+    ) -> Color {
+        Color(
+            NSColor(name: nil) { appearance in
+                let isDark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+                let rgb = isDark ? dark : light
+                let alpha = isDark ? darkAlpha : lightAlpha
+                return NSColor(red: rgb.0, green: rgb.1, blue: rgb.2, alpha: alpha)
+            }
+        )
+    }
+}
+
 enum ShellPalette {
-    static let canvas = Color(red: 0.94, green: 0.94, blue: 0.965)
-    static let window = Color(red: 0.972, green: 0.973, blue: 0.985)
-    static let sidebar = Color(red: 0.922, green: 0.924, blue: 0.953)
-    static let sidebarRail = Color(red: 0.902, green: 0.907, blue: 0.941)
-    static let sidebarCard = Color(red: 0.98, green: 0.98, blue: 0.995)
-    static let workspace = Color(red: 0.979, green: 0.98, blue: 0.989)
-    static let terminal = Color(red: 0.10, green: 0.12, blue: 0.16)
-    static let terminalSoft = Color(red: 0.16, green: 0.18, blue: 0.24)
-    static let accent = Color(red: 0.31, green: 0.39, blue: 0.71)
-    static let accentSoft = Color(red: 0.90, green: 0.92, blue: 0.98)
-    static let ink = Color(red: 0.16, green: 0.18, blue: 0.24)
-    static let mutedInk = Color(red: 0.43, green: 0.45, blue: 0.54)
-    static let line = Color(red: 0.82, green: 0.83, blue: 0.89)
-    static let panel = Color.white.opacity(0.74)
-    static let panelSoft = Color.white.opacity(0.6)
-    static let attention = Color(red: 0.82, green: 0.55, blue: 0.24)
+    static let canvas = Color.shellAdaptive(
+        light: (0.94, 0.94, 0.965),
+        dark: (0.045, 0.050, 0.062)
+    )
+    static let window = Color.shellAdaptive(
+        light: (0.972, 0.973, 0.985),
+        dark: (0.055, 0.061, 0.074)
+    )
+    static let sidebar = Color.shellAdaptive(
+        light: (0.922, 0.924, 0.953),
+        dark: (0.071, 0.079, 0.096)
+    )
+    static let sidebarRail = Color.shellAdaptive(
+        light: (0.902, 0.907, 0.941),
+        dark: (0.083, 0.092, 0.112)
+    )
+    static let sidebarCard = Color.shellAdaptive(
+        light: (0.98, 0.98, 0.995),
+        lightAlpha: 1.0,
+        dark: (0.172, 0.188, 0.224),
+        darkAlpha: 0.92
+    )
+    static let sidebarSelection = Color.shellAdaptive(
+        light: (1.0, 1.0, 1.0),
+        lightAlpha: 0.15,
+        dark: (0.205, 0.225, 0.270),
+        darkAlpha: 0.72
+    )
+    static let sidebarHover = Color.shellAdaptive(
+        light: (1.0, 1.0, 1.0),
+        lightAlpha: 0.08,
+        dark: (0.185, 0.205, 0.245),
+        darkAlpha: 0.46
+    )
+    static let sidebarControl = Color.shellAdaptive(
+        light: (1.0, 1.0, 1.0),
+        lightAlpha: 0.12,
+        dark: (0.190, 0.210, 0.252),
+        darkAlpha: 0.54
+    )
+    static let sidebarControlStrong = Color.shellAdaptive(
+        light: (1.0, 1.0, 1.0),
+        lightAlpha: 0.18,
+        dark: (0.215, 0.235, 0.282),
+        darkAlpha: 0.72
+    )
+    static let railBase = Color.shellAdaptive(
+        light: (1.0, 1.0, 1.0),
+        lightAlpha: 0.08,
+        dark: (0.155, 0.172, 0.210),
+        darkAlpha: 0.58
+    )
+    static let railHover = Color.shellAdaptive(
+        light: (1.0, 1.0, 1.0),
+        lightAlpha: 0.14,
+        dark: (0.190, 0.210, 0.252),
+        darkAlpha: 0.66
+    )
+    static let railSelection = Color.shellAdaptive(
+        light: (1.0, 1.0, 1.0),
+        lightAlpha: 0.22,
+        dark: (0.235, 0.255, 0.310),
+        darkAlpha: 0.78
+    )
+    static let workspace = Color.shellAdaptive(
+        light: (0.979, 0.98, 0.989),
+        dark: (0.050, 0.056, 0.070)
+    )
+    static let terminal = Color.shellAdaptive(
+        light: (0.10, 0.12, 0.16),
+        dark: (0.050, 0.061, 0.076)
+    )
+    static let terminalSoft = Color.shellAdaptive(
+        light: (0.16, 0.18, 0.24),
+        dark: (0.100, 0.116, 0.145)
+    )
+    static let accent = Color.shellAdaptive(
+        light: (0.31, 0.39, 0.71),
+        dark: (0.50, 0.60, 0.94)
+    )
+    static let accentSoft = Color.shellAdaptive(
+        light: (0.90, 0.92, 0.98),
+        dark: (0.18, 0.22, 0.34)
+    )
+    static let ink = Color.shellAdaptive(
+        light: (0.16, 0.18, 0.24),
+        dark: (0.90, 0.92, 0.96)
+    )
+    static let mutedInk = Color.shellAdaptive(
+        light: (0.43, 0.45, 0.54),
+        dark: (0.64, 0.68, 0.75)
+    )
+    static let line = Color.shellAdaptive(
+        light: (0.82, 0.83, 0.89),
+        dark: (0.255, 0.285, 0.345)
+    )
+    static let panel = Color.shellAdaptive(
+        light: (1.0, 1.0, 1.0),
+        lightAlpha: 0.74,
+        dark: (0.135, 0.150, 0.180),
+        darkAlpha: 0.78
+    )
+    static let panelSoft = Color.shellAdaptive(
+        light: (1.0, 1.0, 1.0),
+        lightAlpha: 0.60,
+        dark: (0.125, 0.140, 0.170),
+        darkAlpha: 0.64
+    )
+    static let materialScrim = Color.shellAdaptive(
+        light: (0.922, 0.924, 0.953),
+        lightAlpha: 0.35,
+        dark: (0.030, 0.037, 0.050),
+        darkAlpha: 0.78
+    )
+    static let materialTopWash = Color.shellAdaptive(
+        light: (1.0, 1.0, 1.0),
+        lightAlpha: 0.06,
+        dark: (0.130, 0.150, 0.205),
+        darkAlpha: 0.18
+    )
+    static let materialBottomShade = Color.shellAdaptive(
+        light: (0.84, 0.86, 0.92),
+        lightAlpha: 0.04,
+        dark: (0.012, 0.016, 0.024),
+        darkAlpha: 0.34
+    )
+    static let attention = Color.shellAdaptive(
+        light: (0.82, 0.55, 0.24),
+        dark: (0.94, 0.68, 0.34)
+    )
 }
 
 private struct SidebarMaterialView: NSViewRepresentable {
@@ -32,6 +172,23 @@ private struct SidebarMaterialView: NSViewRepresentable {
     }
 
     func updateNSView(_ nsView: NSVisualEffectView, context: Context) {}
+}
+
+struct ShellMaterialBackgroundView: View {
+    var body: some View {
+        ZStack {
+            SidebarMaterialView()
+            ShellPalette.materialScrim
+            LinearGradient(
+                colors: [
+                    ShellPalette.materialTopWash,
+                    ShellPalette.materialBottomShade,
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+        }
+    }
 }
 
 struct MacShellRootView: View {
@@ -66,17 +223,11 @@ struct MacShellRootView: View {
                 }
                     .frame(width: 286)
 
-                VStack(spacing: 0) {
-                    ShellTopBarView(
-                        host: host,
-                        isCommandTabPresented: $isCommandTabPresented,
-                        showsInspector: $showsInspector
-                    )
-                    ShellWorkspaceView(host: host)
-                }
+                ShellWorkspaceView(host: host)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .ignoresSafeArea(edges: .top)
                 .background {
-                    ShellPalette.workspace
+                    ShellMaterialBackgroundView()
                         .ignoresSafeArea(edges: .top)
                 }
 
@@ -331,10 +482,7 @@ private struct ShellSidebarView: View {
         .padding(.bottom, 15)
         .frame(maxHeight: .infinity, alignment: .top)
         .background {
-            ZStack {
-                SidebarMaterialView()
-                ShellPalette.sidebar.opacity(0.35)
-            }
+            ShellMaterialBackgroundView()
             .ignoresSafeArea(edges: .top)
         }
     }
@@ -343,7 +491,7 @@ private struct ShellSidebarView: View {
         HStack(alignment: .center, spacing: 10) {
             ZStack {
                 RoundedRectangle(cornerRadius: 11, style: .continuous)
-                    .fill(Color.white.opacity(0.18))
+                    .fill(ShellPalette.sidebarControlStrong)
                 Text("A")
                     .font(.system(size: 12.5, weight: .bold, design: .rounded))
                     .foregroundStyle(ShellPalette.accent)
@@ -377,7 +525,7 @@ private struct ShellSidebarView: View {
                     .frame(width: 26, height: 26)
                     .background(
                         RoundedRectangle(cornerRadius: 10, style: .continuous)
-                            .fill(Color.white.opacity(0.12))
+                            .fill(ShellPalette.sidebarControl)
                     )
             }
             .menuStyle(.borderlessButton)
@@ -405,7 +553,7 @@ private struct ShellSidebarView: View {
             .padding(.vertical, 10)
             .background(
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(Color.white.opacity(0.10))
+                    .fill(ShellPalette.sidebarControl)
             )
         }
         .buttonStyle(.plain)
@@ -485,7 +633,7 @@ private struct ShellSidebarView: View {
                         .frame(width: 30, height: 30)
                         .background(
                             RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                .fill(Color.white.opacity(0.10))
+                                .fill(ShellPalette.sidebarControl)
                         )
                 }
                 .menuStyle(.borderlessButton)
@@ -658,11 +806,8 @@ private struct ShellWorkspaceView: View {
     @ObservedObject var host: ShellHostController
 
     var body: some View {
-        VStack(spacing: 0) {
-            TerminalPaneView(host: host)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-        }
-        .padding(16)
+        TerminalPaneView(host: host)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 
@@ -857,8 +1002,8 @@ private struct ShellSpaceRailItem: View {
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
                     .fill(
                         isSelected
-                            ? Color.white.opacity(0.22)
-                            : (isHovered ? Color.white.opacity(0.14) : Color.white.opacity(0.08))
+                            ? ShellPalette.railSelection
+                            : (isHovered ? ShellPalette.railHover : ShellPalette.railBase)
                     )
                 Image(systemName: symbolName)
                     .font(.system(size: 11, weight: .semibold))
@@ -872,7 +1017,7 @@ private struct ShellSpaceRailItem: View {
                     .frame(width: 9, height: 9)
                     .overlay {
                         Circle()
-                            .stroke(Color.white.opacity(0.9), lineWidth: 1.5)
+                            .stroke(ShellPalette.sidebarCard, lineWidth: 1.5)
                     }
                     .offset(x: 2, y: -2)
             }
@@ -959,13 +1104,13 @@ private struct ShellTabSidebarRow: View {
         .padding(.horizontal, 10)
         .padding(.vertical, 7)
         .background(
-            RoundedRectangle(cornerRadius: 11, style: .continuous)
-                .fill(
-                    isSelected
-                        ? Color.white.opacity(0.15)
-                        : (isHovered ? Color.white.opacity(0.08) : Color.clear)
-                )
-        )
+                RoundedRectangle(cornerRadius: 11, style: .continuous)
+                    .fill(
+                        isSelected
+                            ? ShellPalette.sidebarSelection
+                            : (isHovered ? ShellPalette.sidebarHover : Color.clear)
+                    )
+            )
         .scaleEffect(isHovered && !isSelected ? 1.005 : 1)
         .animation(reduceMotion ? nil : .easeOut(duration: 0.16), value: isHovered)
         .animation(reduceMotion ? nil : .easeOut(duration: 0.16), value: isSelected)
@@ -1008,7 +1153,7 @@ private struct ShellTabRailView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background(
                         RoundedRectangle(cornerRadius: 18, style: .continuous)
-                            .fill(host.selectedTab?.tabID == tab.tabID ? Color.white.opacity(0.78) : Color.white.opacity(0.38))
+                            .fill(host.selectedTab?.tabID == tab.tabID ? ShellPalette.sidebarCard : ShellPalette.sidebarHover)
                     )
                     .overlay {
                         RoundedRectangle(cornerRadius: 18, style: .continuous)
@@ -1333,7 +1478,7 @@ private struct ShellTabRow: View {
         .padding(.vertical, 10)
         .background(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(isSelected ? Color.white.opacity(0.95) : Color.clear)
+                .fill(isSelected ? ShellPalette.sidebarCard : Color.clear)
         )
         .overlay {
             RoundedRectangle(cornerRadius: 14, style: .continuous)
@@ -1379,7 +1524,7 @@ private struct ShellAttentionRow: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(Color.white.opacity(0.82))
+                .fill(ShellPalette.panel)
         )
     }
 }
@@ -1401,7 +1546,7 @@ private struct ShellEmptyStateRow: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(Color.white.opacity(0.72))
+                .fill(ShellPalette.panelSoft)
         )
     }
 }
