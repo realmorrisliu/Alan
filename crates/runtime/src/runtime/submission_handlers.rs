@@ -1692,9 +1692,11 @@ Use this skill when asked.
     #[tokio::test]
     async fn test_handle_follow_up_without_active_turn_starts_new_turn() {
         let mut state = create_test_state();
-        state
-            .turn_state
-            .set_active_turn_reasoning_effort(Some(alan_protocol::ReasoningEffort::High));
+        state.turn_state.set_active_turn_request_control_intent(
+            crate::RequestControlIntent::reasoning_effort(Some(
+                alan_protocol::ReasoningEffort::High,
+            )),
+        );
         let cancel = CancellationToken::new();
         let mut events = vec![];
         let mut emit = |event: Event| {
@@ -1722,7 +1724,12 @@ Use this skill when asked.
                     Some(vec![ContentPart::text("run after current")])
                 );
                 assert!(activate_task);
-                assert_eq!(state.turn_state.active_turn_reasoning_effort(), None);
+                assert!(
+                    state
+                        .turn_state
+                        .active_turn_request_control_intent()
+                        .is_empty()
+                );
             }
             _ => panic!("Expected RunTurn"),
         }
