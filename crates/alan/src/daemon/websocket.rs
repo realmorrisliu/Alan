@@ -508,6 +508,7 @@ mod tests {
             None,
             None,
             "gpt-5.4".to_string(),
+            Some(alan_protocol::ReasoningEffort::Medium),
             alan_protocol::GovernanceConfig {
                 profile: alan_protocol::GovernanceProfile::Conservative,
                 policy_path: None,

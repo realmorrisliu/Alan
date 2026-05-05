@@ -407,6 +407,7 @@ impl CompactionHarness {
             None,
             None,
             MODEL.to_string(),
+            Some(alan_protocol::ReasoningEffort::Medium),
             GovernanceConfig {
                 profile: GovernanceProfile::Autonomous,
                 policy_path: None,

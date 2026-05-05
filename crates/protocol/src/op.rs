@@ -4,8 +4,8 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::ContentPart;
 use crate::adaptive::ClientCapabilities;
+use crate::{ContentPart, ReasoningEffort};
 
 /// Coarse capability class for tool policy decisions.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -151,6 +151,9 @@ pub struct TurnContext {
     /// Optional workspace ID to route this turn to.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workspace_id: Option<String>,
+    /// Optional one-turn reasoning effort override.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<ReasoningEffort>,
 }
 
 /// A submission wrapping an operation with an ID
@@ -416,6 +419,7 @@ mod tests {
             parts: vec![ContentPart::text("Hello agent")],
             context: Some(TurnContext {
                 workspace_id: Some("ws-1".to_string()),
+                reasoning_effort: Some(ReasoningEffort::High),
             }),
         };
 
@@ -423,6 +427,7 @@ mod tests {
         assert!(json.contains("turn"));
         assert!(json.contains("Hello agent"));
         assert!(json.contains("ws-1"));
+        assert!(json.contains("high"));
 
         let deserialized: Op = serde_json::from_str(&json).unwrap();
         match deserialized {
@@ -431,6 +436,7 @@ mod tests {
                 assert_eq!(parts[0].as_text(), Some("Hello agent"));
                 let ctx = context.unwrap();
                 assert_eq!(ctx.workspace_id, Some("ws-1".to_string()));
+                assert_eq!(ctx.reasoning_effort, Some(ReasoningEffort::High));
             }
             _ => panic!("Expected Turn variant"),
         }

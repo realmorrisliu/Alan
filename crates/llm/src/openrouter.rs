@@ -23,8 +23,8 @@ use tokio::sync::mpsc;
 use tracing::debug;
 
 use crate::{
-    GenerationRequest, GenerationResponse, LlmProvider, Message, MessageRole, StreamChunk,
-    TokenUsage, ToolCall, ToolCallDelta, ToolDefinition,
+    GenerationRequest, GenerationResponse, LlmProvider, Message, MessageRole, ReasoningEffort,
+    StreamChunk, TokenUsage, ToolCall, ToolCallDelta, ToolDefinition,
 };
 
 pub const OPENROUTER_BASE_URL: &str = "https://openrouter.ai/api/v1";
@@ -189,7 +189,8 @@ pub(crate) fn build_openrouter_chat_request(
         temperature,
         max_tokens,
         thinking_budget_tokens,
-        extra_params,
+        reasoning,
+        mut extra_params,
     } = request;
 
     let mut projected_messages = Vec::new();
@@ -207,7 +208,11 @@ pub(crate) fn build_openrouter_chat_request(
     if let Some(max_tokens) = max_tokens {
         builder.max_tokens(non_negative_u32("max_tokens", max_tokens)?);
     }
-    if let Some(thinking_budget_tokens) = thinking_budget_tokens {
+    if let Some(effort) = reasoning.effort {
+        extra_params.remove("reasoning_effort");
+        builder.reasoning_effort(openrouter_effort(effort));
+    } else if let Some(thinking_budget_tokens) = reasoning.budget_tokens.or(thinking_budget_tokens)
+    {
         builder.reasoning(ReasoningConfig::with_max_tokens(thinking_budget_tokens));
     }
 
@@ -894,6 +899,17 @@ fn effort_from_value(key: &str, value: Value) -> Result<Effort> {
         "minimal" => Ok(Effort::Minimal),
         "none" => Ok(Effort::None),
         _ => bail!("OpenRouter extra parameter `{key}` has unsupported reasoning effort `{raw}`"),
+    }
+}
+
+fn openrouter_effort(effort: ReasoningEffort) -> Effort {
+    match effort {
+        ReasoningEffort::None => Effort::None,
+        ReasoningEffort::Minimal => Effort::Minimal,
+        ReasoningEffort::Low => Effort::Low,
+        ReasoningEffort::Medium => Effort::Medium,
+        ReasoningEffort::High => Effort::High,
+        ReasoningEffort::XHigh => Effort::Xhigh,
     }
 }
 

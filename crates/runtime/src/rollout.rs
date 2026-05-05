@@ -42,6 +42,8 @@ pub struct SessionMeta {
     pub started_at: String, // ISO 8601
     pub cwd: String,
     pub model: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<alan_protocol::ReasoningEffort>,
 }
 
 pub fn session_storage_key(session_id: &str) -> String {
@@ -61,6 +63,8 @@ pub struct MessageRecord {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TurnContextItem {
     pub model: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<alan_protocol::ReasoningEffort>,
     pub system_prompt: String,
     pub context_items: Vec<ContextItemRecord>,
     pub tools: Vec<String>,
@@ -445,7 +449,7 @@ impl RolloutRecorder {
     /// Create a new recorder for a session
     pub async fn new(session_id: &str, model: &str) -> anyhow::Result<Self> {
         let rollout_path = Self::build_rollout_path(session_id).await?;
-        Self::new_with_rollout_path(session_id, model, rollout_path, None).await
+        Self::new_with_rollout_path(session_id, model, rollout_path, None, None).await
     }
 
     /// Create a new recorder for a session and capture an explicit runtime tool cwd in session
@@ -455,8 +459,17 @@ impl RolloutRecorder {
         model: &str,
         cwd: Option<&std::path::Path>,
     ) -> anyhow::Result<Self> {
+        Self::new_with_cwd_and_reasoning_effort(session_id, model, cwd, None).await
+    }
+
+    pub async fn new_with_cwd_and_reasoning_effort(
+        session_id: &str,
+        model: &str,
+        cwd: Option<&std::path::Path>,
+        reasoning_effort: Option<alan_protocol::ReasoningEffort>,
+    ) -> anyhow::Result<Self> {
         let rollout_path = Self::build_rollout_path(session_id).await?;
-        Self::new_with_rollout_path(session_id, model, rollout_path, cwd).await
+        Self::new_with_rollout_path(session_id, model, rollout_path, cwd, reasoning_effort).await
     }
 
     /// Create a new recorder for a session under a specific sessions directory.
@@ -466,7 +479,7 @@ impl RolloutRecorder {
         sessions_dir: &std::path::Path,
     ) -> anyhow::Result<Self> {
         let rollout_path = Self::build_rollout_path_in_dir(session_id, sessions_dir).await?;
-        Self::new_with_rollout_path(session_id, model, rollout_path, None).await
+        Self::new_with_rollout_path(session_id, model, rollout_path, None, None).await
     }
 
     /// Create a new recorder under a specific sessions directory and capture the runtime tool cwd
@@ -477,8 +490,19 @@ impl RolloutRecorder {
         sessions_dir: &std::path::Path,
         cwd: Option<&std::path::Path>,
     ) -> anyhow::Result<Self> {
+        Self::new_in_dir_with_cwd_and_reasoning_effort(session_id, model, sessions_dir, cwd, None)
+            .await
+    }
+
+    pub async fn new_in_dir_with_cwd_and_reasoning_effort(
+        session_id: &str,
+        model: &str,
+        sessions_dir: &std::path::Path,
+        cwd: Option<&std::path::Path>,
+        reasoning_effort: Option<alan_protocol::ReasoningEffort>,
+    ) -> anyhow::Result<Self> {
         let rollout_path = Self::build_rollout_path_in_dir(session_id, sessions_dir).await?;
-        Self::new_with_rollout_path(session_id, model, rollout_path, cwd).await
+        Self::new_with_rollout_path(session_id, model, rollout_path, cwd, reasoning_effort).await
     }
 
     async fn new_with_rollout_path(
@@ -486,6 +510,7 @@ impl RolloutRecorder {
         model: &str,
         rollout_path: PathBuf,
         cwd: Option<&std::path::Path>,
+        reasoning_effort: Option<alan_protocol::ReasoningEffort>,
     ) -> anyhow::Result<Self> {
         // Create the file
         let file = OpenOptions::new()
@@ -553,6 +578,7 @@ impl RolloutRecorder {
                 })
                 .unwrap_or_else(|| ".".to_string()),
             model: model.to_string(),
+            reasoning_effort,
         };
         recorder.record_nowait(RolloutItem::SessionMeta(meta))?;
         recorder.flush().await?;
@@ -665,6 +691,7 @@ impl RolloutRecorder {
     pub async fn record_turn_context(
         &self,
         model: &str,
+        reasoning_effort: Option<alan_protocol::ReasoningEffort>,
         system_prompt: &str,
         context_items: Vec<ContextItemRecord>,
         tools: Vec<String>,
@@ -674,6 +701,7 @@ impl RolloutRecorder {
     ) -> Result<()> {
         let item = RolloutItem::TurnContext(TurnContextItem {
             model: model.to_string(),
+            reasoning_effort,
             system_prompt: system_prompt.to_string(),
             context_items,
             tools,
@@ -692,6 +720,7 @@ impl RolloutRecorder {
     pub fn record_turn_context_nowait(
         &self,
         model: &str,
+        reasoning_effort: Option<alan_protocol::ReasoningEffort>,
         system_prompt: &str,
         context_items: Vec<ContextItemRecord>,
         tools: Vec<String>,
@@ -701,6 +730,7 @@ impl RolloutRecorder {
     ) -> Result<()> {
         let item = RolloutItem::TurnContext(TurnContextItem {
             model: model.to_string(),
+            reasoning_effort,
             system_prompt: system_prompt.to_string(),
             context_items,
             tools,
@@ -1461,6 +1491,7 @@ this is not valid json
             started_at: "2026-01-29T14:30:52Z".to_string(),
             cwd: "/test".to_string(),
             model: "gemini-test".to_string(),
+            reasoning_effort: None,
         });
 
         let json = serde_json::to_string(&meta).unwrap();
@@ -1499,6 +1530,7 @@ this is not valid json
     fn test_turn_context_item_serialization() {
         let ctx = TurnContextItem {
             model: "gemini-2.0-flash".to_string(),
+            reasoning_effort: None,
             system_prompt: "System".to_string(),
             context_items: vec![ContextItemRecord {
                 id: "onboarding".to_string(),
@@ -1532,6 +1564,38 @@ this is not valid json
             deserialized.reference_context.as_ref().map(|r| r.revision),
             Some(3)
         );
+    }
+
+    #[tokio::test]
+    async fn test_record_turn_context_persists_reasoning_effort() {
+        let temp_dir = TempDir::new().unwrap();
+        let recorder =
+            RolloutRecorder::new_in_dir("session-123", "gemini-2.0-flash", temp_dir.path())
+                .await
+                .unwrap();
+
+        recorder
+            .record_turn_context(
+                "gemini-2.0-flash",
+                Some(alan_protocol::ReasoningEffort::High),
+                "System",
+                vec![],
+                vec!["web_search".to_string()],
+                true,
+                vec![],
+                None,
+            )
+            .await
+            .unwrap();
+
+        let items = RolloutRecorder::load_history(recorder.path())
+            .await
+            .unwrap();
+        let persisted_effort = items.into_iter().find_map(|item| match item {
+            RolloutItem::TurnContext(ctx) => ctx.reasoning_effort,
+            _ => None,
+        });
+        assert_eq!(persisted_effort, Some(alan_protocol::ReasoningEffort::High));
     }
 
     #[test]

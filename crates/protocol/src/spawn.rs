@@ -1,3 +1,4 @@
+use crate::ReasoningEffort;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -68,6 +69,8 @@ pub struct SpawnRuntimeOverrides {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_reasoning_effort: Option<ReasoningEffort>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub policy_path: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_profile: Option<SpawnToolProfileOverride>,
@@ -76,6 +79,7 @@ pub struct SpawnRuntimeOverrides {
 impl SpawnRuntimeOverrides {
     pub fn is_empty(&self) -> bool {
         self.model.is_none()
+            && self.model_reasoning_effort.is_none()
             && self.policy_path.is_none()
             && self
                 .tool_profile
@@ -126,6 +130,7 @@ mod tests {
             ],
             runtime_overrides: SpawnRuntimeOverrides {
                 model: Some("gpt-5.4".to_string()),
+                model_reasoning_effort: Some(ReasoningEffort::High),
                 policy_path: Some(".alan/agents/default/policy.yaml".to_string()),
                 tool_profile: Some(SpawnToolProfileOverride {
                     allowed_tools: vec!["read_file".to_string(), "grep".to_string()],
@@ -137,6 +142,7 @@ mod tests {
         assert_eq!(value["target"]["kind"], "resolved_agent_root");
         assert_eq!(value["handles"][0], "workspace");
         assert_eq!(value["runtime_overrides"]["model"], "gpt-5.4");
+        assert_eq!(value["runtime_overrides"]["model_reasoning_effort"], "high");
 
         let parsed: SpawnSpec = serde_json::from_value(value).unwrap();
         assert!(parsed.has_handle(SpawnHandle::Workspace));

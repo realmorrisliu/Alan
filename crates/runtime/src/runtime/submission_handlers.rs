@@ -144,6 +144,7 @@ where
         // ====================================================================
         Op::Turn { parts, context } => {
             let workspace_id = context.as_ref().and_then(|c| c.workspace_id.clone());
+            let reasoning_effort = context.as_ref().and_then(|c| c.reasoning_effort);
 
             if let Some(requested_workspace_id) = workspace_id.as_deref()
                 && requested_workspace_id != state.workspace_id
@@ -168,6 +169,9 @@ where
             merged_parts.extend(parts);
 
             state.turn_state.clear();
+            state
+                .turn_state
+                .set_active_turn_reasoning_effort(reasoning_effort);
 
             if queued_next_turn_count > 0 {
                 emit(Event::Warning {
@@ -225,6 +229,7 @@ where
                         return Ok(RuntimeOpAction::NoTurn);
                     }
 
+                    state.turn_state.clear();
                     return Ok(RuntimeOpAction::RunTurn {
                         turn_kind: TurnRunKind::NewTurn,
                         user_input: Some(parts),
@@ -599,6 +604,7 @@ mod tests {
             parts: vec![ContentPart::text("test input")],
             context: Some(alan_protocol::TurnContext {
                 workspace_id: Some("wrong-workspace".to_string()),
+                ..alan_protocol::TurnContext::default()
             }),
         };
 
@@ -631,6 +637,7 @@ mod tests {
             parts: vec![ContentPart::text("test input")],
             context: Some(alan_protocol::TurnContext {
                 workspace_id: Some("test-workspace".to_string()),
+                reasoning_effort: Some(alan_protocol::ReasoningEffort::High),
             }),
         };
 
@@ -652,6 +659,10 @@ mod tests {
                 assert_eq!(
                     state.session.tape.messages()[0].text_content(),
                     "existing message"
+                );
+                assert_eq!(
+                    state.turn_state.active_turn_reasoning_effort(),
+                    Some(alan_protocol::ReasoningEffort::High)
                 );
             }
             _ => panic!("Expected RunTurn"),
@@ -683,7 +694,7 @@ mod tests {
                     metadata: serde_json::Value::Null,
                 },
             ],
-            context: Some(alan_protocol::TurnContext { workspace_id: None }),
+            context: Some(alan_protocol::TurnContext::default()),
         };
 
         let result = handle_runtime_op_with_cancel(&mut state, op, &mut emit, &cancel).await;
@@ -1678,6 +1689,9 @@ Use this skill when asked.
     #[tokio::test]
     async fn test_handle_follow_up_without_active_turn_starts_new_turn() {
         let mut state = create_test_state();
+        state
+            .turn_state
+            .set_active_turn_reasoning_effort(Some(alan_protocol::ReasoningEffort::High));
         let cancel = CancellationToken::new();
         let mut events = vec![];
         let mut emit = |event: Event| {
@@ -1705,6 +1719,7 @@ Use this skill when asked.
                     Some(vec![ContentPart::text("run after current")])
                 );
                 assert!(activate_task);
+                assert_eq!(state.turn_state.active_turn_reasoning_effort(), None);
             }
             _ => panic!("Expected RunTurn"),
         }

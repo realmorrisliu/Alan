@@ -1,6 +1,7 @@
+use alan_protocol::ReasoningEffort;
 use anyhow::Context;
 use serde::Deserialize;
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::path::Path;
 use std::sync::LazyLock;
 
@@ -22,6 +23,9 @@ pub struct ModelInfo {
     pub family: String,
     pub context_window_tokens: u32,
     pub supports_reasoning: bool,
+    pub supported_reasoning_efforts: Vec<ReasoningEffort>,
+    pub default_reasoning_effort: Option<ReasoningEffort>,
+    pub effort_budget_tokens: BTreeMap<ReasoningEffort, u32>,
 }
 
 #[derive(Debug, Clone)]
@@ -70,6 +74,12 @@ struct ModelInfoToml {
     context_window_tokens: u32,
     #[serde(default)]
     supports_reasoning: bool,
+    #[serde(default)]
+    supported_reasoning_efforts: Vec<ReasoningEffort>,
+    #[serde(default)]
+    default_reasoning_effort: Option<ReasoningEffort>,
+    #[serde(default)]
+    effort_budget_tokens: BTreeMap<ReasoningEffort, u32>,
     #[serde(default)]
     accepts_date_suffixes: bool,
 }
@@ -245,6 +255,7 @@ impl ProviderCatalog {
 
         let mut seen = HashSet::new();
         for entry in &self.entries {
+            entry.validate_reasoning_metadata()?;
             for name in std::iter::once(entry.info.slug.as_str())
                 .chain(entry.info.aliases.iter().map(String::as_str))
             {
@@ -264,6 +275,18 @@ impl ProviderCatalog {
 
 impl CatalogEntry {
     fn from_toml(provider: ModelCatalogProvider, raw: ModelInfoToml) -> Self {
+        let supported_reasoning_efforts = resolved_supported_reasoning_efforts(
+            raw.supports_reasoning,
+            raw.supported_reasoning_efforts,
+        );
+        let supports_reasoning = raw.supports_reasoning || !supported_reasoning_efforts.is_empty();
+        let default_reasoning_effort = if supports_reasoning {
+            raw.default_reasoning_effort
+                .or_else(|| derived_default_reasoning_effort(&supported_reasoning_efforts))
+        } else {
+            None
+        };
+
         Self {
             accepts_date_suffixes: raw.accepts_date_suffixes,
             info: ModelInfo {
@@ -272,9 +295,63 @@ impl CatalogEntry {
                 provider,
                 family: raw.family,
                 context_window_tokens: raw.context_window_tokens,
-                supports_reasoning: raw.supports_reasoning,
+                supports_reasoning,
+                supported_reasoning_efforts,
+                default_reasoning_effort,
+                effort_budget_tokens: raw.effort_budget_tokens,
             },
         }
+    }
+
+    fn validate_reasoning_metadata(&self) -> anyhow::Result<()> {
+        let info = &self.info;
+        if !info.supports_reasoning {
+            if !info.supported_reasoning_efforts.is_empty() {
+                anyhow::bail!(
+                    "model `{}` declares supported reasoning efforts while supports_reasoning is false",
+                    info.slug
+                );
+            }
+            if info.default_reasoning_effort.is_some() {
+                anyhow::bail!(
+                    "model `{}` declares default reasoning effort while supports_reasoning is false",
+                    info.slug
+                );
+            }
+        }
+
+        let mut seen = HashSet::new();
+        for effort in &info.supported_reasoning_efforts {
+            if !seen.insert(*effort) {
+                anyhow::bail!(
+                    "model `{}` declares duplicate reasoning effort `{}`",
+                    info.slug,
+                    effort
+                );
+            }
+        }
+
+        if let Some(default) = info.default_reasoning_effort
+            && !info.supported_reasoning_efforts.contains(&default)
+        {
+            anyhow::bail!(
+                "model `{}` default_reasoning_effort `{}` must appear in supported_reasoning_efforts",
+                info.slug,
+                default
+            );
+        }
+
+        for effort in info.effort_budget_tokens.keys() {
+            if !info.supported_reasoning_efforts.contains(effort) {
+                anyhow::bail!(
+                    "model `{}` effort_budget_tokens contains unsupported reasoning effort `{}`",
+                    info.slug,
+                    effort
+                );
+            }
+        }
+
+        Ok(())
     }
 
     fn matches(&self, candidate: &str) -> bool {
@@ -293,6 +370,31 @@ impl CatalogEntry {
                 && candidate
                     .strip_prefix(normalized_alias.as_str())
                     .is_some_and(is_supported_snapshot_suffix))
+    }
+}
+
+fn resolved_supported_reasoning_efforts(
+    supports_reasoning: bool,
+    configured: Vec<ReasoningEffort>,
+) -> Vec<ReasoningEffort> {
+    if !configured.is_empty() || !supports_reasoning {
+        return configured;
+    }
+
+    vec![
+        ReasoningEffort::Low,
+        ReasoningEffort::Medium,
+        ReasoningEffort::High,
+    ]
+}
+
+fn derived_default_reasoning_effort(
+    supported_reasoning_efforts: &[ReasoningEffort],
+) -> Option<ReasoningEffort> {
+    if supported_reasoning_efforts.contains(&ReasoningEffort::Medium) {
+        Some(ReasoningEffort::Medium)
+    } else {
+        supported_reasoning_efforts.first().copied()
     }
 }
 
@@ -450,6 +552,137 @@ supports_reasoning = true
         assert_eq!(custom.family, "deepseek-custom");
         assert_eq!(custom.context_window_tokens, 64_000);
         assert!(custom.supports_reasoning);
+        assert_eq!(
+            custom.supported_reasoning_efforts,
+            vec![
+                ReasoningEffort::Low,
+                ReasoningEffort::Medium,
+                ReasoningEffort::High
+            ]
+        );
+        assert_eq!(
+            custom.default_reasoning_effort,
+            Some(ReasoningEffort::Medium)
+        );
+    }
+
+    #[test]
+    fn supports_reasoning_derives_compatible_reasoning_effort_metadata() {
+        let gpt = base_catalog()
+            .find_model_info(ModelCatalogProvider::OpenAiResponses, "gpt-5.4")
+            .unwrap();
+
+        assert!(gpt.supports_reasoning);
+        assert_eq!(
+            gpt.supported_reasoning_efforts,
+            vec![
+                ReasoningEffort::Low,
+                ReasoningEffort::Medium,
+                ReasoningEffort::High
+            ]
+        );
+        assert_eq!(gpt.default_reasoning_effort, Some(ReasoningEffort::Medium));
+    }
+
+    #[test]
+    fn workspace_overlay_can_replace_reasoning_effort_metadata() {
+        let temp = TempDir::new().unwrap();
+        let alan_dir = temp.path().join(".alan");
+        std::fs::create_dir_all(&alan_dir).unwrap();
+        std::fs::write(
+            alan_dir.join("models.toml"),
+            r#"
+[openai_chat_completions_compatible]
+[[openai_chat_completions_compatible.models]]
+slug = "deepseek-reasoner"
+family = "deepseek-custom"
+context_window_tokens = 128000
+supports_reasoning = true
+supported_reasoning_efforts = ["low", "high"]
+default_reasoning_effort = "high"
+effort_budget_tokens = { low = 1024, high = 8192 }
+"#,
+        )
+        .unwrap();
+
+        let catalog =
+            ModelCatalog::load_with_overlay_paths(None, Some(&alan_dir.join("models.toml")))
+                .unwrap();
+        let custom = catalog
+            .find_model_info(
+                ModelCatalogProvider::OpenAiChatCompletionsCompatible,
+                "deepseek-reasoner",
+            )
+            .unwrap();
+        assert_eq!(
+            custom.supported_reasoning_efforts,
+            vec![ReasoningEffort::Low, ReasoningEffort::High]
+        );
+        assert_eq!(custom.default_reasoning_effort, Some(ReasoningEffort::High));
+        assert_eq!(
+            custom.effort_budget_tokens.get(&ReasoningEffort::Low),
+            Some(&1024)
+        );
+        assert_eq!(
+            custom.effort_budget_tokens.get(&ReasoningEffort::High),
+            Some(&8192)
+        );
+    }
+
+    #[test]
+    fn workspace_overlay_rejects_unsupported_default_reasoning_effort() {
+        let temp = TempDir::new().unwrap();
+        let alan_dir = temp.path().join(".alan");
+        std::fs::create_dir_all(&alan_dir).unwrap();
+        let overlay_path = alan_dir.join("models.toml");
+        std::fs::write(
+            &overlay_path,
+            r#"
+[openai_chat_completions_compatible]
+[[openai_chat_completions_compatible.models]]
+slug = "custom-reasoner"
+family = "custom"
+context_window_tokens = 128000
+supports_reasoning = true
+supported_reasoning_efforts = ["low"]
+default_reasoning_effort = "high"
+"#,
+        )
+        .unwrap();
+
+        let err = ModelCatalog::load_with_overlay_paths(None, Some(&overlay_path)).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("default_reasoning_effort `high` must appear")
+        );
+    }
+
+    #[test]
+    fn workspace_overlay_rejects_budget_for_unsupported_reasoning_effort() {
+        let temp = TempDir::new().unwrap();
+        let alan_dir = temp.path().join(".alan");
+        std::fs::create_dir_all(&alan_dir).unwrap();
+        let overlay_path = alan_dir.join("models.toml");
+        std::fs::write(
+            &overlay_path,
+            r#"
+[openai_chat_completions_compatible]
+[[openai_chat_completions_compatible.models]]
+slug = "custom-reasoner"
+family = "custom"
+context_window_tokens = 128000
+supports_reasoning = true
+supported_reasoning_efforts = ["medium"]
+effort_budget_tokens = { high = 8192 }
+"#,
+        )
+        .unwrap();
+
+        let err = ModelCatalog::load_with_overlay_paths(None, Some(&overlay_path)).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("effort_budget_tokens contains unsupported reasoning effort `high`")
+        );
     }
 
     #[test]

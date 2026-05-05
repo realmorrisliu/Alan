@@ -5,6 +5,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tracing::debug;
 
+use crate::ReasoningEffort;
+
 const MIN_THINKING_BUDGET_TOKENS: u32 = 1_024;
 const INTERLEAVED_THINKING_BETA: &str = "interleaved-thinking-2025-05-14";
 const FILES_API_BETA: &str = "files-api-2025-04-14";
@@ -593,13 +595,19 @@ fn take_anthropic_messages_extra_param(
 /// Build thinking-related parameters for Anthropic API.
 /// When thinking is enabled: temperature must be 1.0, max_tokens must > budget_tokens.
 fn build_thinking_params(
+    reasoning_effort: Option<ReasoningEffort>,
     thinking_budget_tokens: &Option<u32>,
     temperature: Option<f32>,
     max_tokens: i32,
 ) -> Result<(Option<ThinkingConfig>, Option<f32>, i32)> {
-    match thinking_budget_tokens {
+    let resolved_budget = match reasoning_effort {
+        Some(ReasoningEffort::None) => None,
+        Some(effort) => Some(anthropic_budget_for_effort(effort)),
+        None => *thinking_budget_tokens,
+    };
+
+    match resolved_budget {
         Some(budget) => {
-            let budget = *budget;
             if budget < MIN_THINKING_BUDGET_TOKENS {
                 anyhow::bail!(
                     "Anthropic thinking requires budget_tokens >= {} (got {})",
@@ -635,6 +643,16 @@ fn build_thinking_params(
             ))
         }
         None => Ok((None, temperature, max_tokens)),
+    }
+}
+
+fn anthropic_budget_for_effort(effort: ReasoningEffort) -> u32 {
+    match effort {
+        ReasoningEffort::None => 0,
+        ReasoningEffort::Minimal | ReasoningEffort::Low => MIN_THINKING_BUDGET_TOKENS,
+        ReasoningEffort::Medium => 4_096,
+        ReasoningEffort::High => 8_192,
+        ReasoningEffort::XHigh => 16_384,
     }
 }
 
@@ -919,6 +937,7 @@ impl LlmProvider for AnthropicMessagesClient {
             temperature,
             max_tokens,
             thinking_budget_tokens,
+            reasoning,
             mut extra_params,
         } = request;
 
@@ -935,7 +954,8 @@ impl LlmProvider for AnthropicMessagesClient {
         }
 
         let (thinking, temperature, max_tokens) = build_thinking_params(
-            &thinking_budget_tokens,
+            reasoning.effort,
+            &reasoning.budget_tokens.or(thinking_budget_tokens),
             temperature,
             max_tokens.unwrap_or(4096),
         )?;
@@ -972,6 +992,7 @@ impl LlmProvider for AnthropicMessagesClient {
             temperature,
             max_tokens,
             thinking_budget_tokens,
+            reasoning,
             mut extra_params,
         } = request;
 
@@ -988,7 +1009,8 @@ impl LlmProvider for AnthropicMessagesClient {
         }
 
         let (thinking, temperature, max_tokens) = build_thinking_params(
-            &thinking_budget_tokens,
+            reasoning.effort,
+            &reasoning.budget_tokens.or(thinking_budget_tokens),
             temperature,
             max_tokens.unwrap_or(4096),
         )?;
@@ -1771,18 +1793,28 @@ mod tests {
 
     #[test]
     fn test_build_thinking_params_enforces_min_budget() {
-        let err = build_thinking_params(&Some(512), Some(0.7), 2048).unwrap_err();
+        let err = build_thinking_params(None, &Some(512), Some(0.7), 2048).unwrap_err();
         assert!(err.to_string().contains("budget_tokens >="));
     }
 
     #[test]
     fn test_build_thinking_params_adjusts_max_tokens_and_temperature() {
         let (thinking, temperature, max_tokens) =
-            build_thinking_params(&Some(1024), Some(0.2), 1000).unwrap();
+            build_thinking_params(None, &Some(1024), Some(0.2), 1000).unwrap();
 
         assert!(thinking.is_some());
         assert_eq!(temperature, Some(1.0));
         assert_eq!(max_tokens, 1025);
+    }
+
+    #[test]
+    fn test_build_thinking_params_maps_reasoning_effort_to_budget() {
+        let (thinking, temperature, max_tokens) =
+            build_thinking_params(Some(ReasoningEffort::High), &None, Some(0.2), 4096).unwrap();
+
+        assert_eq!(thinking.unwrap().budget_tokens, 8192);
+        assert_eq!(temperature, Some(1.0));
+        assert_eq!(max_tokens, 8193);
     }
 
     #[test]

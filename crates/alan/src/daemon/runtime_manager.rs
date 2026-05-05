@@ -66,6 +66,7 @@ pub struct RuntimeSessionPolicy {
     pub governance: alan_protocol::GovernanceConfig,
     pub agent_name: Option<String>,
     pub connection_profile: Option<String>,
+    pub reasoning_effort: Option<alan_protocol::ReasoningEffort>,
     pub streaming_mode: Option<alan_runtime::StreamingMode>,
     pub partial_stream_recovery_mode: Option<alan_runtime::PartialStreamRecoveryMode>,
     pub durability_required: bool,
@@ -90,6 +91,7 @@ pub struct RuntimeStartResult {
     pub resolved_profile_id: Option<String>,
     pub resolved_provider: Option<alan_runtime::LlmProvider>,
     pub resolved_model: String,
+    pub effective_reasoning_effort: Option<alan_protocol::ReasoningEffort>,
 }
 
 impl RuntimeManager {
@@ -162,6 +164,12 @@ impl RuntimeManager {
                         .core_config
                         .effective_model()
                         .to_string(),
+                    effective_reasoning_effort: self
+                        .config
+                        .runtime_config_template
+                        .agent_config
+                        .core_config
+                        .effective_model_reasoning_effort(),
                 });
             }
         }
@@ -209,6 +217,11 @@ impl RuntimeManager {
             runtime_config.agent_config.core_config.connection_profile =
                 session_policy.connection_profile.clone();
         }
+        if let Some(reasoning_effort) = session_policy.reasoning_effort {
+            runtime_config
+                .agent_config
+                .set_model_reasoning_effort_override(Some(reasoning_effort));
+        }
         runtime_config.workspace_root_dir = Some(workspace_root_path.clone());
         runtime_config.workspace_alan_dir = Some(workspace_alan_dir.clone());
         runtime_config.resume_rollout_path = resume_rollout_path;
@@ -238,6 +251,7 @@ impl RuntimeManager {
         let resolved_core_config =
             alan_runtime::runtime::effective_core_config_for_runtime(&runtime_config)?;
         let resolved_model = resolved_core_config.effective_model().to_string();
+        let effective_reasoning_effort = resolved_core_config.effective_model_reasoning_effort();
         let resolved_connection = if let Some(home_paths) = runtime_config
             .agent_home_paths
             .clone()
@@ -298,6 +312,7 @@ impl RuntimeManager {
                 .as_ref()
                 .map(|resolved| resolved.provider),
             resolved_model,
+            effective_reasoning_effort,
         })
     }
 

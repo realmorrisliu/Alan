@@ -131,25 +131,31 @@ Alan/
 - **WebSocket + HTTP API**: Real-time bidirectional communication
 - **Context Compaction**: Automatic summarization when context grows large
 - **One-Shot Ask**: `alan ask` for non-interactive queries with text/json/quiet output modes
-- **Thinking Support**: Optional reasoning/thinking display with configurable token budget
+- **Thinking Support**: Optional reasoning/thinking display with named effort control and provider-specific token budgets
 - **Session Rollback**: Undo last N turns within a session
 
 ---
 
 ## Thinking / Reasoning Support
 
-Alan exposes a unified `thinking_budget_tokens` switch in runtime config. Current provider behavior:
+Alan exposes `model_reasoning_effort` as the canonical runtime config control,
+with `thinking_budget_tokens` retained as a provider-specific compatibility
+budget. Current provider behavior:
 
-- **Anthropic Messages API**: native thinking blocks, thinking signature, and redacted thinking blocks; requires `budget_tokens >= 1024`
-- **OpenAI Responses API**: preserves thinking metadata when available
-- **OpenAI Chat Completions API**: preserves thinking metadata when available
+- **Anthropic Messages API**: native thinking blocks, thinking signature, and redacted thinking blocks; named effort maps to budget presets and explicit budgets require `budget_tokens >= 1024`
+- **OpenAI Responses API**: preserves thinking metadata when available and maps named effort to `reasoning.effort`
+- **OpenAI Chat Completions API**: preserves thinking metadata when available and maps named effort to `reasoning_effort`
 - **OpenAI Chat Completions API-compatible**: chat-completions-compatible path with reasoning field support (for example `reasoning_content` and reasoning metadata)
-- **OpenRouter**: SDK-backed chat adapter that preserves OpenRouter reasoning and reasoning-detail metadata when available
-- **Google Gemini GenerateContent API**: currently does not emit/consume thinking content in Alan's wire path
+- **OpenRouter**: SDK-backed chat adapter that preserves OpenRouter reasoning and reasoning-detail metadata when available and maps named effort to provider-native reasoning controls
+- **Google Gemini GenerateContent API**: maps Gemini 3 effort to `thinkingLevel` and Gemini 2.5 effort/budget to `thinkingBudget`
 
 Notes:
 
-- `thinking_budget_tokens = null` (default) means thinking budget is disabled.
+- `model_reasoning_effort = "medium"` is the preferred config shape when the
+  selected model supports named effort.
+- `thinking_budget_tokens = null` (default) means no provider-specific raw
+  budget is configured.
+- Do not set `model_reasoning_effort` and `thinking_budget_tokens` together.
 - `alan ask --thinking` controls whether thinking deltas are shown in text-mode CLI output.
 
 ---
@@ -233,6 +239,8 @@ enabled = false
 # compaction_hard_trigger_ratio = 0.8
 
 # Thinking / reasoning (optional)
+model_reasoning_effort = "medium"
+# Provider-specific budget compatibility; do not set with model_reasoning_effort.
 # thinking_budget_tokens = 2048
 ```
 
