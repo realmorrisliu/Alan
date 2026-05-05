@@ -242,14 +242,14 @@ Normative rules:
    routes, clients, and provider adapters may carry request-control intent or
    metadata, but they must not independently decide the final effective value.
 2. Alan must resolve effective controls before provider dispatch from turn
-   override, session/runtime override, agent config, legacy budget intent, model
-   catalog default, then provider default.
+   override, session/runtime override, agent config, model catalog default, then
+   provider default.
 3. If a resolved model catalog entry declares supported efforts, Alan must
    reject explicit unsupported effort before making the provider request.
-4. `thinking_budget_tokens` is a provider-specific compatibility control, not
-   Alan's canonical cross-provider reasoning API.
-5. A configuration that explicitly sets both `model_reasoning_effort` and
-   `thinking_budget_tokens` is ambiguous and must be rejected.
+4. `thinking_budget_tokens` is a removed legacy public control. Config and API
+   payloads that still contain it must be rejected with migration guidance.
+5. `model_reasoning_effort` is the only user-facing cross-provider reasoning
+   control.
 6. Compatibility providers must not silently drop explicit effort. They may
    receive effort only when Alan has model/provider metadata declaring support;
    otherwise the request must fail before dispatch.
@@ -266,9 +266,9 @@ Provider projection rules:
 3. OpenAI Chat Completions maps effort to `reasoning_effort`.
 4. Managed ChatGPT Responses may use the Responses-shaped field only when the
    live capability matrix says effort control is supported.
-5. Anthropic Messages maps effort to extended-thinking budget presets unless an
-   explicit legacy budget is the only configured control, and the adapter must
-   keep Anthropic minimum-budget and `max_tokens` constraints explicit.
+5. Anthropic Messages maps effort to extended-thinking budget presets, and the
+   adapter must keep Anthropic minimum-budget and `max_tokens` constraints
+   explicit.
 6. Gemini 3 maps effort to `thinkingConfig.thinkingLevel`; Gemini 2.5 maps
    effort to `thinkingConfig.thinkingBudget`.
 7. OpenRouter and OpenAI-compatible endpoints use explicit extension fields
@@ -277,12 +277,10 @@ Provider projection rules:
 Migration guidance:
 
 1. New config examples should prefer `model_reasoning_effort = "medium"`.
-2. Existing OpenAI configs that used `thinking_budget_tokens` only to influence
-   reasoning depth should migrate to a named effort supported by the selected
-   model.
-3. Keep `thinking_budget_tokens` only for budget-native provider behavior or
-   temporary compatibility with a provider/model that does not yet expose named
-   effort metadata.
+2. Existing configs that used `thinking_budget_tokens` must migrate to a named
+   effort supported by the selected model.
+3. Provider-native budgets remain an adapter detail derived from named effort and
+   model/provider metadata.
 
 ## Rich Content Contract
 

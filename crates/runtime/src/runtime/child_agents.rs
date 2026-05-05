@@ -1131,9 +1131,6 @@ fn build_child_agent_config(parent: &RuntimeLoopState, spec: &SpawnSpec) -> Agen
     if let Some(model) = spec.runtime_overrides.model.as_deref() {
         child_agent_config.set_model_override(model);
     }
-    if let Some(budget_tokens) = spec.launch.budget_tokens {
-        child_agent_config.set_thinking_budget_override(Some(budget_tokens));
-    }
     if let Some(effort) = spec.runtime_overrides.model_reasoning_effort {
         child_agent_config.set_model_reasoning_effort_override(Some(effort));
     }
@@ -2335,7 +2332,7 @@ tool_repeat_limit = 9
     }
 
     #[tokio::test]
-    async fn spawn_child_runtime_reapplies_model_and_budget_overrides_after_overlay() {
+    async fn spawn_child_runtime_ignores_launch_budget_for_reasoning_controls() {
         let temp = TempDir::new().unwrap();
         let requests = RecordedRequests::default();
         let response = completed_response("Child finished cleanly.");
@@ -2344,8 +2341,8 @@ tool_repeat_limit = 9
         std::fs::write(
             root_dir.join("agent.toml"),
             r#"
-thinking_budget_tokens = 1024
-"#,
+	model_reasoning_effort = "high"
+	"#,
         )
         .unwrap();
         let seen_config = Arc::new(Mutex::new(None::<crate::Config>));
@@ -2368,10 +2365,23 @@ thinking_budget_tokens = 1024
         assert_eq!(result.status, ChildRuntimeStatus::Completed);
         let seen_config = seen_config.lock().unwrap().clone().unwrap();
         assert_eq!(seen_config.effective_model(), "gpt-5-mini");
-        assert_eq!(seen_config.thinking_budget_tokens, Some(512));
+        assert_eq!(
+            crate::resolve_session_request_controls(
+                &seen_config,
+                crate::provider_capabilities_for_config(&seen_config),
+                crate::RequestControlIntent::default(),
+            )
+            .unwrap()
+            .reasoning_effort(),
+            Some(alan_protocol::ReasoningEffort::High)
+        );
 
         let recorded = requests.0.lock().unwrap();
-        assert_eq!(recorded[0].thinking_budget_tokens, Some(512));
+        assert_eq!(
+            recorded[0].reasoning.effort,
+            Some(alan_protocol::ReasoningEffort::High)
+        );
+        assert_eq!(recorded[0].reasoning.budget_tokens, None);
     }
 
     #[tokio::test]

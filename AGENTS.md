@@ -508,9 +508,6 @@ prompt_snapshot_max_chars = 8000
 # Optional canonical reasoning effort. If omitted and the selected model is in
 # Alan's model catalog, Alan uses the model's catalog default.
 model_reasoning_effort = "medium"
-# Provider-specific compatibility escape hatch for budget-native providers.
-# Do not set this together with model_reasoning_effort.
-# thinking_budget_tokens = 2048
 
 [memory]
 enabled = true

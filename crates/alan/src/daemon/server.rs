@@ -191,7 +191,7 @@ pub async fn run_server_with_loaded_config(loaded_config: LoadedConfig) -> Resul
             paths::SESSION_SLEEP_UNTIL,
             post(routes::sleep_session_until),
         )
-        .route(paths::SESSION_SUBMIT, post(routes::submit_operation))
+        .route(paths::SESSION_SUBMIT, post(routes::submit_operation_route))
         .route(paths::SESSION_EVENTS, get(routes::stream_events))
         .route(paths::SESSION_WS, get(websocket::ws_handler))
         .with_state(state);

@@ -1,5 +1,5 @@
 use alan_llm::factory::{self, ProviderConfig};
-use alan_llm::{GenerationRequest, LlmProvider, StreamChunk, ToolDefinition};
+use alan_llm::{GenerationRequest, LlmProvider, ReasoningEffort, StreamChunk, ToolDefinition};
 use anyhow::{Context, Result, ensure};
 use std::env;
 use std::path::PathBuf;
@@ -430,7 +430,7 @@ async fn run_openrouter_reasoning_if_supported(harness: &LiveProviderHarness) ->
         REQUEST_TIMEOUT,
         provider.generate(
             exact_reply_request(token)
-                .with_thinking_budget_tokens(256)
+                .with_reasoning_effort(ReasoningEffort::Minimal)
                 .with_extra_param("include_reasoning", serde_json::json!(true)),
         ),
     )

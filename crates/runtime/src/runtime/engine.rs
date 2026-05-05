@@ -422,22 +422,12 @@ impl AgentConfig {
         self.explicit_runtime_overrides.model = true;
     }
 
-    /// Override provider-specific thinking budget for this launch across overlays.
-    pub fn set_thinking_budget_override(&mut self, thinking_budget_tokens: Option<u32>) {
-        self.core_config.thinking_budget_tokens = thinking_budget_tokens;
-        self.core_config.model_reasoning_effort = None;
-        self.runtime_config.request_control_intent =
-            crate::RequestControlIntent::thinking_budget_tokens(thinking_budget_tokens);
-        self.explicit_runtime_overrides.request_control_intent = true;
-    }
-
     /// Override named model reasoning effort for this launch across overlays.
     pub fn set_model_reasoning_effort_override(
         &mut self,
         model_reasoning_effort: Option<alan_protocol::ReasoningEffort>,
     ) {
         self.core_config.model_reasoning_effort = model_reasoning_effort;
-        self.core_config.thinking_budget_tokens = None;
         self.runtime_config.request_control_intent =
             crate::RequestControlIntent::reasoning_effort(model_reasoning_effort);
         self.explicit_runtime_overrides.request_control_intent = true;
@@ -479,7 +469,6 @@ impl AgentConfig {
         let mut merge_base_core_config = self.core_config.clone();
         if self.explicit_runtime_overrides.request_control_intent {
             merge_base_core_config.model_reasoning_effort = None;
-            merge_base_core_config.thinking_budget_tokens = None;
         }
 
         let mut core_config = merge_base_core_config.with_agent_root_overlays(overlay_paths)?;
@@ -1905,26 +1894,17 @@ mod tests {
         write_agent_overlay(
             &overlay_path,
             r#"
-tool_repeat_limit = 9
-thinking_budget_tokens = 1024
-prompt_snapshot_enabled = true
-"#,
+	tool_repeat_limit = 9
+	prompt_snapshot_enabled = true
+	"#,
         );
 
         let base = AgentConfig::from(crate::Config::default());
         let merged = base.with_agent_root_overlays(&[overlay_path]).unwrap();
 
         assert_eq!(merged.core_config.tool_repeat_limit, 9);
-        assert_eq!(merged.core_config.thinking_budget_tokens, Some(1024));
         assert!(merged.core_config.prompt_snapshot_enabled);
         assert_eq!(merged.runtime_config.tool_repeat_limit, 9);
-        assert_eq!(
-            merged
-                .runtime_config
-                .request_control_intent
-                .thinking_budget_tokens,
-            Some(1024)
-        );
         assert!(merged.runtime_config.prompt_snapshot_enabled);
     }
 
@@ -1962,17 +1942,16 @@ model_reasoning_effort = "high"
         write_agent_overlay(
             &overlay_path,
             r#"
-tool_repeat_limit = 9
-streaming_mode = "off"
-thinking_budget_tokens = 1024
-"#,
+	tool_repeat_limit = 9
+	streaming_mode = "off"
+	model_reasoning_effort = "high"
+	"#,
         );
 
         let mut base = AgentConfig::from(crate::Config::default());
         base.runtime_config.tool_repeat_limit = 42;
         base.set_model_override("gpt-5-mini");
         base.set_streaming_mode_override(crate::config::StreamingMode::On);
-        base.set_thinking_budget_override(Some(2048));
         base.set_model_reasoning_effort_override(Some(alan_protocol::ReasoningEffort::Low));
 
         let merged = base.with_agent_root_overlays(&[overlay_path]).unwrap();
@@ -1983,7 +1962,6 @@ thinking_budget_tokens = 1024
             merged.core_config.streaming_mode,
             crate::config::StreamingMode::On
         );
-        assert_eq!(merged.core_config.thinking_budget_tokens, None);
         assert_eq!(
             merged.core_config.model_reasoning_effort,
             Some(alan_protocol::ReasoningEffort::Low)
@@ -2009,13 +1987,6 @@ thinking_budget_tokens = 1024
                 .request_control_intent
                 .reasoning_effort,
             Some(alan_protocol::ReasoningEffort::Low)
-        );
-        assert_eq!(
-            merged
-                .runtime_config
-                .request_control_intent
-                .thinking_budget_tokens,
-            None
         );
     }
 
@@ -2045,8 +2016,8 @@ thinking_budget_tokens = 1024
         std::fs::write(
             &overlay_path,
             r#"
-thinking_budget_tokens = 1024
-"#,
+	model_reasoning_effort = "high"
+	"#,
         )
         .unwrap();
 
@@ -2060,12 +2031,17 @@ thinking_budget_tokens = 1024
             ..WorkspaceRuntimeConfig::default()
         };
         config.agent_config.set_model_override("override-model");
-        config.agent_config.set_thinking_budget_override(Some(2048));
+        config
+            .agent_config
+            .set_model_reasoning_effort_override(Some(alan_protocol::ReasoningEffort::Low));
 
         let core_config = effective_core_config_for_runtime(&config).unwrap();
 
         assert_eq!(core_config.openai_responses_model, "override-model");
-        assert_eq!(core_config.thinking_budget_tokens, Some(2048));
+        assert_eq!(
+            core_config.model_reasoning_effort,
+            Some(alan_protocol::ReasoningEffort::Low)
+        );
         assert_eq!(
             core_config.memory.workspace_dir,
             Some(crate::workspace_memory_dir_from_alan_dir(
@@ -2624,9 +2600,9 @@ required = true
         std::fs::write(
             &overlay_path,
             r#"
-tool_repeat_limit = 9
-thinking_budget_tokens = 1024
-"#,
+	tool_repeat_limit = 9
+	model_reasoning_effort = "high"
+	"#,
         )
         .unwrap();
 
@@ -2648,7 +2624,10 @@ thinking_budget_tokens = 1024
             crate::config::LlmProvider::OpenAiResponses
         ));
         assert_eq!(core_config.tool_repeat_limit, 9);
-        assert_eq!(core_config.thinking_budget_tokens, Some(1024));
+        assert_eq!(
+            core_config.model_reasoning_effort,
+            Some(alan_protocol::ReasoningEffort::High)
+        );
         assert_eq!(
             core_config.memory.workspace_dir,
             Some(workspace_alan_dir.join("memory"))
