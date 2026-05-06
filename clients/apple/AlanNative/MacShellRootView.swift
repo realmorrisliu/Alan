@@ -299,6 +299,21 @@ private struct ShellWindowChromeMetrics: Equatable {
     var trafficLightsTopInset: CGFloat = 0
 }
 
+private struct ShellWindowDragRegion<Content: View>: View {
+    let content: Content
+
+    init(@ViewBuilder content: () -> Content) {
+        self.content = content()
+    }
+
+    var body: some View {
+        content
+            .contentShape(Rectangle())
+            .gesture(WindowDragGesture())
+            .allowsWindowActivationEvents(true)
+    }
+}
+
 private final class ShellWindowPlacementNSView: NSView {
     private var metricsHandler: (ShellWindowChromeMetrics) -> Void
     private var lastPublishedMetrics: ShellWindowChromeMetrics?
@@ -495,27 +510,34 @@ private struct ShellSidebarView: View {
 
     private var sidebarHeader: some View {
         HStack(alignment: .center, spacing: 10) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 11, style: .continuous)
-                    .fill(ShellPalette.sidebarControlStrong)
-                Text("A")
-                    .font(.system(size: 12.5, weight: .bold, design: .rounded))
-                    .foregroundStyle(ShellPalette.accent)
-            }
-            .frame(width: 28, height: 28)
+            ShellWindowDragRegion {
+                HStack(alignment: .center, spacing: 10) {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 11, style: .continuous)
+                            .fill(ShellPalette.sidebarControlStrong)
+                        Text("A")
+                            .font(.system(size: 12.5, weight: .bold, design: .rounded))
+                            .foregroundStyle(ShellPalette.accent)
+                    }
+                    .frame(width: 28, height: 28)
 
-            VStack(alignment: .leading, spacing: 2) {
-                Text(host.selectedSpace?.title ?? "Alan")
-                    .font(.system(size: 15.5, weight: .semibold))
-                    .foregroundStyle(.primary)
-                    .lineLimit(1)
-                Text(spaceSubtitle)
-                    .font(.system(size: 10.5, weight: .medium))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(host.selectedSpace?.title ?? "Alan")
+                            .font(.system(size: 15.5, weight: .semibold))
+                            .foregroundStyle(.primary)
+                            .lineLimit(1)
+                        Text(spaceSubtitle)
+                            .font(.system(size: 10.5, weight: .medium))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                    .layoutPriority(1)
 
-            Spacer(minLength: 8)
+                    Color.clear
+                        .frame(maxWidth: .infinity, minHeight: 34)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
 
             Button {
                 withAnimation(.easeOut(duration: 0.18)) {

@@ -76,6 +76,21 @@ require_pattern \
     "terminal auto-focus must be gated to the selected pane"
 
 require_pattern \
+    "clients/apple/AlanNative/MacShellRootView.swift" \
+    "struct ShellWindowDragRegion" \
+    "hidden-titlebar shell windows must expose a replacement drag region"
+
+require_pattern \
+    "clients/apple/AlanNative/MacShellRootView.swift" \
+    "WindowDragGesture\\(\\)" \
+    "hidden-titlebar shell windows must use WindowDragGesture for custom chrome"
+
+require_pattern \
+    "clients/apple/AlanNative/MacShellRootView.swift" \
+    "allowsWindowActivationEvents\\(true\\)" \
+    "custom shell window drag regions must support click-then-drag activation"
+
+require_pattern \
     "clients/apple/AlanNative/GhosttyLiveHost.swift" \
     "let visible = .*occlusionState\\.contains\\(\\.visible\\) \\?\\? false" \
     "Ghostty occlusion bridge must derive the visible flag from NSWindow occlusion state"
