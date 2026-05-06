@@ -149,6 +149,27 @@ struct AlanTerminalSearchState: Equatable {
     }
 }
 
+enum AlanTerminalSearchNavigationDirection: Equatable {
+    case next
+    case previous
+}
+
+enum AlanTerminalSearchEngineUpdate: Equatable {
+    case started(query: String)
+    case ended
+    case matches(total: Int?)
+    case selected(index: Int?)
+}
+
+@MainActor
+protocol AlanTerminalSearchEngine: AnyObject {
+    func setSearchUpdateHandler(_ handler: ((AlanTerminalSearchEngineUpdate) -> Void)?)
+    func startSearch() -> Bool
+    func updateSearchQuery(_ query: String) -> Bool
+    func navigateSearch(_ direction: AlanTerminalSearchNavigationDirection) -> Bool
+    func endSearch() -> Bool
+}
+
 @MainActor
 final class AlanTerminalSearchAdapter {
     private(set) var state: AlanTerminalSearchState
@@ -376,10 +397,12 @@ final class AlanTerminalSurfaceController {
     let inputAdapter = AlanTerminalInputAdapter()
     let scrollbackAdapter = AlanTerminalScrollbackAdapter()
     let metadataAdapter = AlanTerminalMetadataAdapter()
+    var onSearchStateChange: (() -> Void)?
 
     private(set) var searchAdapter: AlanTerminalSearchAdapter?
     private(set) var clipboardAdapter = AlanTerminalSelectionClipboardAdapter(surfaceHandle: nil)
     private weak var surfaceHandle: AlanTerminalSurfaceHandle?
+    private weak var searchEngine: AlanTerminalSearchEngine?
     private var latestRenderer = TerminalRendererSnapshot.placeholder
     private var latestMetadata = TerminalPaneMetadataSnapshot.placeholder
     private var readonly = false
@@ -408,6 +431,14 @@ final class AlanTerminalSurfaceController {
         if self.surfaceHandle !== surfaceHandle {
             self.surfaceHandle?.detach()
             self.surfaceHandle = surfaceHandle
+        }
+        let nextSearchEngine = surfaceHandle as? AlanTerminalSearchEngine
+        if searchEngine !== nextSearchEngine {
+            searchEngine?.setSearchUpdateHandler(nil)
+            searchEngine = nextSearchEngine
+            searchEngine?.setSearchUpdateHandler { [weak self] update in
+                self?.applySearchEngineUpdate(update)
+            }
         }
         clipboardAdapter.updateSurfaceHandle(surfaceHandle)
         if let paneID, searchAdapter?.state.paneID != paneID {
@@ -444,6 +475,8 @@ final class AlanTerminalSurfaceController {
     func detach() {
         surfaceHandle?.detach()
         surfaceHandle = nil
+        searchEngine?.setSearchUpdateHandler(nil)
+        searchEngine = nil
         clipboardAdapter.updateSurfaceHandle(nil)
     }
 
@@ -518,29 +551,67 @@ final class AlanTerminalSurfaceController {
         return surfaceHandle.sendControlText(text)
     }
 
-    func beginSearch() {
-        guard let paneID = searchAdapter?.state.paneID ?? surfaceHandle?.paneID else { return }
+    @discardableResult
+    func beginSearch() -> Bool {
+        guard let paneID = searchAdapter?.state.paneID ?? surfaceHandle?.paneID else { return false }
         if searchAdapter == nil {
             searchAdapter = AlanTerminalSearchAdapter(paneID: paneID)
         }
+        if searchAdapter?.state.isActive == true {
+            return true
+        }
+        guard searchEngine?.startSearch() == true else { return false }
         searchAdapter?.updateQuery(searchAdapter?.state.query ?? "")
+        return true
     }
 
-    func updateSearchQuery(_ query: String) {
-        beginSearch()
+    @discardableResult
+    func updateSearchQuery(_ query: String) -> Bool {
+        guard beginSearch() else { return false }
+        guard searchEngine?.updateSearchQuery(query) == true else { return false }
         searchAdapter?.updateQuery(query)
+        return true
     }
 
     func nextSearchMatch() {
-        searchAdapter?.next()
+        if searchEngine?.navigateSearch(.next) != true {
+            searchAdapter?.next()
+        }
     }
 
     func previousSearchMatch() {
-        searchAdapter?.previous()
+        if searchEngine?.navigateSearch(.previous) != true {
+            searchAdapter?.previous()
+        }
     }
 
     func dismissSearch() {
+        _ = searchEngine?.endSearch()
         searchAdapter?.dismiss()
+    }
+
+    private func applySearchEngineUpdate(_ update: AlanTerminalSearchEngineUpdate) {
+        switch update {
+        case .started(let query):
+            guard let paneID = searchAdapter?.state.paneID ?? surfaceHandle?.paneID else { return }
+            if searchAdapter == nil {
+                searchAdapter = AlanTerminalSearchAdapter(paneID: paneID)
+            }
+            searchAdapter?.updateQuery(query)
+        case .ended:
+            searchAdapter?.dismiss()
+        case .matches(let total):
+            searchAdapter?.updateMatches(
+                total: total,
+                selectedIndex: searchAdapter?.state.selectedIndex
+            )
+        case .selected(let index):
+            searchAdapter?.updateMatches(
+                total: searchAdapter?.state.totalMatches,
+                selectedIndex: index
+            )
+        }
+        onSearchStateChange?()
     }
 
     private var surfaceReadiness: AlanTerminalSurfaceReadiness {

@@ -9,6 +9,7 @@ import QuartzCore
 final class AlanGhosttyLiveHost: NSObject {
     var onDiagnosticsChange: ((TerminalRendererSnapshot) -> Void)?
     var onMetadataChange: ((TerminalPaneMetadataSnapshot) -> Void)?
+    var onSearchUpdate: ((AlanTerminalSearchEngineUpdate) -> Void)?
 
     private let logger = Logger(
         subsystem: "com.realmorrisliu.AlanNative",
@@ -163,6 +164,21 @@ final class AlanGhosttyLiveHost: NSObject {
     func hasSelection() -> Bool {
         guard let surface else { return false }
         return ghostty_surface_has_selection(surface)
+    }
+
+    func performBindingAction(_ action: String) -> Bool {
+        guard let surface, !action.isEmpty else { return false }
+        let handled = action.withCString { cString in
+            ghostty_surface_binding_action(
+                surface,
+                cString,
+                UInt(action.lengthOfBytes(using: .utf8))
+            )
+        }
+        if handled {
+            ghostty_surface_refresh(surface)
+        }
+        return handled
     }
 
     func imeRect(in view: NSView) -> NSRect? {
@@ -657,6 +673,35 @@ final class AlanGhosttyLiveHost: NSObject {
             let summary = progressSummary(progress)
             performOnMain {
                 self.updateMetadata(summary: summary, attention: .active)
+            }
+            return true
+
+        case GHOSTTY_ACTION_START_SEARCH:
+            let query = action.action.start_search.needle.flatMap { String(cString: $0) } ?? ""
+            performOnMain {
+                self.onSearchUpdate?(.started(query: query))
+            }
+            return true
+
+        case GHOSTTY_ACTION_END_SEARCH:
+            performOnMain {
+                self.onSearchUpdate?(.ended)
+            }
+            return true
+
+        case GHOSTTY_ACTION_SEARCH_TOTAL:
+            let rawTotal = action.action.search_total.total
+            let total = rawTotal >= 0 ? Int(rawTotal) : nil
+            performOnMain {
+                self.onSearchUpdate?(.matches(total: total))
+            }
+            return true
+
+        case GHOSTTY_ACTION_SEARCH_SELECTED:
+            let rawSelected = action.action.search_selected.selected
+            let selected = rawSelected >= 0 ? Int(rawSelected) : nil
+            performOnMain {
+                self.onSearchUpdate?(.selected(index: selected))
             }
             return true
 

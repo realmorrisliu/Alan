@@ -17,6 +17,7 @@ private enum TerminalSurfaceControllerTests {
         verifiesScrollbackMetricsAndTerminalModes()
         verifiesInputCommandRouting()
         verifiesPaneScopedSearchState()
+        verifiesSearchActionsReachSurfaceEngine()
         verifiesSurfaceSnapshotEqualityIgnoresTimestamp()
         verifiesClipboardDeliveryStates()
         verifiesMetadataOverlayProjection()
@@ -97,6 +98,56 @@ private enum TerminalSurfaceControllerTests {
         search.dismiss()
         expect(search.state.isActive == false, "dismissed search must be inactive")
         expect(search.state.paneID == "pane_1", "search state must remain pane scoped")
+    }
+
+    private static func verifiesSearchActionsReachSurfaceEngine() {
+        let handle = FakeAlanTerminalSurfaceHandle(paneID: "pane_1")
+        let controller = AlanTerminalSurfaceController()
+        var searchStateChangeCount = 0
+        controller.onSearchStateChange = {
+            searchStateChangeCount += 1
+        }
+        controller.bind(surfaceHandle: handle, paneID: "pane_1")
+
+        expect(controller.beginSearch(), "controller must start search through the surface engine")
+        expect(handle.searchActions == ["start_search"], "begin search must invoke Ghostty search action")
+        expect(controller.searchAdapter?.state.isActive == true, "started search must become active")
+
+        expect(
+            controller.updateSearchQuery("alan"),
+            "query changes must be accepted by the surface search engine"
+        )
+        expect(
+            handle.searchActions.suffix(1) == ["search:alan"],
+            "query changes must reach the terminal search action"
+        )
+
+        let countBeforeEngineUpdates = searchStateChangeCount
+        handle.emitSearchUpdate(.matches(total: 3))
+        handle.emitSearchUpdate(.selected(index: 1))
+        expect(controller.searchAdapter?.state.totalMatches == 3, "search totals must update from engine callbacks")
+        expect(controller.searchAdapter?.state.selectedIndex == 1, "selected match must update from engine callbacks")
+        expect(
+            searchStateChangeCount == countBeforeEngineUpdates + 2,
+            "engine search callbacks must notify host UI refresh"
+        )
+
+        controller.nextSearchMatch()
+        controller.previousSearchMatch()
+        expect(
+            handle.searchActions.suffix(2) == ["navigate_search:next", "navigate_search:previous"],
+            "search navigation must be delegated to the terminal search engine"
+        )
+
+        controller.dismissSearch()
+        expect(handle.searchActions.last == "end_search", "dismissed search must end the terminal search")
+        expect(controller.searchAdapter?.state.isActive == false, "dismissed search must deactivate local state")
+
+        handle.searchActionsShouldSucceed = false
+        expect(
+            controller.beginSearch() == false,
+            "failed engine start must not pretend search is available"
+        )
     }
 
     private static func verifiesSurfaceSnapshotEqualityIgnoresTimestamp() {

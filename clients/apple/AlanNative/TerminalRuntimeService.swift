@@ -308,7 +308,7 @@ protocol AlanTerminalSurfaceHandle: AnyObject {
 
 #if canImport(GhosttyKit)
 @MainActor
-protocol AlanGhosttyEventSurfaceHandle: AlanTerminalSurfaceHandle {
+protocol AlanGhosttyEventSurfaceHandle: AlanTerminalSurfaceHandle, AlanTerminalSearchEngine {
     func keyTranslationMods(for mods: ghostty_input_mods_e) -> ghostty_input_mods_e
     func sendKey(_ keyEvent: ghostty_input_key_s) -> Bool
     func keyIsBinding(
@@ -636,6 +636,31 @@ extension AlanGhosttySurfaceHandle: AlanGhosttyEventSurfaceHandle {
     func imeRect(in view: NSView) -> NSRect? {
         liveHost.imeRect(in: view)
     }
+
+    func setSearchUpdateHandler(_ handler: ((AlanTerminalSearchEngineUpdate) -> Void)?) {
+        liveHost.onSearchUpdate = handler
+    }
+
+    func startSearch() -> Bool {
+        liveHost.performBindingAction("start_search")
+    }
+
+    func updateSearchQuery(_ query: String) -> Bool {
+        liveHost.performBindingAction("search:\(query)")
+    }
+
+    func navigateSearch(_ direction: AlanTerminalSearchNavigationDirection) -> Bool {
+        switch direction {
+        case .next:
+            return liveHost.performBindingAction("navigate_search:next")
+        case .previous:
+            return liveHost.performBindingAction("navigate_search:previous")
+        }
+    }
+
+    func endSearch() -> Bool {
+        liveHost.performBindingAction("end_search")
+    }
 }
 #endif
 
@@ -782,8 +807,11 @@ final class FakeAlanTerminalSurfaceHandle: AlanTerminalSurfaceHandle {
     private(set) var detachCount = 0
     private(set) var teardownCount = 0
     private(set) var deliveredText: [String] = []
+    private(set) var searchActions: [String] = []
     var deliveryResult: TerminalRuntimeDeliveryResult?
+    var searchActionsShouldSucceed = true
     var ready = true
+    private var searchUpdateHandler: ((AlanTerminalSearchEngineUpdate) -> Void)?
     private var currentSnapshot: AlanTerminalSurfaceSnapshot
 
     init(paneID: String) {
@@ -862,6 +890,51 @@ final class FakeAlanTerminalSurfaceHandle: AlanTerminalSurfaceHandle {
             attachedViewCount: attachedViewCount ?? currentSnapshot.attachedViewCount,
             lastUpdatedAt: .now
         )
+    }
+}
+
+extension FakeAlanTerminalSurfaceHandle: AlanTerminalSearchEngine {
+    func setSearchUpdateHandler(_ handler: ((AlanTerminalSearchEngineUpdate) -> Void)?) {
+        searchUpdateHandler = handler
+    }
+
+    func startSearch() -> Bool {
+        recordSearchAction("start_search")
+        guard searchActionsShouldSucceed else { return false }
+        searchUpdateHandler?(.started(query: ""))
+        return true
+    }
+
+    func updateSearchQuery(_ query: String) -> Bool {
+        recordSearchAction("search:\(query)")
+        guard searchActionsShouldSucceed else { return false }
+        searchUpdateHandler?(.started(query: query))
+        return true
+    }
+
+    func navigateSearch(_ direction: AlanTerminalSearchNavigationDirection) -> Bool {
+        switch direction {
+        case .next:
+            recordSearchAction("navigate_search:next")
+        case .previous:
+            recordSearchAction("navigate_search:previous")
+        }
+        return searchActionsShouldSucceed
+    }
+
+    func endSearch() -> Bool {
+        recordSearchAction("end_search")
+        guard searchActionsShouldSucceed else { return false }
+        searchUpdateHandler?(.ended)
+        return true
+    }
+
+    func emitSearchUpdate(_ update: AlanTerminalSearchEngineUpdate) {
+        searchUpdateHandler?(update)
+    }
+
+    private func recordSearchAction(_ action: String) {
+        searchActions.append(action)
     }
 }
 

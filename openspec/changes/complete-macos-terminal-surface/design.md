@@ -120,6 +120,9 @@ surface adapter after runtime ownership is moved behind a stable service.
   state without exposing those details in the default terminal canvas.
 - Added compact user-facing overlays for search, missing surface, startup,
   renderer failure, child exit, and read-only states.
+- Wired terminal search to Ghostty binding actions so query changes and
+  next/previous navigation reach the terminal search engine, with total and
+  selected-match state flowing back through Ghostty action callbacks.
 - Added control-plane delivery rejection for child-exit and renderer-failure
   states so remote text delivery does not report false success.
 
@@ -130,8 +133,6 @@ Remaining unsupported Ghostty parity after this pass:
 - Alternate-screen and application mouse-mode detection are not yet sourced from
   live Ghostty callbacks; scroll/mouse events are centralized but still forward
   through the existing Ghostty event API.
-- Search is pane-scoped with native command routing and overlay state, but it
-  does not yet drive Ghostty search highlights or real match counts.
 - Selection and paste continue to use the existing Ghostty text forwarding path;
   bracketed-paste-aware delivery is not exposed separately yet.
 - URL hover, secure input, and terminal application mode diagnostics remain

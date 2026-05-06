@@ -91,6 +91,16 @@ require_pattern \
     "terminal search state must be pane scoped and adapter-owned"
 
 require_pattern \
+    "clients/apple/AlanNative/TerminalSurfaceController.swift" \
+    "protocol AlanTerminalSearchEngine" \
+    "terminal search queries must be delegated to a real surface search engine"
+
+require_pattern \
+    "clients/apple/scripts/test-terminal-surface-controller.swift" \
+    "verifiesSearchActionsReachSurfaceEngine" \
+    "surface controller tests must prove search actions reach the surface engine"
+
+require_pattern \
     "clients/apple/scripts/test-terminal-surface-controller.sh" \
     "TerminalSurfaceController.swift" \
     "surface controller behavior tests must compile the controller boundary"

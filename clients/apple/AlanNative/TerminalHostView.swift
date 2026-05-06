@@ -78,6 +78,10 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
+        surfaceController.onSearchStateChange = { [weak self] in
+            self?.syncOverlayVisibility()
+            self?.publishRuntimeSnapshot()
+        }
         configureView()
     }
 
@@ -1006,7 +1010,7 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
     private func routeNativeKeyCommandIfNeeded(_ event: NSEvent) -> Bool {
         switch surfaceController.inputAdapter.routeKey(terminalKeyInput(for: event)) {
         case .nativeCommand("find"):
-            surfaceController.beginSearch()
+            guard surfaceController.beginSearch() else { return false }
             syncOverlayVisibility()
             publishRuntimeSnapshot()
             return true
