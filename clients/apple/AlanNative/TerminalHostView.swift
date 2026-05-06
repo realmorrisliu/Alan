@@ -84,6 +84,8 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
         true
     }
 
+    override var mouseDownCanMoveWindow: Bool { false }
+
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
         true
     }
@@ -1060,11 +1062,15 @@ private func makeCanvasView() -> NSView {
 #if canImport(GhosttyKit)
     let view = AlanGhosttyCanvasView(frame: .zero)
 #else
-    let view = NSView(frame: .zero)
+    let view = AlanTerminalFallbackCanvasView(frame: .zero)
     view.wantsLayer = true
     view.layer?.backgroundColor = NSColor.clear.cgColor
 #endif
     view.translatesAutoresizingMaskIntoConstraints = false
     return view
+}
+
+final class AlanTerminalFallbackCanvasView: NSView {
+    override var mouseDownCanMoveWindow: Bool { false }
 }
 #endif

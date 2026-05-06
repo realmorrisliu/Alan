@@ -77,18 +77,28 @@ require_pattern \
 
 require_pattern \
     "clients/apple/AlanNative/MacShellRootView.swift" \
-    "struct ShellWindowDragRegion" \
-    "hidden-titlebar shell windows must expose a replacement drag region"
+    "window\\.isMovableByWindowBackground = true" \
+    "hidden-titlebar shell windows must make non-interactive background regions draggable"
 
 require_pattern \
+    "clients/apple/AlanNative/TerminalHostView.swift" \
+    "override var mouseDownCanMoveWindow: Bool \\{ false \\}" \
+    "terminal host views must not allow terminal pane clicks to drag the shell window"
+
+require_pattern \
+    "clients/apple/AlanNative/TerminalHostView.swift" \
+    "final class AlanTerminalFallbackCanvasView" \
+    "fallback terminal canvas views must explicitly opt out of background window dragging"
+
+require_pattern \
+    "clients/apple/AlanNative/GhosttyLiveHost.swift" \
+    "override var mouseDownCanMoveWindow: Bool \\{ false \\}" \
+    "Ghostty canvas views must not allow terminal pane clicks to drag the shell window"
+
+reject_pattern \
     "clients/apple/AlanNative/MacShellRootView.swift" \
     "WindowDragGesture\\(\\)" \
-    "hidden-titlebar shell windows must use WindowDragGesture for custom chrome"
-
-require_pattern \
-    "clients/apple/AlanNative/MacShellRootView.swift" \
-    "allowsWindowActivationEvents\\(true\\)" \
-    "custom shell window drag regions must support click-then-drag activation"
+    "shell window dragging should rely on movable background regions, not transparent SwiftUI drag overlays"
 
 require_pattern \
     "clients/apple/AlanNative/GhosttyLiveHost.swift" \
@@ -98,7 +108,12 @@ require_pattern \
 require_pattern \
     "clients/apple/AlanNative/GhosttyLiveHost.swift" \
     "ghostty_surface_set_occlusion\\(surface, visible\\)" \
-    "Ghostty occlusion bridge must pass visible=true for visible windows"
+    "GhosttyKit bridge must pass the observed visible state used by this linked Ghostty build"
+
+reject_pattern \
+    "clients/apple/AlanNative/GhosttyLiveHost.swift" \
+    "let isOccluded =|isSurfaceOccluded|!isVisible" \
+    "GhosttyKit bridge must not invert NSWindow visible state for this linked Ghostty build"
 
 require_pattern \
     "clients/apple/AlanNative/GhosttyLiveHost.swift" \

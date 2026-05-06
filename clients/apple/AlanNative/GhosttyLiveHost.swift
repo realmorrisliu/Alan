@@ -864,6 +864,8 @@ final class AlanGhosttyLiveHost: NSObject {
 }
 
 final class AlanGhosttyCanvasView: NSView {
+    override var mouseDownCanMoveWindow: Bool { false }
+
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
     }

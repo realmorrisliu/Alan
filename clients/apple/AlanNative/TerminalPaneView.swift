@@ -13,9 +13,9 @@ struct TerminalPaneView: View {
                 paneSelectorStrip
             }
         }
-        .padding(.top, 12)
-        .padding(.trailing, 12)
-        .padding(.bottom, 12)
+        .padding(.top, 8)
+        .padding(.trailing, 8)
+        .padding(.bottom, 8)
     }
 
     private var paneMetadataStrip: some View {
