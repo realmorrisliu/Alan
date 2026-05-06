@@ -11,6 +11,7 @@ import GhosttyKit
 struct TerminalHostView: NSViewRepresentable {
     let pane: ShellPane?
     let bootProfile: AlanShellBootProfile?
+    let isSelected: Bool
     let runtimeRegistry: TerminalRuntimeRegistry
     let onRuntimeUpdate: (TerminalHostRuntimeSnapshot) -> Void
     let onMetadataUpdate: (TerminalPaneMetadataSnapshot) -> Void
@@ -19,6 +20,7 @@ struct TerminalHostView: NSViewRepresentable {
         runtimeRegistry.hostView(
             for: pane,
             bootProfile: bootProfile,
+            isSelected: isSelected,
             onRuntimeUpdate: onRuntimeUpdate,
             onMetadataUpdate: onMetadataUpdate
         )
@@ -28,6 +30,7 @@ struct TerminalHostView: NSViewRepresentable {
         nsView.configure(
             pane: pane,
             bootProfile: bootProfile,
+            isSelected: isSelected,
             onRuntimeUpdate: onRuntimeUpdate,
             onMetadataUpdate: onMetadataUpdate
         )
@@ -46,6 +49,7 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
 
     private var pane: ShellPane?
     private var bootProfile: AlanShellBootProfile?
+    private var isSelected = false
     private var runtimeObserver: ((TerminalHostRuntimeSnapshot) -> Void)?
     private var metadataObserver: ((TerminalPaneMetadataSnapshot) -> Void)?
     private var windowObservers: [NSObjectProtocol] = []
@@ -145,11 +149,13 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
     func configure(
         pane: ShellPane?,
         bootProfile: AlanShellBootProfile?,
+        isSelected: Bool,
         onRuntimeUpdate: @escaping (TerminalHostRuntimeSnapshot) -> Void,
         onMetadataUpdate: @escaping (TerminalPaneMetadataSnapshot) -> Void
     ) {
         self.pane = pane
         self.bootProfile = bootProfile
+        self.isSelected = isSelected
         runtimeObserver = onRuntimeUpdate
         metadataObserver = onMetadataUpdate
 
@@ -518,7 +524,7 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
     }
 
     private func focusTerminalSoon() {
-        guard pane != nil else { return }
+        guard isSelected, pane != nil else { return }
         DispatchQueue.main.async { [weak self] in
             self?.requestTerminalFocus()
         }

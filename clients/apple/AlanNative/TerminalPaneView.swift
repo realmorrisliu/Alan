@@ -408,6 +408,7 @@ private struct ShellPaneTreeLayoutView: View {
                 ShellTerminalLeafView(
                     pane: pane,
                     bootProfile: host.bootProfile(for: pane),
+                    isSelected: host.selectedPane?.paneID == pane.paneID,
                     runtimeRegistry: host.terminalRuntimeRegistry,
                     onSelect: { host.focus(paneID: pane.paneID) },
                     onRuntimeUpdate: host.updateTerminalRuntime,
@@ -440,6 +441,7 @@ private struct ShellPaneTreeLayoutView: View {
 private struct ShellTerminalLeafView: View {
     let pane: ShellPane
     let bootProfile: AlanShellBootProfile?
+    let isSelected: Bool
     let runtimeRegistry: TerminalRuntimeRegistry
     let onSelect: () -> Void
     let onRuntimeUpdate: (TerminalHostRuntimeSnapshot) -> Void
@@ -449,6 +451,7 @@ private struct ShellTerminalLeafView: View {
         TerminalHostView(
             pane: pane,
             bootProfile: bootProfile,
+            isSelected: isSelected,
             runtimeRegistry: runtimeRegistry,
             onRuntimeUpdate: onRuntimeUpdate,
             onMetadataUpdate: onMetadataUpdate

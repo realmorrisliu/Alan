@@ -97,6 +97,7 @@ final class TerminalRuntimeRegistry: ObservableObject {
     func hostView(
         for pane: ShellPane?,
         bootProfile: AlanShellBootProfile?,
+        isSelected: Bool,
         onRuntimeUpdate: @escaping (TerminalHostRuntimeSnapshot) -> Void,
         onMetadataUpdate: @escaping (TerminalPaneMetadataSnapshot) -> Void
     ) -> AlanTerminalHostNSView {
@@ -116,6 +117,7 @@ final class TerminalRuntimeRegistry: ObservableObject {
         hostView.configure(
             pane: pane,
             bootProfile: bootProfile,
+            isSelected: isSelected,
             onRuntimeUpdate: onRuntimeUpdate,
             onMetadataUpdate: onMetadataUpdate
         )

@@ -66,6 +66,16 @@ require_pattern \
     "terminal teardown must be idempotent"
 
 require_pattern \
+    "clients/apple/AlanNative/TerminalHostView.swift" \
+    "let isSelected: Bool" \
+    "terminal hosts must know whether their pane is selected"
+
+require_pattern \
+    "clients/apple/AlanNative/TerminalHostView.swift" \
+    "guard isSelected, pane != nil else \\{ return \\}" \
+    "terminal auto-focus must be gated to the selected pane"
+
+require_pattern \
     "clients/apple/AlanNative/GhosttyLiveHost.swift" \
     "let visible = .*occlusionState\\.contains\\(\\.visible\\) \\?\\? false" \
     "Ghostty occlusion bridge must derive the visible flag from NSWindow occlusion state"
