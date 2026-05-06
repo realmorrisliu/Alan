@@ -66,6 +66,16 @@ require_pattern \
     "terminal teardown must be idempotent"
 
 require_pattern \
+    "clients/apple/AlanNative/GhosttyLiveHost.swift" \
+    "let visible = .*occlusionState\\.contains\\(\\.visible\\) \\?\\? false" \
+    "Ghostty occlusion bridge must derive the visible flag from NSWindow occlusion state"
+
+require_pattern \
+    "clients/apple/AlanNative/GhosttyLiveHost.swift" \
+    "ghostty_surface_set_occlusion\\(surface, visible\\)" \
+    "Ghostty occlusion bridge must pass visible=true for visible windows"
+
+require_pattern \
     "clients/apple/AlanNative/ShellHostController.swift" \
     "struct ShellWindowContext" \
     "shell host must expose a per-window context"
