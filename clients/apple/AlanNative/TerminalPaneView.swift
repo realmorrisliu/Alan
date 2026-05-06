@@ -410,7 +410,7 @@ private struct ShellPaneTreeLayoutView: View {
                     bootProfile: host.bootProfile(for: pane),
                     isSelected: host.selectedPane?.paneID == pane.paneID,
                     runtimeRegistry: host.terminalRuntimeRegistry,
-                    onSelect: { host.focus(paneID: pane.paneID) },
+                    activationDelegate: host,
                     onRuntimeUpdate: host.updateTerminalRuntime,
                     onMetadataUpdate: { metadata in
                         host.updateTerminalMetadata(metadata, for: pane.paneID)
@@ -443,7 +443,7 @@ private struct ShellTerminalLeafView: View {
     let bootProfile: AlanShellBootProfile?
     let isSelected: Bool
     let runtimeRegistry: TerminalRuntimeRegistry
-    let onSelect: () -> Void
+    let activationDelegate: TerminalHostActivationDelegate?
     let onRuntimeUpdate: (TerminalHostRuntimeSnapshot) -> Void
     let onMetadataUpdate: (TerminalPaneMetadataSnapshot) -> Void
 
@@ -453,6 +453,7 @@ private struct ShellTerminalLeafView: View {
             bootProfile: bootProfile,
             isSelected: isSelected,
             runtimeRegistry: runtimeRegistry,
+            activationDelegate: activationDelegate,
             onRuntimeUpdate: onRuntimeUpdate,
             onMetadataUpdate: onMetadataUpdate
         )
@@ -472,8 +473,6 @@ private struct ShellTerminalLeafView: View {
             radius: 18,
             y: 8
         )
-        .contentShape(Rectangle())
-        .onTapGesture(perform: onSelect)
     }
 }
 

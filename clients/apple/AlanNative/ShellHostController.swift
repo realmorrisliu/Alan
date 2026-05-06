@@ -72,7 +72,7 @@ struct ShellWindowContext {
 }
 
 @MainActor
-final class ShellHostController: ObservableObject {
+final class ShellHostController: ObservableObject, TerminalHostActivationDelegate {
     enum StartupMode {
         case fresh
         case restorePrevious
@@ -323,6 +323,10 @@ final class ShellHostController: ObservableObject {
     func focus(paneID: String) {
         guard let result = try? shellState.focusingPane(paneID) else { return }
         applyMutationResult(result)
+    }
+
+    func terminalHostDidRequestActivation(paneID: String) {
+        focus(paneID: paneID)
     }
 
     @discardableResult

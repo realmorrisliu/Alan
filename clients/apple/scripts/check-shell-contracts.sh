@@ -91,6 +91,41 @@ require_pattern \
     "terminal auto-focus must coalesce pending first-responder requests"
 
 require_pattern \
+    "clients/apple/AlanNative/TerminalHostView.swift" \
+    "protocol TerminalHostActivationDelegate: AnyObject" \
+    "terminal activation must use a narrow class-bound delegate"
+
+require_pattern \
+    "clients/apple/AlanNative/ShellHostController.swift" \
+    "TerminalHostActivationDelegate" \
+    "shell host controller must own terminal activation requests"
+
+require_pattern \
+    "clients/apple/AlanNative/TerminalRuntimeRegistry.swift" \
+    "activationDelegate: TerminalHostActivationDelegate\\?" \
+    "terminal runtime registry must thread the weak activation boundary"
+
+require_pattern \
+    "clients/apple/AlanNative/TerminalHostView.swift" \
+    "weak var activationDelegate" \
+    "registry-owned terminal host views must not strongly retain activation owners"
+
+require_pattern \
+    "clients/apple/AlanNative/TerminalHostView.swift" \
+    "terminalHostDidRequestActivation\\(paneID:" \
+    "terminal host mouse events must request pane activation through the delegate"
+
+require_pattern \
+    "clients/apple/AlanNative/TerminalHostView.swift" \
+    "private let overlayCard = AlanTerminalPassiveOverlayView\\(\\)" \
+    "passive terminal overlays must use a non-interactive overlay view"
+
+reject_pattern \
+    "clients/apple/AlanNative/TerminalPaneView.swift" \
+    "onTapGesture\\(perform: onSelect\\)" \
+    "terminal leaf selection must not be owned by a SwiftUI tap wrapper"
+
+require_pattern \
     "clients/apple/AlanNative/MacShellRootView.swift" \
     "window\\.isMovableByWindowBackground = true" \
     "hidden-titlebar shell windows must make non-interactive background regions draggable"
@@ -106,9 +141,19 @@ require_pattern \
     "fallback terminal canvas views must explicitly opt out of background window dragging"
 
 require_pattern \
+    "clients/apple/AlanNative/TerminalHostView.swift" \
+    "override func hitTest\\(_ point: NSPoint\\) -> NSView\\? \\{ nil \\}" \
+    "fallback terminal canvas views must be transparent to AppKit hit-testing"
+
+require_pattern \
     "clients/apple/AlanNative/GhosttyLiveHost.swift" \
     "override var mouseDownCanMoveWindow: Bool \\{ false \\}" \
     "Ghostty canvas views must not allow terminal pane clicks to drag the shell window"
+
+require_pattern \
+    "clients/apple/AlanNative/GhosttyLiveHost.swift" \
+    "override func hitTest\\(_ point: NSPoint\\) -> NSView\\? \\{ nil \\}" \
+    "Ghostty canvas views must be transparent to AppKit hit-testing"
 
 reject_pattern \
     "clients/apple/AlanNative/MacShellRootView.swift" \
