@@ -7,8 +7,8 @@
 
 ## 2. Scrollback And Rendering State
 
-- [ ] 2.1 Add an AppKit scroll view adapter for terminal scrollback and native scrollbar synchronization.
-- [ ] 2.2 Handle alternate-screen and terminal mouse-mode interactions with scroll input.
+- [x] 2.1 Add an AppKit scroll view adapter for terminal scrollback and native scrollbar synchronization.
+- [x] 2.2 Handle alternate-screen and terminal mouse-mode interactions with scroll input.
 - [ ] 2.3 Project renderer health, input readiness, readonly state, and child-exit state into pane metadata.
 - [x] 2.4 Add truthful fallback UI for renderer failure, missing surface, input-not-ready, and child-exit states.
 
@@ -16,7 +16,7 @@
 
 - [x] 3.1 Normalize keyDown, keyUp, flagsChanged, performKeyEquivalent, marked text, preedit, commit, and cancellation paths.
 - [ ] 3.2 Normalize primary, secondary, other-button, drag, movement, hover, pressure, and scroll events against terminal mouse modes.
-- [ ] 3.3 Implement native selection, copy, paste, bracketed-paste-aware delivery when available, and paste failure reporting.
+- [x] 3.3 Implement native selection, copy, paste, bracketed-paste-aware delivery when available, and paste failure reporting.
 - [x] 3.4 Add pane-scoped terminal search with find, next, previous, match status, and dismissal behavior.
 - [x] 3.5 Add compact user-facing terminal overlays while keeping raw surface diagnostics in the inspector debug layer.
 

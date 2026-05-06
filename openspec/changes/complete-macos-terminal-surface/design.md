@@ -126,15 +126,35 @@ surface adapter after runtime ownership is moved behind a stable service.
 - Added control-plane delivery rejection for child-exit and renderer-failure
   states so remote text delivery does not report false success.
 
+### 2026-05-06 Native Scroll And Clipboard Pass
+
+- Added `AlanTerminalNativeScrollViewAdapter`, modeled after Ghostty's
+  `SurfaceScrollView` shape: an `NSScrollView` owns native scrollbar behavior
+  while the terminal canvas remains the visible renderer.
+- Wired Ghostty `GHOSTTY_ACTION_SCROLLBAR` callbacks into pane-scoped
+  `AlanTerminalScrollbackMetrics`, and route normal-buffer native scrolls back
+  to Ghostty with `scroll_to_row:<row>`.
+- Kept alternate-screen and terminal mouse-reporting scroll input routed to the
+  terminal surface instead of exposing stale normal-buffer scrollbar state.
+- Added controller-owned copy and paste paths. Copy reads terminal selection
+  through a selection engine and writes through a pasteboard writer seam; paste
+  uses the existing failure-aware surface delivery path so closed or not-ready
+  panes do not report success.
+- Added focused fake-surface tests for scrollback callback routing, native row
+  scroll action dispatch, alternate-screen scroll routing, selection copy, and
+  paste non-delivery.
+
 Remaining unsupported Ghostty parity after this pass:
 
-- There is no AppKit `NSScrollView` bridge yet; scrollback metrics are modeled
-  and tested, but live scrollbar synchronization is not wired to Ghostty.
 - Alternate-screen and application mouse-mode detection are not yet sourced from
-  live Ghostty callbacks; scroll/mouse events are centralized but still forward
-  through the existing Ghostty event API.
-- Selection and paste continue to use the existing Ghostty text forwarding path;
-  bracketed-paste-aware delivery is not exposed separately yet.
+  live Ghostty callbacks; the controller honors the modeled mode, but production
+  mode updates still need a Ghostty callback source.
+- Primary, secondary, other-button, drag, movement, hover, and pressure events
+  are still forwarded through the existing Ghostty event API; a fuller mouse
+  adapter pass remains.
+- Paste uses the service-owned control-text delivery path, which Ghostty treats
+  as paste-like input, but a dedicated bracketed-paste API is not exposed
+  separately yet.
 - URL hover, secure input, and terminal application mode diagnostics remain
   placeholders until the needed Ghostty surface callbacks are available.
 

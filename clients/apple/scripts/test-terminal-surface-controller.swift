@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import AppKit
 
 #if os(macOS)
 @main
@@ -18,8 +19,10 @@ private enum TerminalSurfaceControllerTests {
         verifiesInputCommandRouting()
         verifiesPaneScopedSearchState()
         verifiesSearchActionsReachSurfaceEngine()
+        verifiesScrollbackActionsReachSurfaceEngine()
         verifiesSurfaceSnapshotEqualityIgnoresTimestamp()
         verifiesClipboardDeliveryStates()
+        verifiesSelectionCopyAndPasteUseController()
         verifiesMetadataOverlayProjection()
         print("Terminal surface controller tests passed.")
     }
@@ -150,6 +153,60 @@ private enum TerminalSurfaceControllerTests {
         )
     }
 
+    private static func verifiesScrollbackActionsReachSurfaceEngine() {
+        let handle = FakeAlanTerminalSurfaceHandle(paneID: "pane_1")
+        let controller = AlanTerminalSurfaceController()
+        var stateChangeCount = 0
+        controller.onSurfaceStateChange = {
+            stateChangeCount += 1
+        }
+        controller.bind(surfaceHandle: handle, paneID: "pane_1")
+
+        handle.emitScrollbackUpdate(
+            AlanTerminalScrollbackMetrics(
+                totalRows: 220,
+                visibleRows: 40,
+                firstVisibleRow: 120,
+                mode: .normalBuffer
+            )
+        )
+
+        expect(controller.scrollbackAdapter.state.nativeScrollbarVisible, "Ghostty scrollbar updates must expose native scrollbar state")
+        expect(
+            controller.scrollbackAdapter.state.thumbRange == 120..<160,
+            "Ghostty scrollbar updates must set the visible terminal row range"
+        )
+        expect(stateChangeCount == 1, "scrollbar updates must notify host UI/runtime refresh")
+
+        let normalRoute = controller.routeScroll(
+            AlanTerminalScrollInput(deltaX: 0, deltaY: -8, precise: true)
+        )
+        expect(
+            normalRoute == .nativeScroll(row: 128),
+            "normal-buffer scroll input must become a native row scroll"
+        )
+        expect(
+            handle.scrollActions == ["scroll_to_row:128"],
+            "native row scroll must reach the terminal surface"
+        )
+
+        handle.emitScrollbackUpdate(
+            AlanTerminalScrollbackMetrics(
+                totalRows: 220,
+                visibleRows: 40,
+                firstVisibleRow: 120,
+                mode: .alternateScreen
+            )
+        )
+        let alternateRoute = controller.routeScroll(
+            AlanTerminalScrollInput(deltaX: 0, deltaY: -8, precise: true)
+        )
+        expect(
+            alternateRoute == .terminalScroll,
+            "alternate-screen scroll input must stay routed to the terminal app"
+        )
+    }
+
     private static func verifiesSurfaceSnapshotEqualityIgnoresTimestamp() {
         let older = AlanTerminalSurfaceStateSnapshot.placeholder
         let newer = AlanTerminalSurfaceStateSnapshot(
@@ -182,6 +239,35 @@ private enum TerminalSurfaceControllerTests {
         let rejected = clipboard.paste("again")
         expect(rejected.applied == false, "closed paste must not report success")
         expect(rejected.errorCode == "terminal_clipboard_unavailable", "closed paste must use a stable clipboard error")
+    }
+
+    private static func verifiesSelectionCopyAndPasteUseController() {
+        let handle = FakeAlanTerminalSurfaceHandle(paneID: "pane_1")
+        handle.selectedText = "selected terminal text"
+        let controller = AlanTerminalSurfaceController()
+        controller.bind(surfaceHandle: handle, paneID: "pane_1")
+
+        let pasteboard = RecordingTerminalPasteboardWriter()
+        expect(
+            controller.copySelection(to: pasteboard),
+            "controller copy must write selected terminal text to the pasteboard"
+        )
+        expect(
+            pasteboard.string == "selected terminal text",
+            "copied terminal selection must be available as pasteboard text"
+        )
+
+        let pasteResult = controller.paste("pasted text")
+        expect(pasteResult.applied, "controller paste must use failure-aware delivery")
+        expect(handle.deliveredText.last == "pasted text", "controller paste must reach the surface handle")
+
+        _ = handle.teardown()
+        let rejected = controller.paste("after close")
+        expect(rejected.applied == false, "closed controller paste must not report success")
+        expect(
+            rejected.errorCode == "terminal_clipboard_unavailable",
+            "closed controller paste must use the stable clipboard error"
+        )
     }
 
     private static func verifiesMetadataOverlayProjection() {
@@ -225,6 +311,16 @@ private enum TerminalSurfaceControllerTests {
             fputs("error: \(message)\n", stderr)
             exit(1)
         }
+    }
+}
+
+@MainActor
+private final class RecordingTerminalPasteboardWriter: AlanTerminalPasteboardWriting {
+    private(set) var string: String?
+
+    func writeString(_ text: String) -> Bool {
+        string = text
+        return true
     }
 }
 #endif

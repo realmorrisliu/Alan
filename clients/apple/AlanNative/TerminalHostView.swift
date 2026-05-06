@@ -78,7 +78,8 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
-        surfaceController.onSearchStateChange = { [weak self] in
+        surfaceController.onSurfaceStateChange = { [weak self] in
+            self?.syncNativeScrollback()
             self?.syncOverlayVisibility()
             self?.publishRuntimeSnapshot()
         }
@@ -164,6 +165,7 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
     override func layout() {
         super.layout()
         synchronizeLiveHost()
+        syncNativeScrollback()
         publishRuntimeSnapshot()
     }
 
@@ -216,6 +218,7 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
         syncStatusBadge()
         syncOverlayVisibility()
         synchronizeLiveHost()
+        syncNativeScrollback()
         if shouldAutoFocusAfterConfigure(
             previousPaneID: previousPaneID,
             paneID: pane?.paneID,
@@ -296,15 +299,17 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
 
         [statusBadge, titleLabel, subtitleLabel, commandLabel, footerLabel].forEach(bodyStack.addArrangedSubview)
 
-        addSubview(canvasView)
+        let nativeScrollView = surfaceController.nativeScrollViewAdapter.scrollView
+        surfaceController.nativeScrollViewAdapter.attachCanvasView(canvasView)
+        addSubview(nativeScrollView)
         addSubview(overlayCard)
         overlayCard.addSubview(bodyStack)
 
         NSLayoutConstraint.activate([
-            canvasView.topAnchor.constraint(equalTo: topAnchor),
-            canvasView.leadingAnchor.constraint(equalTo: leadingAnchor),
-            canvasView.trailingAnchor.constraint(equalTo: trailingAnchor),
-            canvasView.bottomAnchor.constraint(equalTo: bottomAnchor),
+            nativeScrollView.topAnchor.constraint(equalTo: topAnchor),
+            nativeScrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            nativeScrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            nativeScrollView.bottomAnchor.constraint(equalTo: bottomAnchor),
 
             overlayCard.centerXAnchor.constraint(equalTo: centerXAnchor),
             overlayCard.centerYAnchor.constraint(equalTo: centerYAnchor),
@@ -487,6 +492,10 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
             }
         )
 #endif
+    }
+
+    private func syncNativeScrollback() {
+        surfaceController.syncNativeScrollView(viewportSize: bounds.size)
     }
 
     private func synchronizeRendererSnapshot(with bootProfile: AlanShellBootProfile?) {
@@ -708,6 +717,24 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
 #if canImport(GhosttyKit)
         guard surfaceController.isSurfaceReady == true else { return super.scrollWheel(with: event) }
 
+        let scrollRoute = surfaceController.routeScroll(
+            AlanTerminalScrollInput(
+                deltaX: event.scrollingDeltaX,
+                deltaY: event.scrollingDeltaY,
+                precise: event.hasPreciseScrollingDeltas
+            )
+        )
+        switch scrollRoute {
+        case .nativeScroll:
+            syncNativeScrollback()
+            publishRuntimeSnapshot()
+            return
+        case .ignored:
+            return
+        case .terminalScroll:
+            break
+        }
+
         var x = event.scrollingDeltaX
         var y = event.scrollingDeltaY
         let precision = event.hasPreciseScrollingDeltas
@@ -915,12 +942,7 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
     }
 
     @objc func copy(_ sender: Any?) {
-#if canImport(GhosttyKit)
-        guard let text = surfaceController.readSelectionText(), !text.isEmpty else { return }
-        let pasteboard = NSPasteboard.general
-        pasteboard.clearContents()
-        pasteboard.setString(text, forType: .string)
-#endif
+        _ = surfaceController.copySelection(to: .general)
     }
 
     @objc func cut(_ sender: Any?) {
@@ -928,10 +950,9 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
     }
 
     @objc func paste(_ sender: Any?) {
-#if canImport(GhosttyKit)
         guard let text = NSPasteboard.general.string(forType: .string), !text.isEmpty else { return }
-        surfaceController.sendText(text)
-#endif
+        _ = surfaceController.paste(text)
+        publishRuntimeSnapshot()
     }
 
     private func modsFromEvent(_ event: NSEvent) -> ghostty_input_mods_e {
