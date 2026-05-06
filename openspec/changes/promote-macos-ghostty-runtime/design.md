@@ -135,3 +135,12 @@ code change.
   queue?
 - How much of `converge-terminal-event-ownership` should be archived into this
   change versus kept as a small prerequisite PR?
+
+## Implementation Notes
+
+- The first service-backed implementation keeps `AlanGhosttyLiveHost` as the
+  low-level Ghostty C API adapter for app/config/surface calls, but it is no
+  longer view-owned. `AlanWindowTerminalRuntimeService` owns the pane handle
+  table, and each service-owned `AlanGhosttySurfaceHandle` owns its adapter.
+  Extracting a separate shared Ghostty app-handle object remains a follow-up
+  option if later multi-surface Ghostty API work needs it.

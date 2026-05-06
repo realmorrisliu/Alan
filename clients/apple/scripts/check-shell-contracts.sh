@@ -41,6 +41,46 @@ require_pattern \
     "terminal runtimes must expose a handle protocol"
 
 require_pattern \
+    "clients/apple/AlanNative/TerminalRuntimeService.swift" \
+    "protocol AlanGhosttyProcessBootstrap: AnyObject" \
+    "Ghostty initialization must have an injectable process bootstrap boundary"
+
+require_pattern \
+    "clients/apple/AlanNative/TerminalRuntimeService.swift" \
+    "final class AlanWindowTerminalRuntimeService" \
+    "terminal runtime services must be window-scoped production owners"
+
+require_pattern \
+    "clients/apple/AlanNative/TerminalRuntimeService.swift" \
+    "protocol AlanTerminalSurfaceHandle: AnyObject" \
+    "terminal panes must be represented by stable service-owned surface handles"
+
+require_pattern \
+    "clients/apple/AlanNative/TerminalRuntimeService.swift" \
+    "final class FakeAlanTerminalSurfaceHandle" \
+    "runtime service tests must have fake pane surface handles"
+
+require_pattern \
+    "clients/apple/scripts/test-terminal-runtime-service.sh" \
+    "TerminalRuntimeService.swift" \
+    "runtime service behavior tests must compile the service boundary"
+
+require_pattern \
+    "clients/apple/AlanNative/TerminalRuntimeRegistry.swift" \
+    "private let runtimeService: AlanTerminalRuntimeService" \
+    "terminal runtime registry must delegate runtime authority to the service"
+
+require_pattern \
+    "clients/apple/AlanNative/ShellControlPlane.swift" \
+    "deliveryCode: String?" \
+    "pane.send_text responses must expose service delivery state"
+
+require_pattern \
+    "clients/apple/AlanNative/ShellHostController.swift" \
+    "runtimePhase: delivery.runtimePhase" \
+    "pane.send_text responses must expose the service runtime phase"
+
+require_pattern \
     "clients/apple/AlanNative/TerminalRuntimeRegistry.swift" \
     "final class MockTerminalRuntimeHandle" \
     "terminal runtime delivery must have a mock handle for contract tests"

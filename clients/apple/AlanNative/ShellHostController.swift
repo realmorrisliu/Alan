@@ -106,6 +106,8 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
                 tabID: command.tabID,
                 paneID: command.paneID,
                 acceptedBytes: nil,
+                deliveryCode: nil,
+                runtimePhase: nil,
                 latestEventID: nil,
                 errorCode: "host_unavailable",
                 errorMessage: "Alan Shell host is unavailable."
@@ -151,6 +153,13 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
             shellState.panes.map(\.paneID).forEach(primeBootContext)
         }
         synchronizeSelection()
+    }
+
+    deinit {
+        let terminalRuntimeRegistry = terminalRuntimeRegistry
+        Task { @MainActor in
+            terminalRuntimeRegistry.releaseAllRuntimes()
+        }
     }
 
     static func live(
@@ -1036,6 +1045,8 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         tabID: String? = nil,
         paneID: String? = nil,
         acceptedBytes: Int? = nil,
+        deliveryCode: String? = nil,
+        runtimePhase: String? = nil,
         latestEventID: String? = nil,
         errorCode: String? = nil,
         errorMessage: String? = nil
@@ -1057,6 +1068,8 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
             tabID: tabID,
             paneID: paneID,
             acceptedBytes: acceptedBytes,
+            deliveryCode: deliveryCode,
+            runtimePhase: runtimePhase,
             latestEventID: latestEventID,
             errorCode: errorCode,
             errorMessage: errorMessage
@@ -1565,6 +1578,8 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
                 tabID: targetPane.tabID,
                 paneID: paneID,
                 acceptedBytes: delivery.acceptedBytes,
+                deliveryCode: delivery.code.rawValue,
+                runtimePhase: delivery.runtimePhase,
                 errorCode: delivery.errorCode,
                 errorMessage: delivery.errorMessage
             )

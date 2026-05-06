@@ -107,6 +107,8 @@ struct AlanShellControlResponse: Codable {
     let tabID: String?
     let paneID: String?
     let acceptedBytes: Int?
+    let deliveryCode: String?
+    let runtimePhase: String?
     let latestEventID: String?
     let errorCode: String?
     let errorMessage: String?
@@ -128,6 +130,8 @@ struct AlanShellControlResponse: Codable {
         case tabID = "tab_id"
         case paneID = "pane_id"
         case acceptedBytes = "accepted_bytes"
+        case deliveryCode = "delivery_code"
+        case runtimePhase = "runtime_phase"
         case latestEventID = "latest_event_id"
         case errorCode = "error_code"
         case errorMessage = "error_message"
@@ -852,6 +856,8 @@ private enum AlanShellLocalCommandExecutor {
         tabID: String? = nil,
         paneID: String? = nil,
         acceptedBytes: Int? = nil,
+        deliveryCode: String? = nil,
+        runtimePhase: String? = nil,
         latestEventID: String? = nil,
         errorCode: String? = nil,
         errorMessage: String? = nil
@@ -873,6 +879,8 @@ private enum AlanShellLocalCommandExecutor {
             tabID: tabID,
             paneID: paneID,
             acceptedBytes: acceptedBytes,
+            deliveryCode: deliveryCode,
+            runtimePhase: runtimePhase,
             latestEventID: latestEventID,
             errorCode: errorCode,
             errorMessage: errorMessage
@@ -1358,6 +1366,8 @@ final class AlanShellSocketServer {
                 tabID: command.tabID,
                 paneID: command.paneID,
                 acceptedBytes: nil,
+                deliveryCode: TerminalRuntimeDeliveryCode.timeout.rawValue,
+                runtimePhase: nil,
                 latestEventID: nil,
                 errorCode: "command_timeout",
                 errorMessage: "Alan Shell control command timed out."
@@ -1388,6 +1398,8 @@ final class AlanShellSocketServer {
                 tabID: command.tabID,
                 paneID: command.paneID,
                 acceptedBytes: nil,
+                deliveryCode: nil,
+                runtimePhase: nil,
                 latestEventID: nil,
                 errorCode: "host_unavailable",
                 errorMessage: "Alan Shell host is unavailable."
@@ -1660,6 +1672,8 @@ final class AlanShellControlPlane {
             tabID: nil,
             paneID: nil,
             acceptedBytes: nil,
+            deliveryCode: nil,
+            runtimePhase: nil,
             latestEventID: events.last?.eventID,
             errorCode: nil,
             errorMessage: nil
@@ -1683,6 +1697,9 @@ final class AlanShellControlPlane {
         }
         if let errorMessage = delivery.errorMessage {
             payload["error_message"] = .string(errorMessage)
+        }
+        if let runtimePhase = delivery.runtimePhase {
+            payload["runtime_phase"] = .string(runtimePhase)
         }
 
         appendEvent(
