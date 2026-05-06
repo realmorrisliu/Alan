@@ -23,6 +23,8 @@ final class AlanGhosttyLiveHost: NSObject {
     private var surface: ghostty_surface_t?
     private var bootProfile: AlanShellBootProfile?
     private var envStorage: [(UnsafeMutablePointer<CChar>, UnsafeMutablePointer<CChar>)] = []
+    private let tickScheduleLock = NSLock()
+    private var tickScheduled = false
     private var appObservers: [NSObjectProtocol] = []
     private var didEmitFirstRefresh = false
     private var diagnostics = TerminalRendererSnapshot.placeholder
@@ -535,8 +537,11 @@ final class AlanGhosttyLiveHost: NSObject {
     }
 
     private func scheduleTick() {
+        guard markTickScheduledIfNeeded() else { return }
+
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
+            self.clearScheduledTick()
             if let app = self.app {
                 ghostty_app_tick(app)
             }
@@ -544,6 +549,20 @@ final class AlanGhosttyLiveHost: NSObject {
                 ghostty_surface_refresh(surface)
             }
         }
+    }
+
+    private func markTickScheduledIfNeeded() -> Bool {
+        tickScheduleLock.lock()
+        defer { tickScheduleLock.unlock() }
+        guard !tickScheduled else { return false }
+        tickScheduled = true
+        return true
+    }
+
+    private func clearScheduledTick() {
+        tickScheduleLock.lock()
+        tickScheduled = false
+        tickScheduleLock.unlock()
     }
 
     private func teardownSurface() {

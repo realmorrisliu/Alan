@@ -121,6 +121,21 @@ require_pattern \
     "Ghostty wakeup ticks must look up the current surface before refreshing"
 
 require_pattern \
+    "clients/apple/AlanNative/GhosttyLiveHost.swift" \
+    "private var tickScheduled = false" \
+    "Ghostty wakeup ticks must be coalesced so repeated wakeups do not flood the main queue"
+
+require_pattern \
+    "clients/apple/AlanNative/GhosttyLiveHost.swift" \
+    "guard markTickScheduledIfNeeded\\(\\) else \\{ return \\}" \
+    "Ghostty wakeup ticks must skip scheduling when a tick is already pending"
+
+require_pattern \
+    "clients/apple/AlanNative/GhosttyLiveHost.swift" \
+    "clearScheduledTick\\(\\)" \
+    "Ghostty wakeup ticks must clear their pending marker when the scheduled tick begins"
+
+require_pattern \
     "clients/apple/AlanNative/ShellHostController.swift" \
     "struct ShellWindowContext" \
     "shell host must expose a per-window context"
