@@ -7,8 +7,6 @@ import OSLog
 import QuartzCore
 
 final class AlanGhosttyLiveHost: NSObject {
-    private static var didInitializeLibrary = false
-
     var onDiagnosticsChange: ((TerminalRendererSnapshot) -> Void)?
     var onMetadataChange: ((TerminalPaneMetadataSnapshot) -> Void)?
 
@@ -52,9 +50,7 @@ final class AlanGhosttyLiveHost: NSObject {
             return
         }
 
-        guard ensureLibraryInitialized(),
-              ensureApp()
-        else {
+        guard ensureApp() else {
             return
         }
 
@@ -208,83 +204,6 @@ final class AlanGhosttyLiveHost: NSObject {
             detail: nil
         )
         resetMetadata()
-    }
-
-    private func ensureLibraryInitialized() -> Bool {
-        if Self.didInitializeLibrary {
-            return true
-        }
-
-        if getenv("NO_COLOR") != nil {
-            unsetenv("NO_COLOR")
-        }
-        scrubInheritedTerminalEnvironment()
-        configureGhosttyProcessEnvironment()
-
-        let result = ghostty_init(UInt(CommandLine.argc), CommandLine.unsafeArgv)
-        guard result == GHOSTTY_SUCCESS else {
-            transition(
-                kind: .ghosttyLive,
-                phase: .failed,
-                summary: "ghostty_init failed.",
-                detail: "libghostty returned \(result).",
-                failureReason: "Ghostty library initialization failed."
-            )
-            logger.error("ghostty_init failed with result \(result)")
-            return false
-        }
-
-        Self.didInitializeLibrary = true
-        transition(
-            kind: .ghosttyLive,
-            phase: .libraryReady,
-            summary: "Ghostty library initialized.",
-            detail: "libghostty runtime is ready."
-        )
-        return true
-    }
-
-    private func configureGhosttyProcessEnvironment() {
-        let integration = GhosttyIntegrationStatus.discover()
-        if let resourcesPath = integration.resourcesPath {
-            let shouldOverride = getenv("ALAN_GHOSTTY_RESOURCES_DIR") != nil
-                || getenv("GHOSTTY_RESOURCES_DIR") == nil
-            if shouldOverride {
-                _ = resourcesPath.withCString { path in
-                    setenv("GHOSTTY_RESOURCES_DIR", path, 1)
-                }
-                logger.info("Using Ghostty resources directory: \(resourcesPath)")
-            }
-        }
-    }
-
-    private func scrubInheritedTerminalEnvironment() {
-        let exactKeys = [
-            "TERM",
-            "TERM_PROGRAM",
-            "TERM_PROGRAM_VERSION",
-            "COLORTERM",
-            "TERMINFO",
-            "TERMINFO_DIRS",
-            "VTE_VERSION",
-            "PWD",
-            "SHLVL",
-            "_",
-            "STARSHIP_SHELL",
-            "STARSHIP_SESSION_KEY",
-            "RBENV_SHELL",
-            "GHOSTTY_SURFACE_ID",
-            "GHOSTTY_SHELL_FEATURES",
-            "GHOSTTY_SHELL_INTEGRATION_XDG_DIR",
-            "GHOSTTY_BIN_DIR",
-        ]
-        exactKeys.forEach { unsetenv($0) }
-
-        for key in ProcessInfo.processInfo.environment.keys {
-            if key.hasPrefix("WARP_") || key.hasPrefix("CODEX_") {
-                unsetenv(key)
-            }
-        }
     }
 
     private func ensureApp() -> Bool {

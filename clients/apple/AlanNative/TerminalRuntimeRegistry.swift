@@ -3,53 +3,6 @@ import SwiftUI
 #if os(macOS)
 import AppKit
 
-enum TerminalRuntimeDeliveryCode: String, Codable, Equatable {
-    case accepted
-    case queued
-    case rejected
-    case missingTarget = "missing_target"
-    case unavailableRuntime = "unavailable_runtime"
-    case timeout
-}
-
-struct TerminalRuntimeDeliveryResult: Codable, Equatable {
-    let code: TerminalRuntimeDeliveryCode
-    let acceptedBytes: Int
-    let errorCode: String?
-    let errorMessage: String?
-
-    var applied: Bool {
-        code == .accepted
-    }
-
-    static func accepted(byteCount: Int) -> TerminalRuntimeDeliveryResult {
-        TerminalRuntimeDeliveryResult(
-            code: .accepted,
-            acceptedBytes: byteCount,
-            errorCode: nil,
-            errorMessage: nil
-        )
-    }
-
-    static func rejected(errorCode: String, errorMessage: String) -> TerminalRuntimeDeliveryResult {
-        TerminalRuntimeDeliveryResult(
-            code: .rejected,
-            acceptedBytes: 0,
-            errorCode: errorCode,
-            errorMessage: errorMessage
-        )
-    }
-
-    static func unavailable(errorMessage: String) -> TerminalRuntimeDeliveryResult {
-        TerminalRuntimeDeliveryResult(
-            code: .unavailableRuntime,
-            acceptedBytes: 0,
-            errorCode: "terminal_runtime_unavailable",
-            errorMessage: errorMessage
-        )
-    }
-}
-
 @MainActor
 protocol TerminalRuntimeHandle: AnyObject {
     func sendControlText(_ text: String) -> TerminalRuntimeDeliveryResult
@@ -88,9 +41,14 @@ final class TerminalRuntimeRegistry: ObservableObject {
 
     private var hostViewsByPaneID: [String: AlanTerminalHostNSView] = [:]
     private var snapshotsByPaneID: [String: TerminalHostRuntimeSnapshot] = [:]
+    private let runtimeService: AlanTerminalRuntimeService
     private let mockDeliveryHandler: MockDeliveryHandler?
 
-    init(mockDeliveryHandler: MockDeliveryHandler? = nil) {
+    init(
+        runtimeService: AlanTerminalRuntimeService? = nil,
+        mockDeliveryHandler: MockDeliveryHandler? = nil
+    ) {
+        self.runtimeService = runtimeService ?? AlanWindowTerminalRuntimeService()
         self.mockDeliveryHandler = mockDeliveryHandler
     }
 
@@ -115,10 +73,18 @@ final class TerminalRuntimeRegistry: ObservableObject {
             hostView = AlanTerminalHostNSView()
         }
 
+        let surfaceHandle: AlanTerminalSurfaceHandle?
+        if let paneID = pane?.paneID {
+            surfaceHandle = runtimeService.surfaceHandle(for: paneID, bootProfile: bootProfile)
+        } else {
+            surfaceHandle = nil
+        }
+
         hostView.configure(
             pane: pane,
             bootProfile: bootProfile,
             isSelected: isSelected,
+            surfaceHandle: surfaceHandle,
             activationDelegate: activationDelegate,
             onRuntimeUpdate: onRuntimeUpdate,
             onMetadataUpdate: onMetadataUpdate
@@ -126,14 +92,23 @@ final class TerminalRuntimeRegistry: ObservableObject {
         return hostView
     }
 
+    func surfaceHandle(
+        for pane: ShellPane?,
+        bootProfile: AlanShellBootProfile?
+    ) -> AlanTerminalSurfaceHandle? {
+        guard let paneID = pane?.paneID else { return nil }
+        return runtimeService.surfaceHandle(for: paneID, bootProfile: bootProfile)
+    }
+
     func updateSnapshot(_ snapshot: TerminalHostRuntimeSnapshot) {
         guard let paneID = snapshot.paneID else { return }
         snapshotsByPaneID[paneID] = snapshot
+        runtimeService.existingSurfaceHandle(for: paneID)?.updateHostRuntimeSnapshot(snapshot)
     }
 
     func snapshot(for paneID: String?) -> TerminalHostRuntimeSnapshot {
         guard let paneID else { return .placeholder }
-        return snapshotsByPaneID[paneID] ?? .placeholder
+        return snapshotsByPaneID[paneID] ?? runtimeSnapshot(from: runtimeService.snapshot(for: paneID))
     }
 
     func releaseRuntimes(excluding activePaneIDs: Set<String>) {
@@ -147,29 +122,48 @@ final class TerminalRuntimeRegistry: ObservableObject {
         releaseRuntime(paneID)
     }
 
+    func releaseAllRuntimes() {
+        registeredPaneIDs.forEach { releaseRuntime($0) }
+    }
+
     func sendText(to paneID: String, text: String) -> TerminalRuntimeDeliveryResult {
         if let mockDeliveryHandler {
             return mockDeliveryHandler(paneID, text)
         }
 
-        guard let hostView = hostViewsByPaneID[paneID] else {
-            return .unavailable(
-                errorMessage: "The requested pane does not have a live terminal runtime."
-            )
-        }
-
-        return hostView.sendControlText(text)
+        return runtimeService.sendText(to: paneID, text: text)
     }
 
     var registeredPaneIDs: Set<String> {
-        Set(hostViewsByPaneID.keys)
+        Set(hostViewsByPaneID.keys).union(runtimeService.registeredPaneIDs)
     }
 
     private func releaseRuntime(_ paneID: String) {
         if let hostView = hostViewsByPaneID.removeValue(forKey: paneID) {
             hostView.teardownTerminalRuntime()
         }
+        runtimeService.finalizePane(paneID)
         snapshotsByPaneID.removeValue(forKey: paneID)
+    }
+
+    private func runtimeSnapshot(
+        from surfaceSnapshot: AlanTerminalSurfaceSnapshot?
+    ) -> TerminalHostRuntimeSnapshot {
+        guard let surfaceSnapshot else { return .placeholder }
+        return TerminalHostRuntimeSnapshot(
+            stage: .scaffold,
+            paneID: surfaceSnapshot.paneID,
+            tabID: nil,
+            logicalSize: .zero,
+            backingSize: .zero,
+            displayName: nil,
+            displayID: nil,
+            attachedWindowTitle: nil,
+            isFocused: false,
+            renderer: surfaceSnapshot.renderer,
+            paneMetadata: surfaceSnapshot.metadata,
+            lastUpdatedAt: surfaceSnapshot.lastUpdatedAt
+        )
     }
 }
 #endif

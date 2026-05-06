@@ -22,6 +22,7 @@
 		00000000000000000000000D /* ghostty-terminfo in Resources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000010D /* ghostty-terminfo */; };
 		00000000000000000000000E /* ShellControlPlane.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000010E /* ShellControlPlane.swift */; };
 		00000000000000000000000F /* TerminalRuntimeRegistry.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000010F /* TerminalRuntimeRegistry.swift */; };
+		000000000000000000000010 /* TerminalRuntimeService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000110 /* TerminalRuntimeService.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -41,6 +42,7 @@
 		00000000000000000000010D /* ghostty-terminfo */ = {isa = PBXFileReference; lastKnownFileType = folder; path = ghostty-terminfo; sourceTree = "<group>"; };
 		00000000000000000000010E /* ShellControlPlane.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShellControlPlane.swift; sourceTree = "<group>"; };
 		00000000000000000000010F /* TerminalRuntimeRegistry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalRuntimeRegistry.swift; sourceTree = "<group>"; };
+		000000000000000000000110 /* TerminalRuntimeService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalRuntimeService.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -77,6 +79,7 @@
 				000000000000000000000106 /* ShellHostController.swift */,
 				000000000000000000000107 /* TerminalPaneView.swift */,
 				000000000000000000000108 /* TerminalHostRuntime.swift */,
+				000000000000000000000110 /* TerminalRuntimeService.swift */,
 				000000000000000000000109 /* TerminalHostView.swift */,
 				00000000000000000000010F /* TerminalRuntimeRegistry.swift */,
 				00000000000000000000010A /* GhosttyLiveHost.swift */,
@@ -195,6 +198,7 @@
 				000000000000000000000008 /* TerminalHostRuntime.swift in Sources */,
 				000000000000000000000009 /* TerminalHostView.swift in Sources */,
 				00000000000000000000000A /* GhosttyLiveHost.swift in Sources */,
+				000000000000000000000010 /* TerminalRuntimeService.swift in Sources */,
 				00000000000000000000000E /* ShellControlPlane.swift in Sources */,
 				00000000000000000000000F /* TerminalRuntimeRegistry.swift in Sources */,
 			);
