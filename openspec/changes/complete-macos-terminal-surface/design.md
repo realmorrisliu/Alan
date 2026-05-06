@@ -106,6 +106,48 @@ surface adapter after runtime ownership is moved behind a stable service.
 5. Add unit tests and manual verification notes for IME, scrollback, mouse apps,
    search, paste, and failure states.
 
+## Implementation Notes
+
+### 2026-05-06 Surface Controller Pass
+
+- Added `AlanTerminalSurfaceController` plus input, scrollback metrics,
+  selection/clipboard, search-state, and metadata/overlay adapters.
+- Moved the existing AppKit key, mouse, scroll, selection, clipboard, and IME
+  forwarding paths through the controller while preserving the Ghostty host as
+  the renderer owner.
+- Added surface readiness state to host runtime snapshots so the inspector can
+  distinguish renderer health, input readiness, terminal mode, and process
+  state without exposing those details in the default terminal canvas.
+- Added compact user-facing overlays for search, missing surface, startup,
+  renderer failure, child exit, and read-only states.
+- Added control-plane delivery rejection for child-exit and renderer-failure
+  states so remote text delivery does not report false success.
+
+Remaining unsupported Ghostty parity after this pass:
+
+- There is no AppKit `NSScrollView` bridge yet; scrollback metrics are modeled
+  and tested, but live scrollbar synchronization is not wired to Ghostty.
+- Alternate-screen and application mouse-mode detection are not yet sourced from
+  live Ghostty callbacks; scroll/mouse events are centralized but still forward
+  through the existing Ghostty event API.
+- Search is pane-scoped with native command routing and overlay state, but it
+  does not yet drive Ghostty search highlights or real match counts.
+- Selection and paste continue to use the existing Ghostty text forwarding path;
+  bracketed-paste-aware delivery is not exposed separately yet.
+- URL hover, secure input, and terminal application mode diagnostics remain
+  placeholders until the needed Ghostty surface callbacks are available.
+
+Manual verification notes:
+
+- Built and launched the Debug `Alan.app`.
+- Verified a real shell prompt accepts input and prints command output.
+- Verified `Command-F` opens the terminal search overlay.
+- Verified typing while search is active updates the overlay instead of sending
+  text into the shell.
+- Verified `Escape` dismisses search and terminal input resumes.
+- Verified the inspector Debug view remains the place for raw shell/runtime
+  JSON, while the search overlay uses user-facing terminal language.
+
 ## Open Questions
 
 - Which Ghostty surface APIs expose search, URL hover, and renderer health

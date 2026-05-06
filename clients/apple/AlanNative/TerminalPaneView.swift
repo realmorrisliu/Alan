@@ -182,6 +182,22 @@ struct TerminalPaneView: View {
                 value: runtime.renderer.summary
             )
             TerminalInfoRow(
+                label: "Surface",
+                value: surfaceReadinessLabel(runtime.surfaceState.readiness)
+            )
+            TerminalInfoRow(
+                label: "Input",
+                value: runtime.surfaceState.inputReady ? "ready" : "not ready"
+            )
+            TerminalInfoRow(
+                label: "Mode",
+                value: runtime.surfaceState.terminalMode.rawValue.replacingOccurrences(of: "_", with: " ")
+            )
+            TerminalInfoRow(
+                label: "Renderer Health",
+                value: runtime.surfaceState.rendererHealth
+            )
+            TerminalInfoRow(
                 label: "cwd",
                 value: runtime.paneMetadata.workingDirectory ?? "pending"
             )
@@ -393,6 +409,15 @@ struct TerminalPaneView: View {
 
     private func rendererKindLabel(for kind: TerminalRendererKind) -> String {
         kind.rawValue.replacingOccurrences(of: "_", with: " ")
+    }
+
+    private func surfaceReadinessLabel(_ readiness: AlanTerminalSurfaceReadiness) -> String {
+        switch readiness {
+        case .ready:
+            return "ready"
+        case .unready(let reason):
+            return reason.rawValue.replacingOccurrences(of: "_", with: " ")
+        }
     }
 }
 

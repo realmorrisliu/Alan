@@ -55,16 +55,11 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
     private let commandLabel = NSTextField(wrappingLabelWithString: "")
     private let footerLabel = NSTextField(wrappingLabelWithString: "")
     private let statusBadge = NSTextField(labelWithString: "")
+    private let surfaceController = AlanTerminalSurfaceController()
 
     private var pane: ShellPane?
     private var bootProfile: AlanShellBootProfile?
     private var isSelected = false
-    private var surfaceHandle: AlanTerminalSurfaceHandle?
-#if canImport(GhosttyKit)
-    private var ghosttySurfaceHandle: AlanGhosttyEventSurfaceHandle? {
-        surfaceHandle as? AlanGhosttyEventSurfaceHandle
-    }
-#endif
     private weak var activationDelegate: TerminalHostActivationDelegate?
     private var runtimeObserver: ((TerminalHostRuntimeSnapshot) -> Void)?
     private var metadataObserver: ((TerminalPaneMetadataSnapshot) -> Void)?
@@ -183,10 +178,7 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
         self.pane = pane
         self.bootProfile = bootProfile
         self.isSelected = isSelected
-        if self.surfaceHandle !== surfaceHandle {
-            self.surfaceHandle?.detach()
-            self.surfaceHandle = surfaceHandle
-        }
+        surfaceController.bind(surfaceHandle: surfaceHandle, paneID: pane?.paneID)
         self.activationDelegate = activationDelegate
         runtimeObserver = onRuntimeUpdate
         metadataObserver = onMetadataUpdate
@@ -335,21 +327,7 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
             )
         }
 
-        guard let surfaceHandle else {
-            return .rejected(
-                errorCode: "terminal_runtime_unavailable",
-                errorMessage: "No service-owned terminal surface is attached to this host."
-            )
-        }
-
-        guard surfaceHandle.isSurfaceReady else {
-            return .rejected(
-                errorCode: "terminal_runtime_unavailable",
-                errorMessage: "The requested pane is not ready to receive terminal input."
-            )
-        }
-
-        return surfaceHandle.sendControlText(text)
+        return surfaceController.sendControlText(text)
     }
 
     func teardownTerminalRuntime() {
@@ -360,8 +338,7 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
         guard !hasTornDownRuntime else { return }
         hasTornDownRuntime = true
         removeWindowObservers()
-        surfaceHandle?.detach()
-        surfaceHandle = nil
+        surfaceController.detach()
     }
 
     private func installWindowObservers() {
@@ -434,6 +411,7 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
             isFocused: isFocused,
             renderer: rendererSnapshot,
             paneMetadata: paneMetadata,
+            surfaceState: surfaceController.surfaceStateSnapshot,
             lastUpdatedAt: .now
         )
         reportRuntimeIfNeeded(snapshot, runtimeObserver: runtimeObserver)
@@ -476,17 +454,20 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
             && lhs.isFocused == rhs.isFocused
             && lhs.renderer == rhs.renderer
             && lhs.paneMetadata == rhs.paneMetadata
+            && lhs.surfaceState.equalsIgnoringTimestamp(rhs.surfaceState)
     }
 
     private func synchronizeLiveHost() {
 #if canImport(GhosttyKit)
         guard let canvasView = canvasView as? AlanGhosttyCanvasView else { return }
-        surfaceHandle?.attach(
+        surfaceController.attach(
             to: canvasView,
+            bootProfile: bootProfile,
             focused: isFocused,
             onDiagnosticsChange: { [weak self] snapshot in
                 guard let self else { return }
                 rendererSnapshot = snapshot
+                surfaceController.updateRenderer(snapshot)
                 syncStatusBadge()
                 syncOverlayVisibility()
                 publishRuntimeSnapshot()
@@ -494,8 +475,10 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
             onMetadataChange: { [weak self] snapshot in
                 guard let self else { return }
                 paneMetadata = snapshot
+                surfaceController.updateMetadata(snapshot)
                 subtitleLabel.stringValue = snapshot.summary ?? subtitleLabel.stringValue
                 reportMetadataIfNeeded(snapshot)
+                syncOverlayVisibility()
                 publishRuntimeSnapshot()
             }
         )
@@ -547,12 +530,24 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
     }
 
     private func syncOverlayVisibility() {
-        let shouldHideOverlay =
-            bootProfile?.ghostty.isReady == true
-            && rendererSnapshot.kind == .ghosttyLive
-            && (rendererSnapshot.phase == .surfaceReady || rendererSnapshot.phase == .firstRefresh)
+        if let overlayState = surfaceController.overlayState(
+            renderer: rendererSnapshot,
+            metadata: paneMetadata,
+            bootProfile: bootProfile
+        ) {
+            statusBadge.stringValue = overlayState.badge
+            titleLabel.stringValue = overlayState.title
+            subtitleLabel.stringValue = overlayState.message
+            if let action = overlayState.action {
+                commandLabel.stringValue = action
+            }
+            footerLabel.stringValue = bootProfile.map { "launch: \($0.command.strategy.rawValue)\ncwd: \($0.workingDirectory)" }
+                ?? "Select a pane to prepare a terminal boot profile."
+            overlayCard.isHidden = false
+            return
+        }
 
-        overlayCard.isHidden = shouldHideOverlay
+        overlayCard.isHidden = true
     }
 
     private var isFocused: Bool {
@@ -609,7 +604,7 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
     private func sendMousePosition(for event: NSEvent) {
 #if canImport(GhosttyKit)
         let point = ghosttyPoint(for: event)
-        ghosttySurfaceHandle?.sendMousePosition(x: point.x, y: point.y, mods: modsFromEvent(event))
+        surfaceController.sendMousePosition(x: point.x, y: point.y, mods: modsFromEvent(event))
 #endif
     }
 
@@ -617,15 +612,15 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
         activateTerminalHostForMouseEvent()
 #if canImport(GhosttyKit)
         sendMousePosition(for: event)
-        _ = ghosttySurfaceHandle?.sendMouseButton(state: GHOSTTY_MOUSE_PRESS, button: GHOSTTY_MOUSE_LEFT, mods: modsFromEvent(event))
+        _ = surfaceController.sendMouseButton(state: GHOSTTY_MOUSE_PRESS, button: GHOSTTY_MOUSE_LEFT, mods: modsFromEvent(event))
 #endif
     }
 
     override func mouseUp(with event: NSEvent) {
         previousPressureStage = 0
 #if canImport(GhosttyKit)
-        _ = ghosttySurfaceHandle?.sendMouseButton(state: GHOSTTY_MOUSE_RELEASE, button: GHOSTTY_MOUSE_LEFT, mods: modsFromEvent(event))
-        ghosttySurfaceHandle?.sendMousePressure(stage: 0, pressure: 0)
+        _ = surfaceController.sendMouseButton(state: GHOSTTY_MOUSE_RELEASE, button: GHOSTTY_MOUSE_LEFT, mods: modsFromEvent(event))
+        surfaceController.sendMousePressure(stage: 0, pressure: 0)
 #endif
     }
 
@@ -633,7 +628,7 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
         activateTerminalHostForMouseEvent()
 #if canImport(GhosttyKit)
         sendMousePosition(for: event)
-        _ = ghosttySurfaceHandle?.sendMouseButton(state: GHOSTTY_MOUSE_PRESS, button: GHOSTTY_MOUSE_RIGHT, mods: modsFromEvent(event))
+        _ = surfaceController.sendMouseButton(state: GHOSTTY_MOUSE_PRESS, button: GHOSTTY_MOUSE_RIGHT, mods: modsFromEvent(event))
 #else
         super.rightMouseDown(with: event)
 #endif
@@ -641,7 +636,7 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
 
     override func rightMouseUp(with event: NSEvent) {
 #if canImport(GhosttyKit)
-        _ = ghosttySurfaceHandle?.sendMouseButton(state: GHOSTTY_MOUSE_RELEASE, button: GHOSTTY_MOUSE_RIGHT, mods: modsFromEvent(event))
+        _ = surfaceController.sendMouseButton(state: GHOSTTY_MOUSE_RELEASE, button: GHOSTTY_MOUSE_RIGHT, mods: modsFromEvent(event))
 #else
         super.rightMouseUp(with: event)
 #endif
@@ -652,7 +647,7 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
 #if canImport(GhosttyKit)
         sendMousePosition(for: event)
         let button = event.buttonNumber == 2 ? GHOSTTY_MOUSE_MIDDLE : GHOSTTY_MOUSE_MIDDLE
-        _ = ghosttySurfaceHandle?.sendMouseButton(state: GHOSTTY_MOUSE_PRESS, button: button, mods: modsFromEvent(event))
+        _ = surfaceController.sendMouseButton(state: GHOSTTY_MOUSE_PRESS, button: button, mods: modsFromEvent(event))
 #else
         super.otherMouseDown(with: event)
 #endif
@@ -661,7 +656,7 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
     override func otherMouseUp(with event: NSEvent) {
 #if canImport(GhosttyKit)
         let button = event.buttonNumber == 2 ? GHOSTTY_MOUSE_MIDDLE : GHOSTTY_MOUSE_MIDDLE
-        _ = ghosttySurfaceHandle?.sendMouseButton(state: GHOSTTY_MOUSE_RELEASE, button: button, mods: modsFromEvent(event))
+        _ = surfaceController.sendMouseButton(state: GHOSTTY_MOUSE_RELEASE, button: button, mods: modsFromEvent(event))
 #else
         super.otherMouseUp(with: event)
 #endif
@@ -701,13 +696,13 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
     override func mouseExited(with event: NSEvent) {
         super.mouseExited(with: event)
 #if canImport(GhosttyKit)
-        ghosttySurfaceHandle?.sendMousePosition(x: -1, y: -1, mods: modsFromEvent(event))
+        surfaceController.sendMousePosition(x: -1, y: -1, mods: modsFromEvent(event))
 #endif
     }
 
     override func scrollWheel(with event: NSEvent) {
 #if canImport(GhosttyKit)
-        guard ghosttySurfaceHandle?.isSurfaceReady == true else { return super.scrollWheel(with: event) }
+        guard surfaceController.isSurfaceReady == true else { return super.scrollWheel(with: event) }
 
         var x = event.scrollingDeltaX
         var y = event.scrollingDeltaY
@@ -741,7 +736,7 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
         }
         scrollMods |= momentum << 1
 
-        ghosttySurfaceHandle?.sendMouseScroll(x: x, y: y, mods: ghostty_input_scroll_mods_t(scrollMods))
+        surfaceController.sendMouseScroll(x: x, y: y, mods: ghostty_input_scroll_mods_t(scrollMods))
 #else
         super.scrollWheel(with: event)
 #endif
@@ -750,23 +745,27 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
     override func pressureChange(with event: NSEvent) {
         super.pressureChange(with: event)
 #if canImport(GhosttyKit)
-        guard ghosttySurfaceHandle?.isSurfaceReady == true else { return }
-        ghosttySurfaceHandle?.sendMousePressure(stage: UInt32(event.stage), pressure: Double(event.pressure))
+        guard surfaceController.isSurfaceReady == true else { return }
+        surfaceController.sendMousePressure(stage: UInt32(event.stage), pressure: Double(event.pressure))
         previousPressureStage = event.stage
 #endif
     }
 
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if routeNativeKeyCommandIfNeeded(event) {
+            return true
+        }
+
 #if canImport(GhosttyKit)
         guard !isApplicationReservedKeyEquivalent(event) else { return false }
-        guard event.type == .keyDown, isFocused, ghosttySurfaceHandle?.isSurfaceReady == true else { return false }
+        guard event.type == .keyDown, isFocused, surfaceController.isSurfaceReady == true else { return false }
 
         var keyEvent = ghosttyKeyEvent(for: event, action: GHOSTTY_ACTION_PRESS)
         var flags = ghostty_binding_flags_e(0)
         let text = textForKeyEvent(event) ?? ""
         let isBinding = text.withCString { cString in
             keyEvent.text = cString
-            return ghosttySurfaceHandle?.keyIsBinding(keyEvent, flags: &flags) ?? false
+            return surfaceController.keyIsBinding(keyEvent, flags: &flags)
         }
 
         if isBinding {
@@ -778,13 +777,20 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
     }
 
     override func keyDown(with event: NSEvent) {
+        if routeNativeKeyCommandIfNeeded(event) {
+            return
+        }
+        if handleSearchKeyIfNeeded(event) {
+            return
+        }
+
 #if canImport(GhosttyKit)
         if isApplicationReservedKeyEquivalent(event) {
             NSApp.terminate(nil)
             return
         }
 
-        guard ghosttySurfaceHandle?.isSurfaceReady == true else {
+        guard surfaceController.isSurfaceReady == true else {
             interpretKeyEvents([event])
             return
         }
@@ -792,7 +798,7 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
         requestTerminalFocus()
 
         let translationModsGhostty =
-            ghosttySurfaceHandle?.keyTranslationMods(for: modsFromEvent(event)) ?? modsFromEvent(event)
+            surfaceController.keyTranslationMods(for: modsFromEvent(event))
         var translationMods = event.modifierFlags
         for flag in [NSEvent.ModifierFlags.shift, .control, .option, .command] {
             let shouldInclude: Bool
@@ -842,7 +848,7 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
         syncPreedit(clearIfNeeded: markedTextBefore)
 
         if let keyTextAccumulator, !keyTextAccumulator.isEmpty {
-            keyTextAccumulator.forEach { ghosttySurfaceHandle?.sendText($0) }
+            keyTextAccumulator.forEach { surfaceController.sendText($0) }
             return
         }
 
@@ -856,10 +862,10 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
         if let text = textForKeyEvent(translationEvent), shouldSendText(text) {
             text.withCString { cString in
                 keyEvent.text = cString
-                _ = ghosttySurfaceHandle?.sendKey(keyEvent)
+                _ = surfaceController.sendKey(keyEvent)
             }
         } else {
-            _ = ghosttySurfaceHandle?.sendKey(keyEvent)
+            _ = surfaceController.sendKey(keyEvent)
         }
 #else
         super.keyDown(with: event)
@@ -868,9 +874,9 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
 
     override func keyUp(with event: NSEvent) {
 #if canImport(GhosttyKit)
-        guard ghosttySurfaceHandle?.isSurfaceReady == true else { return super.keyUp(with: event) }
+        guard surfaceController.isSurfaceReady == true else { return super.keyUp(with: event) }
         let keyEvent = ghosttyKeyEvent(for: event, action: GHOSTTY_ACTION_RELEASE)
-        _ = ghosttySurfaceHandle?.sendKey(keyEvent)
+        _ = surfaceController.sendKey(keyEvent)
 #else
         super.keyUp(with: event)
 #endif
@@ -878,7 +884,7 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
 
     override func flagsChanged(with event: NSEvent) {
 #if canImport(GhosttyKit)
-        guard ghosttySurfaceHandle?.isSurfaceReady == true else { return super.flagsChanged(with: event) }
+        guard surfaceController.isSurfaceReady == true else { return super.flagsChanged(with: event) }
 
         let modifier: UInt32
         switch event.keyCode {
@@ -897,7 +903,7 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
         }
 
         let keyEvent = ghosttyKeyEvent(for: event, action: action)
-        _ = ghosttySurfaceHandle?.sendKey(keyEvent)
+        _ = surfaceController.sendKey(keyEvent)
         sendMousePosition(for: event)
 #else
         super.flagsChanged(with: event)
@@ -906,7 +912,7 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
 
     @objc func copy(_ sender: Any?) {
 #if canImport(GhosttyKit)
-        guard let text = ghosttySurfaceHandle?.readSelectionText(), !text.isEmpty else { return }
+        guard let text = surfaceController.readSelectionText(), !text.isEmpty else { return }
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         pasteboard.setString(text, forType: .string)
@@ -920,7 +926,7 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
     @objc func paste(_ sender: Any?) {
 #if canImport(GhosttyKit)
         guard let text = NSPasteboard.general.string(forType: .string), !text.isEmpty else { return }
-        ghosttySurfaceHandle?.sendText(text)
+        surfaceController.sendText(text)
 #endif
     }
 
@@ -997,6 +1003,77 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
         return true
     }
 
+    private func routeNativeKeyCommandIfNeeded(_ event: NSEvent) -> Bool {
+        switch surfaceController.inputAdapter.routeKey(terminalKeyInput(for: event)) {
+        case .nativeCommand("find"):
+            surfaceController.beginSearch()
+            syncOverlayVisibility()
+            publishRuntimeSnapshot()
+            return true
+        case .nativeCommand("quit"):
+            return false
+        case .nativeCommand, .terminalText, .terminalKey, .ignored:
+            return false
+        }
+    }
+
+    private func handleSearchKeyIfNeeded(_ event: NSEvent) -> Bool {
+        guard surfaceController.searchAdapter?.state.isActive == true else { return false }
+        guard event.type == .keyDown else { return true }
+        if event.modifierFlags.intersection(.deviceIndependentFlagsMask).contains(.command) {
+            return false
+        }
+
+        switch event.keyCode {
+        case 0x35:
+            surfaceController.dismissSearch()
+        case 0x24:
+            surfaceController.nextSearchMatch()
+        case 0x33:
+            let current = surfaceController.searchAdapter?.state.query ?? ""
+            surfaceController.updateSearchQuery(String(current.dropLast()))
+        default:
+            if let characters = textForKeyEvent(event), shouldSendText(characters) {
+                let current = surfaceController.searchAdapter?.state.query ?? ""
+                surfaceController.updateSearchQuery(current + characters)
+            }
+        }
+
+        syncOverlayVisibility()
+        publishRuntimeSnapshot()
+        return true
+    }
+
+    private func terminalKeyInput(for event: NSEvent) -> AlanTerminalKeyInput {
+        let phase: AlanTerminalKeyPhase
+        switch event.type {
+        case .keyDown:
+            phase = .down
+        case .keyUp:
+            phase = .up
+        case .flagsChanged:
+            phase = .flagsChanged
+        default:
+            phase = .down
+        }
+        return AlanTerminalKeyInput(
+            characters: event.charactersIgnoringModifiers ?? event.characters,
+            keyCode: event.keyCode,
+            modifiers: terminalKeyModifiers(from: event.modifierFlags),
+            phase: phase,
+            isRepeat: event.isARepeat
+        )
+    }
+
+    private func terminalKeyModifiers(from flags: NSEvent.ModifierFlags) -> AlanTerminalKeyModifiers {
+        var modifiers: AlanTerminalKeyModifiers = []
+        if flags.contains(.shift) { modifiers.insert(.shift) }
+        if flags.contains(.control) { modifiers.insert(.control) }
+        if flags.contains(.option) { modifiers.insert(.option) }
+        if flags.contains(.command) { modifiers.insert(.command) }
+        return modifiers
+    }
+
     private func isApplicationReservedKeyEquivalent(_ event: NSEvent) -> Bool {
         guard event.type == .keyDown else { return false }
 
@@ -1011,9 +1088,9 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
     private func syncPreedit(clearIfNeeded: Bool = true) {
 #if canImport(GhosttyKit)
         if markedText.length > 0 {
-            ghosttySurfaceHandle?.sendPreedit(markedText.string)
+            surfaceController.sendPreedit(markedText.string)
         } else if clearIfNeeded {
-            ghosttySurfaceHandle?.sendPreedit(nil)
+            surfaceController.sendPreedit(nil)
         }
 #endif
     }
@@ -1038,7 +1115,7 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
             self.keyTextAccumulator = keyTextAccumulator
         } else {
 #if canImport(GhosttyKit)
-            ghosttySurfaceHandle?.sendText(characters)
+            surfaceController.sendText(characters)
 #endif
         }
     }
@@ -1072,7 +1149,7 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
 
     func selectedRange() -> NSRange {
 #if canImport(GhosttyKit)
-        if let selection = ghosttySurfaceHandle?.readSelectionText() {
+        if let selection = surfaceController.readSelectionText() {
             return NSRange(location: 0, length: selection.utf16.count)
         }
 #endif
@@ -1091,7 +1168,7 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
 
     func attributedSubstring(forProposedRange range: NSRange, actualRange: NSRangePointer?) -> NSAttributedString? {
 #if canImport(GhosttyKit)
-        guard let selection = ghosttySurfaceHandle?.readSelectionText(), !selection.isEmpty else { return nil }
+        guard let selection = surfaceController.readSelectionText(), !selection.isEmpty else { return nil }
         actualRange?.pointee = NSRange(location: 0, length: selection.utf16.count)
         return NSAttributedString(string: selection)
 #else
@@ -1105,7 +1182,7 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
 
     func firstRect(forCharacterRange range: NSRange, actualRange: NSRangePointer?) -> NSRect {
 #if canImport(GhosttyKit)
-        if let imeRect = ghosttySurfaceHandle?.imeRect(in: self) {
+        if let imeRect = surfaceController.imeRect(in: self) {
             return imeRect
         }
 #endif

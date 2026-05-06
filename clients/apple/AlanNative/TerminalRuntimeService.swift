@@ -467,6 +467,24 @@ final class AlanGhosttySurfaceHandle: AlanTerminalSurfaceHandle {
                 )
             )
         }
+        guard !currentSnapshot.metadata.processExited else {
+            return recordDelivery(
+                .rejected(
+                    errorCode: "terminal_child_exited",
+                    errorMessage: "The terminal process has exited.",
+                    runtimePhase: currentSnapshot.runtimePhase
+                )
+            )
+        }
+        guard currentSnapshot.renderer.phase != .failed else {
+            return recordDelivery(
+                .rejected(
+                    errorCode: "terminal_renderer_failed",
+                    errorMessage: "The terminal renderer is not available.",
+                    runtimePhase: currentSnapshot.runtimePhase
+                )
+            )
+        }
         guard bootstrap.ensureReady().isReady else {
             return recordDelivery(
                 .unavailable(

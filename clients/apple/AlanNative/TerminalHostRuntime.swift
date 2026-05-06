@@ -610,6 +610,7 @@ struct TerminalHostRuntimeSnapshot: Equatable {
     let isFocused: Bool
     let renderer: TerminalRendererSnapshot
     let paneMetadata: TerminalPaneMetadataSnapshot
+    let surfaceState: AlanTerminalSurfaceStateSnapshot
     let lastUpdatedAt: Date
 
     var stageLabel: String {
@@ -628,6 +629,7 @@ struct TerminalHostRuntimeSnapshot: Equatable {
         isFocused: false,
         renderer: .placeholder,
         paneMetadata: .placeholder,
+        surfaceState: .placeholder,
         lastUpdatedAt: .now
     )
 }
