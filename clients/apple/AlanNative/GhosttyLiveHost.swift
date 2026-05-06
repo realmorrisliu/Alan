@@ -77,8 +77,8 @@ final class AlanGhosttyLiveHost: NSObject {
         guard let canvasView, let surface else { return }
         synchronizeDrawableMetrics(for: canvasView)
         ghostty_surface_set_focus(surface, focused)
-        let visible = canvasView.window?.occlusionState.contains(.visible) ?? true
-        ghostty_surface_set_occlusion(surface, visible)
+        let isOccluded = !(canvasView.window?.occlusionState.contains(.visible) ?? false)
+        ghostty_surface_set_occlusion(surface, isOccluded)
         ghostty_surface_refresh(surface)
         markFirstRefreshIfNeeded(on: canvasView)
     }
