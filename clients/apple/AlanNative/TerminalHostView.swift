@@ -691,6 +691,7 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
 
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
 #if canImport(GhosttyKit)
+        guard !isApplicationReservedKeyEquivalent(event) else { return false }
         guard event.type == .keyDown, isFocused, liveHost.isSurfaceReady else { return false }
 
         var keyEvent = ghosttyKeyEvent(for: event, action: GHOSTTY_ACTION_PRESS)
@@ -711,6 +712,11 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
 
     override func keyDown(with event: NSEvent) {
 #if canImport(GhosttyKit)
+        if isApplicationReservedKeyEquivalent(event) {
+            NSApp.terminate(nil)
+            return
+        }
+
         guard liveHost.isSurfaceReady else {
             interpretKeyEvents([event])
             return
@@ -921,6 +927,17 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
             return !isControlCharacter(scalar)
         }
         return true
+    }
+
+    private func isApplicationReservedKeyEquivalent(_ event: NSEvent) -> Bool {
+        guard event.type == .keyDown else { return false }
+
+        let flags = event.modifierFlags
+            .intersection(.deviceIndependentFlagsMask)
+            .subtracting([.capsLock, .numericPad, .function])
+        guard flags == .command else { return false }
+
+        return event.charactersIgnoringModifiers?.lowercased() == "q"
     }
 
     private func syncPreedit(clearIfNeeded: Bool = true) {
