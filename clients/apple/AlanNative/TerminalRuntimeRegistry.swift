@@ -98,6 +98,7 @@ final class TerminalRuntimeRegistry: ObservableObject {
         for pane: ShellPane?,
         bootProfile: AlanShellBootProfile?,
         isSelected: Bool,
+        activationDelegate: TerminalHostActivationDelegate?,
         onRuntimeUpdate: @escaping (TerminalHostRuntimeSnapshot) -> Void,
         onMetadataUpdate: @escaping (TerminalPaneMetadataSnapshot) -> Void
     ) -> AlanTerminalHostNSView {
@@ -118,6 +119,7 @@ final class TerminalRuntimeRegistry: ObservableObject {
             pane: pane,
             bootProfile: bootProfile,
             isSelected: isSelected,
+            activationDelegate: activationDelegate,
             onRuntimeUpdate: onRuntimeUpdate,
             onMetadataUpdate: onMetadataUpdate
         )

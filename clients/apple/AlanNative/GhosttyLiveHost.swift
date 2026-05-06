@@ -885,6 +885,8 @@ final class AlanGhosttyLiveHost: NSObject {
 final class AlanGhosttyCanvasView: NSView {
     override var mouseDownCanMoveWindow: Bool { false }
 
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
     }

@@ -13,6 +13,7 @@ struct TerminalHostView: NSViewRepresentable {
     let bootProfile: AlanShellBootProfile?
     let isSelected: Bool
     let runtimeRegistry: TerminalRuntimeRegistry
+    let activationDelegate: TerminalHostActivationDelegate?
     let onRuntimeUpdate: (TerminalHostRuntimeSnapshot) -> Void
     let onMetadataUpdate: (TerminalPaneMetadataSnapshot) -> Void
 
@@ -21,6 +22,7 @@ struct TerminalHostView: NSViewRepresentable {
             for: pane,
             bootProfile: bootProfile,
             isSelected: isSelected,
+            activationDelegate: activationDelegate,
             onRuntimeUpdate: onRuntimeUpdate,
             onMetadataUpdate: onMetadataUpdate
         )
@@ -31,15 +33,21 @@ struct TerminalHostView: NSViewRepresentable {
             pane: pane,
             bootProfile: bootProfile,
             isSelected: isSelected,
+            activationDelegate: activationDelegate,
             onRuntimeUpdate: onRuntimeUpdate,
             onMetadataUpdate: onMetadataUpdate
         )
     }
 }
 
+@MainActor
+protocol TerminalHostActivationDelegate: AnyObject {
+    func terminalHostDidRequestActivation(paneID: String)
+}
+
 final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHandle {
     private let canvasView = makeCanvasView()
-    private let overlayCard = NSVisualEffectView()
+    private let overlayCard = AlanTerminalPassiveOverlayView()
     private let bodyStack = NSStackView()
     private let titleLabel = NSTextField(labelWithString: "")
     private let subtitleLabel = NSTextField(wrappingLabelWithString: "")
@@ -50,6 +58,7 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
     private var pane: ShellPane?
     private var bootProfile: AlanShellBootProfile?
     private var isSelected = false
+    private weak var activationDelegate: TerminalHostActivationDelegate?
     private var runtimeObserver: ((TerminalHostRuntimeSnapshot) -> Void)?
     private var metadataObserver: ((TerminalPaneMetadataSnapshot) -> Void)?
     private var windowObservers: [NSObjectProtocol] = []
@@ -160,6 +169,7 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
         pane: ShellPane?,
         bootProfile: AlanShellBootProfile?,
         isSelected: Bool,
+        activationDelegate: TerminalHostActivationDelegate?,
         onRuntimeUpdate: @escaping (TerminalHostRuntimeSnapshot) -> Void,
         onMetadataUpdate: @escaping (TerminalPaneMetadataSnapshot) -> Void
     ) {
@@ -169,6 +179,7 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
         self.pane = pane
         self.bootProfile = bootProfile
         self.isSelected = isSelected
+        self.activationDelegate = activationDelegate
         runtimeObserver = onRuntimeUpdate
         metadataObserver = onMetadataUpdate
 
@@ -573,6 +584,13 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
         publishRuntimeSnapshot()
     }
 
+    private func activateTerminalHostForMouseEvent() {
+        if let paneID = pane?.paneID {
+            activationDelegate?.terminalHostDidRequestActivation(paneID: paneID)
+        }
+        requestTerminalFocus()
+    }
+
     private func localPoint(for event: NSEvent) -> CGPoint {
         convert(event.locationInWindow, from: nil)
     }
@@ -590,7 +608,7 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
     }
 
     override func mouseDown(with event: NSEvent) {
-        requestTerminalFocus()
+        activateTerminalHostForMouseEvent()
 #if canImport(GhosttyKit)
         sendMousePosition(for: event)
         _ = liveHost.sendMouseButton(state: GHOSTTY_MOUSE_PRESS, button: GHOSTTY_MOUSE_LEFT, mods: modsFromEvent(event))
@@ -606,7 +624,7 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
     }
 
     override func rightMouseDown(with event: NSEvent) {
-        requestTerminalFocus()
+        activateTerminalHostForMouseEvent()
 #if canImport(GhosttyKit)
         sendMousePosition(for: event)
         _ = liveHost.sendMouseButton(state: GHOSTTY_MOUSE_PRESS, button: GHOSTTY_MOUSE_RIGHT, mods: modsFromEvent(event))
@@ -624,7 +642,7 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
     }
 
     override func otherMouseDown(with event: NSEvent) {
-        requestTerminalFocus()
+        activateTerminalHostForMouseEvent()
 #if canImport(GhosttyKit)
         sendMousePosition(for: event)
         let button = event.buttonNumber == 2 ? GHOSTTY_MOUSE_MIDDLE : GHOSTTY_MOUSE_MIDDLE
@@ -1107,5 +1125,13 @@ private func makeCanvasView() -> NSView {
 
 final class AlanTerminalFallbackCanvasView: NSView {
     override var mouseDownCanMoveWindow: Bool { false }
+
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+}
+
+final class AlanTerminalPassiveOverlayView: NSVisualEffectView {
+    override var mouseDownCanMoveWindow: Bool { false }
+
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
 }
 #endif
