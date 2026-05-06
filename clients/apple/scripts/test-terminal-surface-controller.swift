@@ -16,6 +16,7 @@ struct TerminalSurfaceControllerTestRunner {
 private enum TerminalSurfaceControllerTests {
     static func run() {
         verifiesScrollbackMetricsAndTerminalModes()
+        verifiesModeTrackerPreservesTerminalScrollRouting()
         verifiesInputCommandRouting()
         verifiesPaneScopedSearchState()
         verifiesSearchActionsReachSurfaceEngine()
@@ -51,7 +52,53 @@ private enum TerminalSurfaceControllerTests {
             )
         )
 
-        expect(alternate.nativeScrollbarVisible == false, "alternate-screen scrollback must not expose stale normal-buffer scrollbar")
+        expect(
+            alternate.nativeScrollbarVisible == false,
+            "alternate-screen scrollback must not expose stale normal-buffer scrollbar"
+        )
+    }
+
+    private static func verifiesModeTrackerPreservesTerminalScrollRouting() {
+        let tracker = AlanTerminalModeTracker()
+
+        let initialMode = tracker.resolveMode(
+            totalRows: 40,
+            visibleRows: 40,
+            mouseCaptured: false
+        )
+        expect(initialMode == .normalBuffer, "initial unscrollable terminal state must stay normal")
+
+        let scrollbackMode = tracker.resolveMode(
+            totalRows: 220,
+            visibleRows: 40,
+            mouseCaptured: false
+        )
+        expect(scrollbackMode == .normalBuffer, "scrollable primary screen must use normal mode")
+
+        let alternateMode = tracker.resolveMode(
+            totalRows: 40,
+            visibleRows: 40,
+            mouseCaptured: false
+        )
+        expect(
+            alternateMode == .alternateScreen,
+            "collapsed scrollbar after scrollback must preserve alternate-screen terminal routing"
+        )
+
+        let mouseMode = tracker.resolveMode(
+            totalRows: 220,
+            visibleRows: 40,
+            mouseCaptured: true
+        )
+        expect(mouseMode == .mouseReporting, "mouse-captured surfaces must route scroll to terminal")
+
+        tracker.reset()
+        let resetMode = tracker.resolveMode(
+            totalRows: 40,
+            visibleRows: 40,
+            mouseCaptured: false
+        )
+        expect(resetMode == .normalBuffer, "new surfaces must not inherit prior alternate-screen state")
     }
 
     private static func verifiesInputCommandRouting() {
@@ -204,6 +251,22 @@ private enum TerminalSurfaceControllerTests {
         expect(
             alternateRoute == .terminalScroll,
             "alternate-screen scroll input must stay routed to the terminal app"
+        )
+
+        handle.emitScrollbackUpdate(
+            AlanTerminalScrollbackMetrics(
+                totalRows: 220,
+                visibleRows: 40,
+                firstVisibleRow: 120,
+                mode: .mouseReporting
+            )
+        )
+        let mouseReportingRoute = controller.routeScroll(
+            AlanTerminalScrollInput(deltaX: 0, deltaY: -8, precise: true)
+        )
+        expect(
+            mouseReportingRoute == .terminalScroll,
+            "terminal mouse-reporting scroll input must stay routed to the terminal app"
         )
     }
 

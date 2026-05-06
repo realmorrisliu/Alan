@@ -12,6 +12,32 @@ enum AlanTerminalMode: String, Equatable {
     case mouseReporting = "mouse_reporting"
 }
 
+final class AlanTerminalModeTracker {
+    private var hasSeenScrollableNormalBuffer = false
+
+    func reset() {
+        hasSeenScrollableNormalBuffer = false
+    }
+
+    func resolveMode(totalRows: Int, visibleRows: Int, mouseCaptured: Bool) -> AlanTerminalMode {
+        if mouseCaptured {
+            return .mouseReporting
+        }
+
+        let hasScrollableRows = max(0, totalRows) > max(0, visibleRows)
+        if hasScrollableRows {
+            hasSeenScrollableNormalBuffer = true
+            return .normalBuffer
+        }
+
+        if hasSeenScrollableNormalBuffer {
+            return .alternateScreen
+        }
+
+        return .normalBuffer
+    }
+}
+
 struct AlanTerminalScrollbackMetrics: Equatable {
     let totalRows: Int
     let visibleRows: Int
