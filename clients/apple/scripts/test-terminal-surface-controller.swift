@@ -17,6 +17,8 @@ private enum TerminalSurfaceControllerTests {
     static func run() {
         verifiesScrollbackMetricsAndTerminalModes()
         verifiesInputCommandRouting()
+        verifiesPointerRoutingFollowsTerminalMouseModes()
+        verifiesPointerButtonMappingMatchesGhostty()
         verifiesPaneScopedSearchState()
         verifiesSearchActionsReachSurfaceEngine()
         verifiesScrollbackActionsReachSurfaceEngine()
@@ -88,6 +90,122 @@ private enum TerminalSurfaceControllerTests {
             )
         )
         expect(printable == .terminalText("a"), "printable key input must become terminal text")
+    }
+
+    private static func verifiesPointerRoutingFollowsTerminalMouseModes() {
+        let adapter = AlanTerminalPointerAdapter()
+        let drag = AlanTerminalPointerInput(
+            phase: .drag,
+            button: .primary,
+            buttonNumber: 0,
+            x: 24,
+            y: 48,
+            modifiers: [.shift],
+            pressureStage: nil,
+            pressure: nil
+        )
+
+        let selectionRoute = adapter.routePointer(
+            drag,
+            terminalMode: .normalBuffer,
+            surfaceReady: true
+        )
+        expect(
+            selectionRoute == .terminalSelection(
+                .position(x: 24, y: 48, modifiers: [.shift])
+            ),
+            "normal-buffer primary drags must be treated as terminal text selection"
+        )
+
+        let mouseAppRoute = adapter.routePointer(
+            drag,
+            terminalMode: .mouseReporting,
+            surfaceReady: true
+        )
+        expect(
+            mouseAppRoute == .terminalMouse(
+                .position(x: 24, y: 48, modifiers: [.shift])
+            ),
+            "mouse-reporting drags must be delivered to the terminal application"
+        )
+
+        let exited = AlanTerminalPointerInput(
+            phase: .exited,
+            button: nil,
+            buttonNumber: nil,
+            x: 24,
+            y: 48,
+            modifiers: [],
+            pressureStage: nil,
+            pressure: nil
+        )
+        expect(
+            adapter.routePointer(exited, terminalMode: .normalBuffer, surfaceReady: true)
+                == .terminalHover(.position(x: -1, y: -1, modifiers: [])),
+            "pointer exit must normalize to a terminal hover-out position"
+        )
+
+        let pressure = AlanTerminalPointerInput(
+            phase: .pressure,
+            button: nil,
+            buttonNumber: nil,
+            x: 0,
+            y: 0,
+            modifiers: [],
+            pressureStage: 2,
+            pressure: 0.5
+        )
+        expect(
+            adapter.routePointer(pressure, terminalMode: .normalBuffer, surfaceReady: true)
+                == .terminalMouse(.pressure(stage: 2, pressure: 0.5)),
+            "pressure changes must be normalized before delivery to the terminal"
+        )
+        expect(
+            adapter.routePointer(drag, terminalMode: .mouseReporting, surfaceReady: false) == .ignored,
+            "unready terminal surfaces must not receive normalized pointer events"
+        )
+    }
+
+    private static func verifiesPointerButtonMappingMatchesGhostty() {
+        expect(AlanTerminalPointerButton.fromAppKitButtonNumber(0) == .primary, "button 0 must be primary")
+        expect(AlanTerminalPointerButton.fromAppKitButtonNumber(1) == .secondary, "button 1 must be secondary")
+        expect(AlanTerminalPointerButton.fromAppKitButtonNumber(2) == .middle, "button 2 must be middle")
+        expect(AlanTerminalPointerButton.fromAppKitButtonNumber(3) == .eight, "button 3 must match Ghostty back button mapping")
+        expect(AlanTerminalPointerButton.fromAppKitButtonNumber(4) == .nine, "button 4 must match Ghostty forward button mapping")
+        expect(AlanTerminalPointerButton.fromAppKitButtonNumber(5) == .six, "button 5 must match Ghostty button 6 mapping")
+        expect(AlanTerminalPointerButton.fromAppKitButtonNumber(6) == .seven, "button 6 must match Ghostty button 7 mapping")
+        expect(AlanTerminalPointerButton.fromAppKitButtonNumber(7) == .four, "button 7 must match Ghostty button 4 mapping")
+        expect(AlanTerminalPointerButton.fromAppKitButtonNumber(8) == .five, "button 8 must match Ghostty button 5 mapping")
+        expect(AlanTerminalPointerButton.fromAppKitButtonNumber(9) == .ten, "button 9 must match Ghostty button 10 mapping")
+        expect(AlanTerminalPointerButton.fromAppKitButtonNumber(10) == .eleven, "button 10 must map through Ghostty's high button range")
+        expect(AlanTerminalPointerButton.fromAppKitButtonNumber(11) == .unknown, "unsupported button numbers must not pretend to be middle")
+
+        let press = AlanTerminalPointerInput(
+            phase: .buttonDown,
+            button: nil,
+            buttonNumber: 3,
+            x: 10,
+            y: 11,
+            modifiers: [.command],
+            pressureStage: nil,
+            pressure: nil
+        )
+        expect(
+            AlanTerminalPointerAdapter().routePointer(
+                press,
+                terminalMode: .mouseReporting,
+                surfaceReady: true
+            ) == .terminalMouse(
+                .button(
+                    state: .press,
+                    button: .eight,
+                    x: 10,
+                    y: 11,
+                    modifiers: [.command]
+                )
+            ),
+            "other-button presses must preserve their normalized button family"
+        )
     }
 
     private static func verifiesPaneScopedSearchState() {
@@ -204,6 +322,22 @@ private enum TerminalSurfaceControllerTests {
         expect(
             alternateRoute == .terminalScroll,
             "alternate-screen scroll input must stay routed to the terminal app"
+        )
+
+        handle.emitScrollbackUpdate(
+            AlanTerminalScrollbackMetrics(
+                totalRows: 220,
+                visibleRows: 40,
+                firstVisibleRow: 120,
+                mode: .mouseReporting
+            )
+        )
+        let mouseReportingRoute = controller.routeScroll(
+            AlanTerminalScrollInput(deltaX: 0, deltaY: -8, precise: true)
+        )
+        expect(
+            mouseReportingRoute == .terminalScroll,
+            "mouse-reporting scroll input must stay routed to the terminal app"
         )
     }
 

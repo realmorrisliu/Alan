@@ -15,7 +15,7 @@
 ## 3. Input, Selection, Clipboard, And Search
 
 - [x] 3.1 Normalize keyDown, keyUp, flagsChanged, performKeyEquivalent, marked text, preedit, commit, and cancellation paths.
-- [ ] 3.2 Normalize primary, secondary, other-button, drag, movement, hover, pressure, and scroll events against terminal mouse modes.
+- [x] 3.2 Normalize primary, secondary, other-button, drag, movement, hover, pressure, and scroll events against terminal mouse modes.
 - [x] 3.3 Implement native selection, copy, paste, bracketed-paste-aware delivery when available, and paste failure reporting.
 - [x] 3.4 Add pane-scoped terminal search with find, next, previous, match status, and dismissal behavior.
 - [x] 3.5 Add compact user-facing terminal overlays while keeping raw surface diagnostics in the inspector debug layer.

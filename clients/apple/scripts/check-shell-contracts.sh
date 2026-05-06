@@ -82,6 +82,11 @@ require_pattern \
 
 require_pattern \
     "clients/apple/AlanNative/TerminalSurfaceController.swift" \
+    "final class AlanTerminalPointerAdapter" \
+    "terminal mouse and pointer behavior must be normalized through a pointer adapter"
+
+require_pattern \
+    "clients/apple/AlanNative/TerminalSurfaceController.swift" \
     "final class AlanTerminalScrollbackAdapter" \
     "terminal scrollback behavior must be normalized through a scrollback adapter"
 
@@ -114,6 +119,16 @@ require_pattern \
     "clients/apple/scripts/test-terminal-surface-controller.swift" \
     "verifiesScrollbackActionsReachSurfaceEngine" \
     "surface controller tests must prove scrollback actions reach the surface engine"
+
+require_pattern \
+    "clients/apple/scripts/test-terminal-surface-controller.swift" \
+    "verifiesPointerRoutingFollowsTerminalMouseModes" \
+    "surface controller tests must prove pointer routing follows terminal mouse modes"
+
+require_pattern \
+    "clients/apple/scripts/test-terminal-surface-controller.swift" \
+    "verifiesPointerButtonMappingMatchesGhostty" \
+    "surface controller tests must prove other-button mapping matches Ghostty"
 
 require_pattern \
     "clients/apple/scripts/test-terminal-surface-controller.swift" \

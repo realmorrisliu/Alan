@@ -158,14 +158,28 @@ surface adapter after runtime ownership is moved behind a stable service.
 - Added focused shell runtime metadata tests for context projection, sidebar
   status priority, and space attention propagation.
 
+### 2026-05-06 Mouse And Pointer Normalization Pass
+
+- Added `AlanTerminalPointerAdapter` so primary, secondary, other-button,
+  movement, drag, hover, pressure, and scroll routing are modeled outside direct
+  AppKit event handlers.
+- Matched Ghostty's AppKit other-button normalization, including back/forward
+  button mapping, so higher mouse buttons no longer collapse to middle click.
+- Split normal-buffer drags/buttons into terminal-selection routing while
+  alternate-screen and terminal mouse-reporting modes continue to deliver input
+  to terminal applications.
+- Kept right-click responder-chain fallback: if Ghostty does not consume a
+  secondary button event, the host calls AppKit `super` so native context
+  behavior remains available.
+- Added focused fake-surface tests for pointer mode routing, pressure delivery,
+  unready-surface suppression, Ghostty-compatible button mapping, and
+  mouse-reporting scroll forwarding.
+
 Remaining unsupported Ghostty parity after this pass:
 
 - Alternate-screen and application mouse-mode detection are not yet sourced from
   live Ghostty callbacks; the controller honors the modeled mode, but production
   mode updates still need a Ghostty callback source.
-- Primary, secondary, other-button, drag, movement, hover, and pressure events
-  are still forwarded through the existing Ghostty event API; a fuller mouse
-  adapter pass remains.
 - Paste uses the service-owned control-text delivery path, which Ghostty treats
   as paste-like input, but a dedicated bracketed-paste API is not exposed
   separately yet.
