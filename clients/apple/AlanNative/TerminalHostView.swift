@@ -62,6 +62,8 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
     private var keyTextAccumulator: [String]?
     private var previousPressureStage = 0
     private var hasTornDownRuntime = false
+    private var pendingFocusRequest = false
+    private var needsWindowAttachmentFocus = false
 
 #if canImport(GhosttyKit)
     private let liveHost = AlanGhosttyLiveHost()
@@ -115,7 +117,13 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
         super.viewDidMoveToWindow()
         installWindowObservers()
         window?.acceptsMouseMovedEvents = true
-        focusTerminalSoon()
+        if window != nil, needsWindowAttachmentFocus {
+            needsWindowAttachmentFocus = false
+            focusTerminalSoon()
+        } else if window == nil {
+            needsWindowAttachmentFocus = false
+            pendingFocusRequest = false
+        }
         publishRuntimeSnapshot()
     }
 
@@ -155,6 +163,9 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
         onRuntimeUpdate: @escaping (TerminalHostRuntimeSnapshot) -> Void,
         onMetadataUpdate: @escaping (TerminalPaneMetadataSnapshot) -> Void
     ) {
+        let previousPaneID = self.pane?.paneID
+        let wasSelected = self.isSelected
+
         self.pane = pane
         self.bootProfile = bootProfile
         self.isSelected = isSelected
@@ -190,7 +201,13 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
         syncStatusBadge()
         syncOverlayVisibility()
         synchronizeLiveHost()
-        focusTerminalSoon()
+        if shouldAutoFocusAfterConfigure(
+            previousPaneID: previousPaneID,
+            paneID: pane?.paneID,
+            wasSelected: wasSelected
+        ) {
+            focusTerminalSoon()
+        }
         reportMetadataIfNeeded(paneMetadata)
         publishRuntimeSnapshot()
     }
@@ -527,9 +544,27 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
 
     private func focusTerminalSoon() {
         guard isSelected, pane != nil else { return }
-        DispatchQueue.main.async { [weak self] in
-            self?.requestTerminalFocus()
+        guard window != nil else {
+            needsWindowAttachmentFocus = true
+            return
         }
+        guard !pendingFocusRequest else { return }
+        pendingFocusRequest = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            pendingFocusRequest = false
+            guard isSelected, pane != nil, window != nil else { return }
+            requestTerminalFocus()
+        }
+    }
+
+    private func shouldAutoFocusAfterConfigure(
+        previousPaneID: String?,
+        paneID: String?,
+        wasSelected: Bool
+    ) -> Bool {
+        guard isSelected, paneID != nil else { return false }
+        return previousPaneID != paneID || !wasSelected
     }
 
     private func requestTerminalFocus() {

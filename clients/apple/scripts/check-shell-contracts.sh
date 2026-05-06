@@ -76,6 +76,21 @@ require_pattern \
     "terminal auto-focus must be gated to the selected pane"
 
 require_pattern \
+    "clients/apple/AlanNative/TerminalHostView.swift" \
+    "shouldAutoFocusAfterConfigure" \
+    "terminal auto-focus must only be requested on initial attachment or selected-pane transitions"
+
+require_pattern \
+    "clients/apple/AlanNative/TerminalHostView.swift" \
+    "previousPaneID != paneID \\|\\| !wasSelected" \
+    "terminal auto-focus must not refocus the same selected pane on every SwiftUI update"
+
+require_pattern \
+    "clients/apple/AlanNative/TerminalHostView.swift" \
+    "guard !pendingFocusRequest else \\{ return \\}" \
+    "terminal auto-focus must coalesce pending first-responder requests"
+
+require_pattern \
     "clients/apple/AlanNative/MacShellRootView.swift" \
     "window\\.isMovableByWindowBackground = true" \
     "hidden-titlebar shell windows must make non-interactive background regions draggable"
