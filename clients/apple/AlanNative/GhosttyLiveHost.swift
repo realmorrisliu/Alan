@@ -29,6 +29,7 @@ final class AlanGhosttyLiveHost: NSObject {
     private var didEmitFirstRefresh = false
     private var diagnostics = TerminalRendererSnapshot.placeholder
     private var metadata = TerminalPaneMetadataSnapshot.placeholder
+    private let terminalModeTracker = AlanTerminalModeTracker()
 
     func attach(
         to canvasView: AlanGhosttyCanvasView,
@@ -339,6 +340,7 @@ final class AlanGhosttyLiveHost: NSObject {
 
         teardownSurface()
         didEmitFirstRefresh = false
+        terminalModeTracker.reset()
 
         transition(
             kind: .ghosttyLive,
@@ -512,6 +514,7 @@ final class AlanGhosttyLiveHost: NSObject {
             free($0.1)
         }
         envStorage.removeAll()
+        terminalModeTracker.reset()
 
         if app != nil {
             transition(
@@ -679,11 +682,18 @@ final class AlanGhosttyLiveHost: NSObject {
 
         case GHOSTTY_ACTION_SCROLLBAR:
             let scrollbar = action.action.scrollbar
+            let totalRows = clampedInt(scrollbar.total)
+            let visibleRows = clampedInt(scrollbar.len)
+            let mode = terminalModeTracker.resolveMode(
+                totalRows: totalRows,
+                visibleRows: visibleRows,
+                mouseCaptured: surface.map { ghostty_surface_mouse_captured($0) } ?? false
+            )
             let metrics = AlanTerminalScrollbackMetrics(
-                totalRows: clampedInt(scrollbar.total),
-                visibleRows: clampedInt(scrollbar.len),
+                totalRows: totalRows,
+                visibleRows: visibleRows,
                 firstVisibleRow: clampedInt(scrollbar.offset),
-                mode: .normalBuffer
+                mode: mode
             )
             performOnMain {
                 self.onScrollbackUpdate?(metrics)
