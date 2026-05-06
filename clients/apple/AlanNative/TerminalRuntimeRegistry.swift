@@ -162,6 +162,7 @@ final class TerminalRuntimeRegistry: ObservableObject {
             isFocused: false,
             renderer: surfaceSnapshot.renderer,
             paneMetadata: surfaceSnapshot.metadata,
+            surfaceState: .placeholder,
             lastUpdatedAt: surfaceSnapshot.lastUpdatedAt
         )
     }
