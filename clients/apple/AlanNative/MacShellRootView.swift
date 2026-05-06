@@ -760,6 +760,12 @@ private struct ShellSidebarView: View {
         let primaryPane = panes.first
         let title = tabTitle(for: tab)
 
+        if let primaryPane,
+           let status = shellTerminalStatusSummary(for: primaryPane)
+        {
+            return status
+        }
+
         if let branch = primaryPane?.context?.gitBranch,
            let folder = primaryPane?.context?.workingDirectoryName
         {

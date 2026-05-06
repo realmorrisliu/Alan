@@ -9,6 +9,10 @@ struct TerminalPaneView: View {
             paneCanvas
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
 
+            if showsMetadataStrip {
+                paneMetadataStrip
+            }
+
             if host.panesForSelectedTab.count > 1 {
                 paneSelectorStrip
             }
@@ -32,6 +36,16 @@ struct TerminalPaneView: View {
 
         return ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
+                if let selectedPane,
+                   let status = shellTerminalStatusSummary(for: selectedPane)
+                {
+                    compactMetaChip(
+                        title: status,
+                        icon: statusIcon(for: selectedPane),
+                        tint: statusTint(for: selectedPane)
+                    )
+                }
+
                 if let workingDirectory = shellVisibleLabel(
                     selectedPane?.context?.workingDirectoryName
                         ?? selectedPane?.cwd
@@ -83,7 +97,8 @@ struct TerminalPaneView: View {
                 ?? selectedPane?.cwd
         )
 
-        return (workingDirectory != nil && workingDirectory != selectedPaneTitle)
+        return selectedPane.flatMap(shellTerminalStatusSummary) != nil
+            || (workingDirectory != nil && workingDirectory != selectedPaneTitle)
             || selectedPane?.context?.gitBranch != nil
             || selectedPane?.attention == .awaitingUser
             || selectedPane?.attention == .notable
@@ -108,6 +123,38 @@ struct TerminalPaneView: View {
             Capsule(style: .continuous)
                 .stroke(ShellPalette.line.opacity(0.22), lineWidth: 1)
         }
+    }
+
+    private func statusIcon(for pane: ShellPane) -> String {
+        if pane.context?.processState == "exited"
+            || pane.context?.surfaceReadiness == "child_exited"
+        {
+            return "checkmark.circle"
+        }
+        if pane.context?.rendererHealth == "failed"
+            || pane.context?.rendererPhase == "failed"
+            || pane.context?.surfaceReadiness == "renderer_failed"
+        {
+            return "exclamationmark.triangle"
+        }
+        if pane.attention == .awaitingUser || pane.attention == .notable {
+            return "bell.badge"
+        }
+        return "info.circle"
+    }
+
+    private func statusTint(for pane: ShellPane) -> Color {
+        if pane.context?.rendererHealth == "failed"
+            || pane.context?.rendererPhase == "failed"
+            || pane.context?.surfaceReadiness == "renderer_failed"
+            || pane.attention == .awaitingUser
+        {
+            return ShellPalette.attention
+        }
+        if pane.attention == .notable {
+            return ShellPalette.mutedInk
+        }
+        return ShellPalette.mutedInk
     }
 
     private var paneCanvas: some View {
@@ -705,23 +752,4 @@ private struct TerminalMonoLine: View {
     }
 }
 
-func shellUserFacingSummary(_ summary: String?) -> String? {
-    guard let summary else { return nil }
-
-    let trimmed = summary.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !trimmed.isEmpty else { return nil }
-
-    let internalOnlySummaries = [
-        "title updated",
-        "input committed",
-        "terminal rendering",
-        "window attached",
-    ]
-
-    if internalOnlySummaries.contains(trimmed.lowercased()) {
-        return nil
-    }
-
-    return trimmed
-}
 #endif

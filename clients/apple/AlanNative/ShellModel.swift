@@ -50,6 +50,11 @@ struct ShellContextSnapshot: Codable, Equatable {
     let shellIntegrationSource: String?
     let processState: String?
     let rendererPhase: String?
+    let rendererHealth: String?
+    let surfaceReadiness: String?
+    let inputReady: Bool?
+    let readonly: Bool?
+    let terminalMode: String?
     let displayName: String?
     let displayID: String?
     let windowTitle: String?
@@ -68,6 +73,11 @@ struct ShellContextSnapshot: Codable, Equatable {
         shellIntegrationSource: String?,
         processState: String?,
         rendererPhase: String? = nil,
+        rendererHealth: String? = nil,
+        surfaceReadiness: String? = nil,
+        inputReady: Bool? = nil,
+        readonly: Bool? = nil,
+        terminalMode: String? = nil,
         displayName: String? = nil,
         displayID: String? = nil,
         windowTitle: String? = nil,
@@ -85,6 +95,11 @@ struct ShellContextSnapshot: Codable, Equatable {
         self.shellIntegrationSource = shellIntegrationSource
         self.processState = processState
         self.rendererPhase = rendererPhase
+        self.rendererHealth = rendererHealth
+        self.surfaceReadiness = surfaceReadiness
+        self.inputReady = inputReady
+        self.readonly = readonly
+        self.terminalMode = terminalMode
         self.displayName = displayName
         self.displayID = displayID
         self.windowTitle = windowTitle
@@ -104,11 +119,73 @@ struct ShellContextSnapshot: Codable, Equatable {
         case shellIntegrationSource = "shell_integration_source"
         case processState = "process_state"
         case rendererPhase = "renderer_phase"
+        case rendererHealth = "renderer_health"
+        case surfaceReadiness = "surface_readiness"
+        case inputReady = "input_ready"
+        case readonly
+        case terminalMode = "terminal_mode"
         case displayName = "display_name"
         case displayID = "display_id"
         case windowTitle = "window_title"
         case lastMetadataAt = "last_metadata_at"
         case lastCommandExitCode = "last_command_exit_code"
+    }
+}
+
+func shellUserFacingSummary(_ summary: String?) -> String? {
+    guard let summary else { return nil }
+
+    let trimmed = summary.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { return nil }
+
+    let internalOnlySummaries = [
+        "title updated",
+        "input committed",
+        "terminal rendering",
+        "window attached",
+    ]
+
+    if internalOnlySummaries.contains(trimmed.lowercased()) {
+        return nil
+    }
+
+    return trimmed
+}
+
+func shellTerminalStatusSummary(for pane: ShellPane) -> String? {
+    if pane.context?.processState == "exited"
+        || pane.context?.surfaceReadiness == "child_exited"
+    {
+        if let exitCode = pane.context?.lastCommandExitCode {
+            return "Exited \(exitCode)"
+        }
+        return "Exited"
+    }
+
+    if pane.context?.rendererHealth == "failed"
+        || pane.context?.rendererPhase == "failed"
+        || pane.context?.surfaceReadiness == "renderer_failed"
+    {
+        return "Renderer failed"
+    }
+
+    if pane.context?.readonly == true {
+        return "Read-only"
+    }
+
+    if pane.context?.inputReady == false,
+       pane.context?.surfaceReadiness == "input_not_ready"
+    {
+        return "Starting"
+    }
+
+    switch pane.attention {
+    case .awaitingUser:
+        return shellUserFacingSummary(pane.viewport?.summary) ?? "Needs attention"
+    case .notable:
+        return shellUserFacingSummary(pane.viewport?.summary) ?? "Terminal bell"
+    case .active, .idle:
+        return nil
     }
 }
 
