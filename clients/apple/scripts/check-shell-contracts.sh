@@ -86,6 +86,11 @@ require_pattern \
     "Ghostty occlusion bridge must pass visible=true for visible windows"
 
 require_pattern \
+    "clients/apple/AlanNative/GhosttyLiveHost.swift" \
+    "if let surface = self\\.surface" \
+    "Ghostty wakeup ticks must look up the current surface before refreshing"
+
+require_pattern \
     "clients/apple/AlanNative/ShellHostController.swift" \
     "struct ShellWindowContext" \
     "shell host must expose a per-window context"

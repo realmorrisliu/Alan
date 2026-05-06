@@ -540,6 +540,9 @@ final class AlanGhosttyLiveHost: NSObject {
             if let app = self.app {
                 ghostty_app_tick(app)
             }
+            if let surface = self.surface {
+                ghostty_surface_refresh(surface)
+            }
         }
     }
 
