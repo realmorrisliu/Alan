@@ -52,6 +52,11 @@ serve:
 build:
     cargo build --release
 
+# Build and launch the native macOS app
+app:
+    xcodebuild -project clients/apple/AlanNative.xcodeproj -scheme AlanNative -configuration Debug -destination platform=macOS -derivedDataPath target/xcode-derived build
+    /usr/bin/open -n target/xcode-derived/Build/Products/Debug/Alan.app
+
 # Install alan to ~/.alan/bin
 install:
     ./scripts/install.sh

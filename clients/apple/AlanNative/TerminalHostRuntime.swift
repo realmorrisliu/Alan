@@ -45,6 +45,7 @@ struct AlanCommandResolution: Equatable {
     let launchPath: String
     let arguments: [String]
     let bootCommand: String
+    let surfaceCommand: String?
     let summary: String
     let detail: String?
     let repoRoot: String?
@@ -117,6 +118,7 @@ struct AlanCommandResolution: Equatable {
                 launchPath: "/bin/zsh",
                 arguments: ["-lc", customCommand],
                 bootCommand: customCommand,
+                surfaceCommand: customCommand,
                 summary: "Launching pane from ALAN_SHELL_BOOT_COMMAND",
                 detail: customCommand,
                 repoRoot: repoRoot,
@@ -131,7 +133,8 @@ struct AlanCommandResolution: Equatable {
                 summary: "Launching pane from ALAN_SHELL_LOGIN_SHELL",
                 detail: shellOverride,
                 repoRoot: repoRoot,
-                candidates: candidates
+                candidates: candidates,
+                inheritGhosttyCommand: false
             )
         }
 
@@ -272,6 +275,7 @@ struct AlanCommandResolution: Equatable {
             launchPath: "/bin/zsh",
             arguments: ["-lc", "alan chat"],
             bootCommand: "alan chat",
+            surfaceCommand: "alan chat",
             summary: "No direct Alan binary found; falling back to shell PATH lookup",
             detail: "Make sure `alan` is in PATH or set ALAN_SHELL_ALAN_PATH.",
             repoRoot: repoRoot,
@@ -285,7 +289,8 @@ struct AlanCommandResolution: Equatable {
         summary: String,
         detail: String?,
         repoRoot: String?,
-        candidates: [AlanCommandCandidate]
+        candidates: [AlanCommandCandidate],
+        inheritGhosttyCommand: Bool = true
     ) -> AlanCommandResolution {
         let arguments = ["-l"]
         let bootCommand = ([executablePath] + arguments)
@@ -298,6 +303,7 @@ struct AlanCommandResolution: Equatable {
             launchPath: executablePath,
             arguments: arguments,
             bootCommand: bootCommand,
+            surfaceCommand: inheritGhosttyCommand ? nil : bootCommand,
             summary: summary,
             detail: detail,
             repoRoot: repoRoot,
@@ -324,6 +330,7 @@ struct AlanCommandResolution: Equatable {
             launchPath: executablePath,
             arguments: arguments,
             bootCommand: bootCommand,
+            surfaceCommand: bootCommand,
             summary: summary,
             detail: detail,
             repoRoot: repoRoot,
@@ -471,6 +478,10 @@ struct AlanShellBootProfile: Equatable {
         command.bootCommand
     }
 
+    var surfaceCommand: String? {
+        command.surfaceCommand
+    }
+
     var environmentPreview: [(key: String, value: String)] {
         environment.keys.sorted().map { ($0, environment[$0] ?? "") }
     }
@@ -486,9 +497,6 @@ struct AlanShellBootProfile: Equatable {
         let bindingFile = alanShellBindingFileURL(windowID: shellState.windowID, paneID: pane.paneID)
 
         var environment: [String: String] = [
-            "TERM": "xterm-ghostty",
-            "TERM_PROGRAM": "alan-shell",
-            "COLORTERM": "truecolor",
             "ALAN_SHELL_SOCKET": controlPlaneSocket.path,
             "ALAN_SHELL_WINDOW_ID": shellState.windowID,
             "ALAN_SHELL_SPACE_ID": pane.spaceID,
@@ -503,14 +511,6 @@ struct AlanShellBootProfile: Equatable {
             "ALAN_SHELL_COMMANDS_DIR": controlPlaneRoot.appendingPathComponent("commands").path,
             "ALAN_SHELL_RESULTS_DIR": controlPlaneRoot.appendingPathComponent("results").path,
         ]
-
-        if let resourcesPath = ghostty.resourcesPath {
-            environment["GHOSTTY_RESOURCES_DIR"] = resourcesPath
-        }
-
-        if let terminfoPath = ghostty.terminfoPath {
-            environment["TERMINFO_DIRS"] = terminfoPath
-        }
 
         if let executablePath = command.executablePath {
             environment["ALAN_SHELL_EXECUTABLE"] = executablePath

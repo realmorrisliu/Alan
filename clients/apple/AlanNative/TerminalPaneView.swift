@@ -5,19 +5,17 @@ struct TerminalPaneView: View {
     @ObservedObject var host: ShellHostController
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            if showsMetadataStrip {
-                paneMetadataStrip
-            }
+        VStack(alignment: .leading, spacing: 10) {
             paneCanvas
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
 
             if host.panesForSelectedTab.count > 1 {
                 paneSelectorStrip
             }
         }
-        .padding(.horizontal, 4)
-        .padding(.top, 4)
-        .padding(.bottom, 2)
+        .padding(.top, 8)
+        .padding(.trailing, 8)
+        .padding(.bottom, 8)
     }
 
     private var paneMetadataStrip: some View {
@@ -409,10 +407,9 @@ private struct ShellPaneTreeLayoutView: View {
                let pane = host.shellState.panes.first(where: { $0.paneID == paneID }) {
                 ShellTerminalLeafView(
                     pane: pane,
-                    runtime: host.runtime(for: pane.paneID),
                     bootProfile: host.bootProfile(for: pane),
+                    isSelected: host.selectedPane?.paneID == pane.paneID,
                     runtimeRegistry: host.terminalRuntimeRegistry,
-                    isFocused: host.shellState.focusedPaneID == pane.paneID,
                     onSelect: { host.focus(paneID: pane.paneID) },
                     onRuntimeUpdate: host.updateTerminalRuntime,
                     onMetadataUpdate: { metadata in
@@ -442,127 +439,41 @@ private struct ShellPaneTreeLayoutView: View {
 }
 
 private struct ShellTerminalLeafView: View {
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let pane: ShellPane
-    let runtime: TerminalHostRuntimeSnapshot
     let bootProfile: AlanShellBootProfile?
+    let isSelected: Bool
     let runtimeRegistry: TerminalRuntimeRegistry
-    let isFocused: Bool
     let onSelect: () -> Void
     let onRuntimeUpdate: (TerminalHostRuntimeSnapshot) -> Void
     let onMetadataUpdate: (TerminalPaneMetadataSnapshot) -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 7) {
-                Circle()
-                    .fill(isFocused ? ShellPalette.accent : Color.white.opacity(0.28))
-                    .frame(width: 5, height: 5)
-
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(paneTitle)
-                        .font(.system(size: 11.5, weight: .semibold))
-                        .tracking(-0.1)
-                        .foregroundStyle(.white.opacity(0.96))
-                    if let summary = paneSubtitle {
-                        Text(summary)
-                            .font(.system(size: 9.5, weight: .medium))
-                            .foregroundStyle(.white.opacity(0.52))
-                            .lineLimit(1)
-                    }
-                }
-
-                Spacer(minLength: 8)
-
-                if pane.resolvedLaunchTarget == .alan {
-                    Image(systemName: "sparkles")
-                        .font(.system(size: 8.5, weight: .bold))
-                        .foregroundStyle(ShellPalette.accentSoft)
-                }
-
-                if pane.attention == .awaitingUser || pane.attention == .notable {
-                    HStack(spacing: 4) {
-                        Circle()
-                            .fill(pane.attention == .awaitingUser ? ShellPalette.attention : Color.white.opacity(0.68))
-                            .frame(width: 4.5, height: 4.5)
-                        Text(pane.attention == .awaitingUser ? "Waiting" : "Notice")
-                            .font(.system(size: 9.5, weight: .semibold))
-                            .foregroundStyle(pane.attention == .awaitingUser ? ShellPalette.attention : .white.opacity(0.68))
-                    }
-                }
-            }
-            .padding(.horizontal, 12)
-            .padding(.top, 8)
-            .padding(.bottom, 6)
-            .contentShape(Rectangle())
-            .onTapGesture(perform: onSelect)
-
-            TerminalHostView(
-                pane: pane,
-                bootProfile: bootProfile,
-                runtimeRegistry: runtimeRegistry,
-                onRuntimeUpdate: onRuntimeUpdate,
-                onMetadataUpdate: onMetadataUpdate
-            )
-            .id(pane.paneID)
-            .frame(minHeight: 260, maxHeight: .infinity)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(ShellPalette.terminal)
+        TerminalHostView(
+            pane: pane,
+            bootProfile: bootProfile,
+            isSelected: isSelected,
+            runtimeRegistry: runtimeRegistry,
+            onRuntimeUpdate: onRuntimeUpdate,
+            onMetadataUpdate: onMetadataUpdate
         )
+        .id(pane.paneID)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(ShellPalette.terminal)
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .stroke(
-                    isFocused ? ShellPalette.accent.opacity(0.55) : ShellPalette.line.opacity(0.18),
-                    lineWidth: isFocused ? 1.25 : 1
+                    ShellPalette.accent.opacity(0.32),
+                    lineWidth: 1
                 )
         }
         .shadow(
-            color: isFocused ? ShellPalette.accent.opacity(0.12) : Color.black.opacity(0.035),
-            radius: isFocused ? 14 : 8,
-            y: isFocused ? 8 : 4
+            color: Color.black.opacity(0.10),
+            radius: 18,
+            y: 8
         )
-        .scaleEffect(isFocused ? 1 : 0.998)
-        .animation(reduceMotion ? nil : .easeOut(duration: 0.16), value: isFocused)
-    }
-
-    private var paneTitle: String {
-        shellDisplayTitle(
-            rawTitle: pane.viewport?.title,
-            workingDirectoryName: pane.context?.workingDirectoryName,
-            cwd: pane.cwd,
-            program: pane.process?.program,
-            launchTarget: pane.resolvedLaunchTarget,
-            fallback: pane.resolvedLaunchTarget == .alan ? "Alan" : "Shell"
-        )
-    }
-
-    private var paneSubtitle: String? {
-        if let branch = pane.context?.gitBranch {
-            return branch
-        }
-
-        if let folder = shellVisibleLabel(pane.context?.workingDirectoryName) ?? shellPathLeaf(pane.cwd),
-           folder != paneTitle
-        {
-            return folder
-        }
-
-        if let summary = shellUserFacingSummary(pane.viewport?.summary),
-           summary != paneTitle
-        {
-            return summary
-        }
-
-        if let program = shellVisibleLabel(pane.process?.program),
-           program.localizedCaseInsensitiveCompare(paneTitle) != .orderedSame
-        {
-            return program
-        }
-
-        return nil
+        .contentShape(Rectangle())
+        .onTapGesture(perform: onSelect)
     }
 }
 

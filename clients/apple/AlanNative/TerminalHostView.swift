@@ -11,6 +11,7 @@ import GhosttyKit
 struct TerminalHostView: NSViewRepresentable {
     let pane: ShellPane?
     let bootProfile: AlanShellBootProfile?
+    let isSelected: Bool
     let runtimeRegistry: TerminalRuntimeRegistry
     let onRuntimeUpdate: (TerminalHostRuntimeSnapshot) -> Void
     let onMetadataUpdate: (TerminalPaneMetadataSnapshot) -> Void
@@ -19,6 +20,7 @@ struct TerminalHostView: NSViewRepresentable {
         runtimeRegistry.hostView(
             for: pane,
             bootProfile: bootProfile,
+            isSelected: isSelected,
             onRuntimeUpdate: onRuntimeUpdate,
             onMetadataUpdate: onMetadataUpdate
         )
@@ -28,6 +30,7 @@ struct TerminalHostView: NSViewRepresentable {
         nsView.configure(
             pane: pane,
             bootProfile: bootProfile,
+            isSelected: isSelected,
             onRuntimeUpdate: onRuntimeUpdate,
             onMetadataUpdate: onMetadataUpdate
         )
@@ -46,6 +49,7 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
 
     private var pane: ShellPane?
     private var bootProfile: AlanShellBootProfile?
+    private var isSelected = false
     private var runtimeObserver: ((TerminalHostRuntimeSnapshot) -> Void)?
     private var metadataObserver: ((TerminalPaneMetadataSnapshot) -> Void)?
     private var windowObservers: [NSObjectProtocol] = []
@@ -58,6 +62,8 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
     private var keyTextAccumulator: [String]?
     private var previousPressureStage = 0
     private var hasTornDownRuntime = false
+    private var pendingFocusRequest = false
+    private var needsWindowAttachmentFocus = false
 
 #if canImport(GhosttyKit)
     private let liveHost = AlanGhosttyLiveHost()
@@ -79,6 +85,8 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
     override var acceptsFirstResponder: Bool {
         true
     }
+
+    override var mouseDownCanMoveWindow: Bool { false }
 
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
         true
@@ -109,7 +117,32 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
         super.viewDidMoveToWindow()
         installWindowObservers()
         window?.acceptsMouseMovedEvents = true
+        if window != nil, needsWindowAttachmentFocus {
+            needsWindowAttachmentFocus = false
+            focusTerminalSoon()
+        } else if window == nil {
+            needsWindowAttachmentFocus = false
+            pendingFocusRequest = false
+        }
         publishRuntimeSnapshot()
+    }
+
+    override func becomeFirstResponder() -> Bool {
+        let result = super.becomeFirstResponder()
+        if result {
+            synchronizeLiveHost()
+            publishRuntimeSnapshot()
+        }
+        return result
+    }
+
+    override func resignFirstResponder() -> Bool {
+        let result = super.resignFirstResponder()
+        if result {
+            synchronizeLiveHost()
+            publishRuntimeSnapshot()
+        }
+        return result
     }
 
     override func viewDidChangeBackingProperties() {
@@ -126,11 +159,16 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
     func configure(
         pane: ShellPane?,
         bootProfile: AlanShellBootProfile?,
+        isSelected: Bool,
         onRuntimeUpdate: @escaping (TerminalHostRuntimeSnapshot) -> Void,
         onMetadataUpdate: @escaping (TerminalPaneMetadataSnapshot) -> Void
     ) {
+        let previousPaneID = self.pane?.paneID
+        let wasSelected = self.isSelected
+
         self.pane = pane
         self.bootProfile = bootProfile
+        self.isSelected = isSelected
         runtimeObserver = onRuntimeUpdate
         metadataObserver = onMetadataUpdate
 
@@ -163,6 +201,13 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
         syncStatusBadge()
         syncOverlayVisibility()
         synchronizeLiveHost()
+        if shouldAutoFocusAfterConfigure(
+            previousPaneID: previousPaneID,
+            paneID: pane?.paneID,
+            wasSelected: wasSelected
+        ) {
+            focusTerminalSoon()
+        }
         reportMetadataIfNeeded(paneMetadata)
         publishRuntimeSnapshot()
     }
@@ -170,19 +215,24 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
     private func reportMetadataIfNeeded(_ snapshot: TerminalPaneMetadataSnapshot) {
         guard lastReportedMetadata != snapshot else { return }
         lastReportedMetadata = snapshot
-        metadataObserver?(snapshot)
+        guard let metadataObserver else { return }
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.lastReportedMetadata == snapshot else { return }
+            metadataObserver(snapshot)
+        }
     }
 
     private func configureView() {
         wantsLayer = true
         layer?.backgroundColor = NSColor(calibratedRed: 0.06, green: 0.08, blue: 0.10, alpha: 1).cgColor
-        layer?.cornerRadius = 16
-        layer?.borderWidth = 1
-        layer?.borderColor = NSColor.white.withAlphaComponent(0.10).cgColor
+        layer?.cornerRadius = 12
+        layer?.cornerCurve = .continuous
+        layer?.masksToBounds = true
+        layer?.borderWidth = 0
         layer?.shadowColor = NSColor.black.cgColor
-        layer?.shadowOpacity = 0.12
-        layer?.shadowRadius = 16
-        layer?.shadowOffset = CGSize(width: 0, height: -4)
+        layer?.shadowOpacity = 0
+        layer?.shadowRadius = 0
+        layer?.shadowOffset = .zero
 
         translatesAutoresizingMaskIntoConstraints = false
 
@@ -338,6 +388,15 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
                 object: window,
                 queue: .main
             ) { [weak self] _ in
+                self?.synchronizeLiveHost()
+                self?.publishRuntimeSnapshot()
+            },
+            center.addObserver(
+                forName: NSWindow.didChangeOcclusionStateNotification,
+                object: window,
+                queue: .main
+            ) { [weak self] _ in
+                self?.synchronizeLiveHost()
                 self?.publishRuntimeSnapshot()
             },
         ]
@@ -382,7 +441,7 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
 
     private func reportRuntimeIfNeeded(
         _ snapshot: TerminalHostRuntimeSnapshot,
-        runtimeObserver: (TerminalHostRuntimeSnapshot) -> Void
+        runtimeObserver: @escaping (TerminalHostRuntimeSnapshot) -> Void
     ) {
         if let lastReportedRuntime,
            runtimeSnapshotEqualsIgnoringTimestamp(lastReportedRuntime, snapshot)
@@ -391,7 +450,15 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
         }
 
         lastReportedRuntime = snapshot
-        runtimeObserver(snapshot)
+        DispatchQueue.main.async { [weak self] in
+            guard let self,
+                  let lastReportedRuntime = self.lastReportedRuntime,
+                  self.runtimeSnapshotEqualsIgnoringTimestamp(lastReportedRuntime, snapshot)
+            else {
+                return
+            }
+            runtimeObserver(snapshot)
+        }
     }
 
     private func runtimeSnapshotEqualsIgnoringTimestamp(
@@ -475,8 +542,34 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
         window?.firstResponder === self
     }
 
+    private func focusTerminalSoon() {
+        guard isSelected, pane != nil else { return }
+        guard window != nil else {
+            needsWindowAttachmentFocus = true
+            return
+        }
+        guard !pendingFocusRequest else { return }
+        pendingFocusRequest = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            pendingFocusRequest = false
+            guard isSelected, pane != nil, window != nil else { return }
+            requestTerminalFocus()
+        }
+    }
+
+    private func shouldAutoFocusAfterConfigure(
+        previousPaneID: String?,
+        paneID: String?,
+        wasSelected: Bool
+    ) -> Bool {
+        guard isSelected, paneID != nil else { return false }
+        return previousPaneID != paneID || !wasSelected
+    }
+
     private func requestTerminalFocus() {
         window?.makeFirstResponder(self)
+        synchronizeLiveHost()
         publishRuntimeSnapshot()
     }
 
@@ -641,6 +734,7 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
 
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
 #if canImport(GhosttyKit)
+        guard !isApplicationReservedKeyEquivalent(event) else { return false }
         guard event.type == .keyDown, isFocused, liveHost.isSurfaceReady else { return false }
 
         var keyEvent = ghosttyKeyEvent(for: event, action: GHOSTTY_ACTION_PRESS)
@@ -661,6 +755,11 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
 
     override func keyDown(with event: NSEvent) {
 #if canImport(GhosttyKit)
+        if isApplicationReservedKeyEquivalent(event) {
+            NSApp.terminate(nil)
+            return
+        }
+
         guard liveHost.isSurfaceReady else {
             interpretKeyEvents([event])
             return
@@ -835,6 +934,9 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
     }
 
     private func unshiftedCodepointFromEvent(_ event: NSEvent) -> UInt32 {
+        guard event.type != .flagsChanged else {
+            return 0
+        }
         guard let chars = event.characters(byApplyingModifiers: []) ?? event.charactersIgnoringModifiers ?? event.characters,
               let scalar = chars.unicodeScalars.first else {
             return 0
@@ -868,6 +970,17 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
             return !isControlCharacter(scalar)
         }
         return true
+    }
+
+    private func isApplicationReservedKeyEquivalent(_ event: NSEvent) -> Bool {
+        guard event.type == .keyDown else { return false }
+
+        let flags = event.modifierFlags
+            .intersection(.deviceIndependentFlagsMask)
+            .subtracting([.capsLock, .numericPad, .function])
+        guard flags == .command else { return false }
+
+        return event.charactersIgnoringModifiers?.lowercased() == "q"
     }
 
     private func syncPreedit(clearIfNeeded: Bool = true) {
@@ -984,11 +1097,15 @@ private func makeCanvasView() -> NSView {
 #if canImport(GhosttyKit)
     let view = AlanGhosttyCanvasView(frame: .zero)
 #else
-    let view = NSView(frame: .zero)
+    let view = AlanTerminalFallbackCanvasView(frame: .zero)
     view.wantsLayer = true
     view.layer?.backgroundColor = NSColor.clear.cgColor
 #endif
     view.translatesAutoresizingMaskIntoConstraints = false
     return view
+}
+
+final class AlanTerminalFallbackCanvasView: NSView {
+    override var mouseDownCanMoveWindow: Bool { false }
 }
 #endif

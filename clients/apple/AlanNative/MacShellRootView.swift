@@ -3,23 +3,163 @@ import SwiftUI
 #if os(macOS)
 import AppKit
 
+private extension Color {
+    static func shellAdaptive(
+        light: (Double, Double, Double),
+        dark: (Double, Double, Double),
+        alpha: Double = 1
+    ) -> Color {
+        shellAdaptive(light: light, lightAlpha: alpha, dark: dark, darkAlpha: alpha)
+    }
+
+    static func shellAdaptive(
+        light: (Double, Double, Double),
+        lightAlpha: Double,
+        dark: (Double, Double, Double),
+        darkAlpha: Double
+    ) -> Color {
+        Color(
+            NSColor(name: nil) { appearance in
+                let isDark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+                let rgb = isDark ? dark : light
+                let alpha = isDark ? darkAlpha : lightAlpha
+                return NSColor(red: rgb.0, green: rgb.1, blue: rgb.2, alpha: alpha)
+            }
+        )
+    }
+}
+
 enum ShellPalette {
-    static let canvas = Color(red: 0.94, green: 0.94, blue: 0.965)
-    static let window = Color(red: 0.972, green: 0.973, blue: 0.985)
-    static let sidebar = Color(red: 0.922, green: 0.924, blue: 0.953)
-    static let sidebarRail = Color(red: 0.902, green: 0.907, blue: 0.941)
-    static let sidebarCard = Color(red: 0.98, green: 0.98, blue: 0.995)
-    static let workspace = Color(red: 0.979, green: 0.98, blue: 0.989)
-    static let terminal = Color(red: 0.10, green: 0.12, blue: 0.16)
-    static let terminalSoft = Color(red: 0.16, green: 0.18, blue: 0.24)
-    static let accent = Color(red: 0.31, green: 0.39, blue: 0.71)
-    static let accentSoft = Color(red: 0.90, green: 0.92, blue: 0.98)
-    static let ink = Color(red: 0.16, green: 0.18, blue: 0.24)
-    static let mutedInk = Color(red: 0.43, green: 0.45, blue: 0.54)
-    static let line = Color(red: 0.82, green: 0.83, blue: 0.89)
-    static let panel = Color.white.opacity(0.74)
-    static let panelSoft = Color.white.opacity(0.6)
-    static let attention = Color(red: 0.82, green: 0.55, blue: 0.24)
+    static let canvas = Color.shellAdaptive(
+        light: (0.94, 0.94, 0.965),
+        dark: (0.045, 0.050, 0.062)
+    )
+    static let window = Color.shellAdaptive(
+        light: (0.972, 0.973, 0.985),
+        dark: (0.055, 0.061, 0.074)
+    )
+    static let sidebar = Color.shellAdaptive(
+        light: (0.922, 0.924, 0.953),
+        dark: (0.071, 0.079, 0.096)
+    )
+    static let sidebarRail = Color.shellAdaptive(
+        light: (0.902, 0.907, 0.941),
+        dark: (0.083, 0.092, 0.112)
+    )
+    static let sidebarCard = Color.shellAdaptive(
+        light: (0.98, 0.98, 0.995),
+        lightAlpha: 1.0,
+        dark: (0.172, 0.188, 0.224),
+        darkAlpha: 0.92
+    )
+    static let sidebarSelection = Color.shellAdaptive(
+        light: (1.0, 1.0, 1.0),
+        lightAlpha: 0.15,
+        dark: (0.205, 0.225, 0.270),
+        darkAlpha: 0.72
+    )
+    static let sidebarHover = Color.shellAdaptive(
+        light: (1.0, 1.0, 1.0),
+        lightAlpha: 0.08,
+        dark: (0.185, 0.205, 0.245),
+        darkAlpha: 0.46
+    )
+    static let sidebarControl = Color.shellAdaptive(
+        light: (1.0, 1.0, 1.0),
+        lightAlpha: 0.12,
+        dark: (0.190, 0.210, 0.252),
+        darkAlpha: 0.54
+    )
+    static let sidebarControlStrong = Color.shellAdaptive(
+        light: (1.0, 1.0, 1.0),
+        lightAlpha: 0.18,
+        dark: (0.215, 0.235, 0.282),
+        darkAlpha: 0.72
+    )
+    static let railBase = Color.shellAdaptive(
+        light: (1.0, 1.0, 1.0),
+        lightAlpha: 0.08,
+        dark: (0.155, 0.172, 0.210),
+        darkAlpha: 0.58
+    )
+    static let railHover = Color.shellAdaptive(
+        light: (1.0, 1.0, 1.0),
+        lightAlpha: 0.14,
+        dark: (0.190, 0.210, 0.252),
+        darkAlpha: 0.66
+    )
+    static let railSelection = Color.shellAdaptive(
+        light: (1.0, 1.0, 1.0),
+        lightAlpha: 0.22,
+        dark: (0.235, 0.255, 0.310),
+        darkAlpha: 0.78
+    )
+    static let workspace = Color.shellAdaptive(
+        light: (0.979, 0.98, 0.989),
+        dark: (0.050, 0.056, 0.070)
+    )
+    static let terminal = Color.shellAdaptive(
+        light: (0.10, 0.12, 0.16),
+        dark: (0.050, 0.061, 0.076)
+    )
+    static let terminalSoft = Color.shellAdaptive(
+        light: (0.16, 0.18, 0.24),
+        dark: (0.100, 0.116, 0.145)
+    )
+    static let accent = Color.shellAdaptive(
+        light: (0.31, 0.39, 0.71),
+        dark: (0.50, 0.60, 0.94)
+    )
+    static let accentSoft = Color.shellAdaptive(
+        light: (0.90, 0.92, 0.98),
+        dark: (0.18, 0.22, 0.34)
+    )
+    static let ink = Color.shellAdaptive(
+        light: (0.16, 0.18, 0.24),
+        dark: (0.90, 0.92, 0.96)
+    )
+    static let mutedInk = Color.shellAdaptive(
+        light: (0.43, 0.45, 0.54),
+        dark: (0.64, 0.68, 0.75)
+    )
+    static let line = Color.shellAdaptive(
+        light: (0.82, 0.83, 0.89),
+        dark: (0.255, 0.285, 0.345)
+    )
+    static let panel = Color.shellAdaptive(
+        light: (1.0, 1.0, 1.0),
+        lightAlpha: 0.74,
+        dark: (0.135, 0.150, 0.180),
+        darkAlpha: 0.78
+    )
+    static let panelSoft = Color.shellAdaptive(
+        light: (1.0, 1.0, 1.0),
+        lightAlpha: 0.60,
+        dark: (0.125, 0.140, 0.170),
+        darkAlpha: 0.64
+    )
+    static let materialScrim = Color.shellAdaptive(
+        light: (0.922, 0.924, 0.953),
+        lightAlpha: 0.35,
+        dark: (0.030, 0.037, 0.050),
+        darkAlpha: 0.78
+    )
+    static let materialTopWash = Color.shellAdaptive(
+        light: (1.0, 1.0, 1.0),
+        lightAlpha: 0.06,
+        dark: (0.130, 0.150, 0.205),
+        darkAlpha: 0.18
+    )
+    static let materialBottomShade = Color.shellAdaptive(
+        light: (0.84, 0.86, 0.92),
+        lightAlpha: 0.04,
+        dark: (0.012, 0.016, 0.024),
+        darkAlpha: 0.34
+    )
+    static let attention = Color.shellAdaptive(
+        light: (0.82, 0.55, 0.24),
+        dark: (0.94, 0.68, 0.34)
+    )
 }
 
 private struct SidebarMaterialView: NSViewRepresentable {
@@ -32,6 +172,23 @@ private struct SidebarMaterialView: NSViewRepresentable {
     }
 
     func updateNSView(_ nsView: NSVisualEffectView, context: Context) {}
+}
+
+struct ShellMaterialBackgroundView: View {
+    var body: some View {
+        ZStack {
+            SidebarMaterialView()
+            ShellPalette.materialScrim
+            LinearGradient(
+                colors: [
+                    ShellPalette.materialTopWash,
+                    ShellPalette.materialBottomShade,
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+        }
+    }
 }
 
 struct MacShellRootView: View {
@@ -59,26 +216,24 @@ struct MacShellRootView: View {
                 .ignoresSafeArea()
 
             HStack(spacing: 0) {
-                ShellSidebarView(host: host, chromeMetrics: windowChromeMetrics) {
+                ShellSidebarView(
+                    host: host,
+                    chromeMetrics: windowChromeMetrics,
+                    showsInspector: $showsInspector
+                ) {
                     withAnimation(.easeOut(duration: 0.18)) {
                         isCommandTabPresented = true
                     }
                 }
                     .frame(width: 286)
 
-                VStack(spacing: 0) {
-                    ShellTopBarView(
-                        host: host,
-                        isCommandTabPresented: $isCommandTabPresented,
-                        showsInspector: $showsInspector
-                    )
-                    ShellWorkspaceView(host: host)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background {
-                    ShellPalette.workspace
-                        .ignoresSafeArea(edges: .top)
-                }
+                ShellWorkspaceView(host: host)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .ignoresSafeArea(edges: .top)
+                    .background {
+                        ShellMaterialBackgroundView()
+                            .ignoresSafeArea(edges: .top)
+                    }
 
                 if showsInspector {
                     ShellInspectorView(host: host)
@@ -100,7 +255,8 @@ struct MacShellRootView: View {
 
                 ShellCommandTabView(
                     host: host,
-                    isPresented: $isCommandTabPresented
+                    isPresented: $isCommandTabPresented,
+                    showsInspector: $showsInspector
                 )
                 .frame(width: 520)
                 .transition(.move(edge: .top).combined(with: .opacity))
@@ -188,7 +344,7 @@ private enum AlanShellWindowPlacement {
 
     static func apply(to window: NSWindow) {
         window.title = "Alan"
-        window.isMovableByWindowBackground = false
+        window.isMovableByWindowBackground = true
         window.minSize = NSSize(width: 1180, height: 760)
         window.tabbingMode = .disallowed
 
@@ -315,6 +471,7 @@ private enum AlanShellWindowPlacement {
 private struct ShellSidebarView: View {
     @ObservedObject var host: ShellHostController
     let chromeMetrics: ShellWindowChromeMetrics
+    @Binding var showsInspector: Bool
     let openCommandTab: () -> Void
     @State private var hoveredTabID: String?
     @State private var hoveredSpaceID: String?
@@ -331,11 +488,8 @@ private struct ShellSidebarView: View {
         .padding(.bottom, 15)
         .frame(maxHeight: .infinity, alignment: .top)
         .background {
-            ZStack {
-                SidebarMaterialView()
-                ShellPalette.sidebar.opacity(0.35)
-            }
-            .ignoresSafeArea(edges: .top)
+            ShellMaterialBackgroundView()
+                .ignoresSafeArea(edges: .top)
         }
     }
 
@@ -343,7 +497,7 @@ private struct ShellSidebarView: View {
         HStack(alignment: .center, spacing: 10) {
             ZStack {
                 RoundedRectangle(cornerRadius: 11, style: .continuous)
-                    .fill(Color.white.opacity(0.18))
+                    .fill(ShellPalette.sidebarControlStrong)
                 Text("A")
                     .font(.system(size: 12.5, weight: .bold, design: .rounded))
                     .foregroundStyle(ShellPalette.accent)
@@ -360,8 +514,27 @@ private struct ShellSidebarView: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
+            .layoutPriority(1)
 
             Spacer(minLength: 8)
+
+            Button {
+                withAnimation(.easeOut(duration: 0.18)) {
+                    showsInspector.toggle()
+                }
+            } label: {
+                Image(systemName: showsInspector ? "sidebar.trailing" : "sidebar.right")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.primary)
+                    .frame(width: 26, height: 26)
+                    .background(
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .fill(ShellPalette.sidebarControl)
+                    )
+            }
+            .buttonStyle(.plain)
+            .help(showsInspector ? "Hide Inspector" : "Show Inspector")
+            .accessibilityLabel(Text(showsInspector ? "Hide Inspector" : "Show Inspector"))
 
             Menu {
                 Button("New Tab") {
@@ -377,7 +550,7 @@ private struct ShellSidebarView: View {
                     .frame(width: 26, height: 26)
                     .background(
                         RoundedRectangle(cornerRadius: 10, style: .continuous)
-                            .fill(Color.white.opacity(0.12))
+                            .fill(ShellPalette.sidebarControl)
                     )
             }
             .menuStyle(.borderlessButton)
@@ -405,7 +578,7 @@ private struct ShellSidebarView: View {
             .padding(.vertical, 10)
             .background(
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(Color.white.opacity(0.10))
+                    .fill(ShellPalette.sidebarControl)
             )
         }
         .buttonStyle(.plain)
@@ -485,7 +658,7 @@ private struct ShellSidebarView: View {
                         .frame(width: 30, height: 30)
                         .background(
                             RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                .fill(Color.white.opacity(0.10))
+                                .fill(ShellPalette.sidebarControl)
                         )
                 }
                 .menuStyle(.borderlessButton)
@@ -658,154 +831,8 @@ private struct ShellWorkspaceView: View {
     @ObservedObject var host: ShellHostController
 
     var body: some View {
-        VStack(spacing: 0) {
-            TerminalPaneView(host: host)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-        }
-        .padding(16)
-    }
-}
-
-private struct ShellTopBarView: View {
-    @ObservedObject var host: ShellHostController
-    @Binding var isCommandTabPresented: Bool
-    @Binding var showsInspector: Bool
-
-    private var title: String {
-        if let selectedTab = host.selectedTab {
-            let tabPanes = host.shellState.panes.filter { $0.tabID == selectedTab.tabID }
-            return shellTabDisplayTitle(
-                tab: selectedTab,
-                panes: tabPanes,
-                fallback: host.selectedSpace?.title ?? "Alan"
-            )
-        }
-
-        return shellDisplayTitle(
-            rawTitle: host.selectedTab?.title ?? host.selectedSpace?.title,
-            workingDirectoryName: nil,
-            cwd: nil,
-            program: nil,
-            launchTarget: .shell,
-            fallback: host.selectedSpace?.title ?? "Alan"
-        )
-    }
-
-    private var subtitle: String? {
-        var parts: [String] = []
-
-        if let selectedSpace = host.selectedSpace?.title, selectedSpace != title {
-            parts.append(selectedSpace)
-        }
-
-        if let branch = host.selectedPane?.context?.gitBranch {
-            parts.append(branch)
-        }
-
-        if host.panesForSelectedTab.count > 1 {
-            parts.append("\(host.panesForSelectedTab.count) panes")
-        }
-
-        if host.selectedPane?.resolvedLaunchTarget == .alan {
-            parts.append("Alan tab")
-        }
-
-        return parts.isEmpty ? nil : parts.joined(separator: "  ·  ")
-    }
-
-    var body: some View {
-        HStack(spacing: 8) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                    .font(.system(size: 16.5, weight: .semibold))
-                    .tracking(-0.2)
-                    .foregroundStyle(ShellPalette.ink)
-                if let subtitle {
-                    Text(subtitle)
-                        .font(.system(size: 10.5, weight: .medium))
-                        .foregroundStyle(ShellPalette.mutedInk)
-                }
-            }
-
-            ShellTopBarDragRegion()
-
-            ShellToolbarButton(
-                symbol: "magnifyingglass",
-                label: "Go to or Command..."
-            ) {
-                isCommandTabPresented = true
-            }
-            .keyboardShortcut("k", modifiers: [.command])
-
-            if host.awaitingAttentionCount > 0,
-               let firstAttention = host.attentionItems.first
-            {
-                Button {
-                    host.focusAttentionItem(firstAttention)
-                } label: {
-                    ShellToolbarBadgeButton(symbol: "bell", count: host.awaitingAttentionCount)
-                }
-                .buttonStyle(.plain)
-            }
-
-            Menu {
-                Button("New Tab") {
-                    _ = host.openTerminalTab()
-                }
-                Button("Open in Alan") {
-                    _ = host.openAlanTab()
-                }
-                Divider()
-                Button("New Space") {
-                    _ = host.createTerminalSpace()
-                }
-                Button("New Space with Alan") {
-                    _ = host.createAlanSpace()
-                }
-            } label: {
-                ShellToolbarGlyph(symbol: "plus")
-            }
-            .menuStyle(.borderlessButton)
-            .buttonStyle(.plain)
-            .menuIndicator(.hidden)
-
-            Menu {
-                Button("Split Horizontally") {
-                    _ = host.splitFocusedPane(direction: .horizontal)
-                }
-                Button("Split Vertically") {
-                    _ = host.splitFocusedPane(direction: .vertical)
-                }
-                Divider()
-                Button("Jump to attention") {
-                    _ = host.focusTopRoutingCandidate(preferredPaneID: host.selectedPane?.paneID)
-                }
-            } label: {
-                ShellToolbarGlyph(symbol: "square.split.2x1")
-            }
-            .menuStyle(.borderlessButton)
-            .buttonStyle(.plain)
-            .menuIndicator(.hidden)
-
-            ShellToolbarButton(
-                symbol: showsInspector ? "sidebar.trailing" : "sidebar.right",
-                label: showsInspector ? "Hide Inspector" : "Show Inspector"
-            ) {
-                showsInspector.toggle()
-            }
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 11)
-    }
-}
-
-private struct ShellTopBarDragRegion: View {
-    var body: some View {
-        Color.clear
-            .frame(maxWidth: .infinity, minHeight: 34)
-            .contentShape(Rectangle())
-            .gesture(WindowDragGesture())
-            .allowsWindowActivationEvents(true)
+        TerminalPaneView(host: host)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 
@@ -857,8 +884,8 @@ private struct ShellSpaceRailItem: View {
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
                     .fill(
                         isSelected
-                            ? Color.white.opacity(0.22)
-                            : (isHovered ? Color.white.opacity(0.14) : Color.white.opacity(0.08))
+                            ? ShellPalette.railSelection
+                            : (isHovered ? ShellPalette.railHover : ShellPalette.railBase)
                     )
                 Image(systemName: symbolName)
                     .font(.system(size: 11, weight: .semibold))
@@ -872,7 +899,7 @@ private struct ShellSpaceRailItem: View {
                     .frame(width: 9, height: 9)
                     .overlay {
                         Circle()
-                            .stroke(Color.white.opacity(0.9), lineWidth: 1.5)
+                            .stroke(ShellPalette.sidebarCard, lineWidth: 1.5)
                     }
                     .offset(x: 2, y: -2)
             }
@@ -959,13 +986,13 @@ private struct ShellTabSidebarRow: View {
         .padding(.horizontal, 10)
         .padding(.vertical, 7)
         .background(
-            RoundedRectangle(cornerRadius: 11, style: .continuous)
-                .fill(
-                    isSelected
-                        ? Color.white.opacity(0.15)
-                        : (isHovered ? Color.white.opacity(0.08) : Color.clear)
-                )
-        )
+                RoundedRectangle(cornerRadius: 11, style: .continuous)
+                    .fill(
+                        isSelected
+                            ? ShellPalette.sidebarSelection
+                            : (isHovered ? ShellPalette.sidebarHover : Color.clear)
+                    )
+            )
         .scaleEffect(isHovered && !isSelected ? 1.005 : 1)
         .animation(reduceMotion ? nil : .easeOut(duration: 0.16), value: isHovered)
         .animation(reduceMotion ? nil : .easeOut(duration: 0.16), value: isSelected)
@@ -1008,7 +1035,7 @@ private struct ShellTabRailView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background(
                         RoundedRectangle(cornerRadius: 18, style: .continuous)
-                            .fill(host.selectedTab?.tabID == tab.tabID ? Color.white.opacity(0.78) : Color.white.opacity(0.38))
+                            .fill(host.selectedTab?.tabID == tab.tabID ? ShellPalette.sidebarCard : ShellPalette.sidebarHover)
                     )
                     .overlay {
                         RoundedRectangle(cornerRadius: 18, style: .continuous)
@@ -1333,7 +1360,7 @@ private struct ShellTabRow: View {
         .padding(.vertical, 10)
         .background(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(isSelected ? Color.white.opacity(0.95) : Color.clear)
+                .fill(isSelected ? ShellPalette.sidebarCard : Color.clear)
         )
         .overlay {
             RoundedRectangle(cornerRadius: 14, style: .continuous)
@@ -1379,7 +1406,7 @@ private struct ShellAttentionRow: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(Color.white.opacity(0.82))
+                .fill(ShellPalette.panel)
         )
     }
 }
@@ -1401,7 +1428,7 @@ private struct ShellEmptyStateRow: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(Color.white.opacity(0.72))
+                .fill(ShellPalette.panelSoft)
         )
     }
 }
@@ -1429,6 +1456,7 @@ private enum ShellCommandTabAction: String, CaseIterable, Identifiable {
     case openAlanTab
     case jumpToAttention
     case focusBestPane
+    case toggleInspector
     case splitHorizontal
     case splitVertical
     case liftPane
@@ -1452,6 +1480,8 @@ private enum ShellCommandTabAction: String, CaseIterable, Identifiable {
             return "Jump To Attention"
         case .focusBestPane:
             return "Focus Best Routing Pane"
+        case .toggleInspector:
+            return "Toggle Inspector"
         case .splitHorizontal:
             return "Split Focused Pane Horizontally"
         case .splitVertical:
@@ -1481,6 +1511,8 @@ private enum ShellCommandTabAction: String, CaseIterable, Identifiable {
             return "Jump to the strongest pane that currently needs approval or attention."
         case .focusBestPane:
             return "Use shell routing signals to jump to the strongest candidate pane."
+        case .toggleInspector:
+            return "Show or hide the right-side shell inspector."
         case .splitHorizontal:
             return "Create a stacked split beneath the focused pane."
         case .splitVertical:
@@ -1523,6 +1555,16 @@ private enum ShellCommandTabAction: String, CaseIterable, Identifiable {
             return ["jump to attention", "jump attention", "focus waiting pane", "approval", "waiting pane"]
         case .focusBestPane:
             return ["best pane", "route", "routing", "focus best", "jump pane"]
+        case .toggleInspector:
+            return [
+                "inspector",
+                "show inspector",
+                "hide inspector",
+                "open inspector",
+                "close inspector",
+                "toggle inspector",
+                "right sidebar",
+            ]
         case .splitHorizontal:
             return ["split horizontal", "split below", "stack split"]
         case .splitVertical:
@@ -1557,6 +1599,7 @@ private struct ShellCommandTabIntent: Identifiable {
 private struct ShellCommandTabView: View {
     @ObservedObject var host: ShellHostController
     @Binding var isPresented: Bool
+    @Binding var showsInspector: Bool
     @State private var query = ""
     @FocusState private var isQueryFocused: Bool
     @StateObject private var voiceController = ShellVoiceCommandController()
@@ -1573,6 +1616,7 @@ private struct ShellCommandTabView: View {
             .openAlanTab,
             .splitVertical,
             .splitHorizontal,
+            .toggleInspector,
             .jumpToAttention,
             .newSpace,
         ]
@@ -1641,8 +1685,8 @@ private struct ShellCommandTabView: View {
 
         if let action = matchingActions.first {
             return ShellCommandTabIntent(
-                title: action.title,
-                detail: action.detail,
+                title: title(for: action),
+                detail: detail(for: action),
                 accent: ShellPalette.accent,
                 route: .action(action)
             )
@@ -1765,8 +1809,8 @@ private struct ShellCommandTabView: View {
                                 perform(action)
                             } label: {
                                 ShellCommandRow(
-                                    title: action.title,
-                                    detail: action.detail,
+                                    title: title(for: action),
+                                    detail: detail(for: action),
                                     accent: ShellPalette.accent
                                 )
                             }
@@ -1860,6 +1904,14 @@ private struct ShellCommandTabView: View {
             }
         case .focusBestPane:
             _ = host.focusTopRoutingCandidate()
+        case .toggleInspector:
+            withAnimation(.easeOut(duration: 0.18)) {
+                if let requestedInspectorVisibility {
+                    showsInspector = requestedInspectorVisibility
+                } else {
+                    showsInspector.toggle()
+                }
+            }
         case .splitHorizontal:
             _ = host.splitFocusedPane(direction: .horizontal)
         case .splitVertical:
@@ -1902,6 +1954,29 @@ private struct ShellCommandTabView: View {
         return "\(title) • \(detail)"
     }
 
+    private var requestedInspectorVisibility: Bool? {
+        let normalized = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if normalized.contains("show") || normalized.contains("open") {
+            return true
+        }
+        if normalized.contains("hide") || normalized.contains("close") {
+            return false
+        }
+        return nil
+    }
+
+    private func title(for action: ShellCommandTabAction) -> String {
+        guard action == .toggleInspector else { return action.title }
+        let shouldShow = requestedInspectorVisibility ?? !showsInspector
+        return shouldShow ? "Show Inspector" : "Hide Inspector"
+    }
+
+    private func detail(for action: ShellCommandTabAction) -> String {
+        guard action == .toggleInspector else { return action.detail }
+        let shouldShow = requestedInspectorVisibility ?? !showsInspector
+        return shouldShow ? "Open the right-side shell inspector." : "Close the right-side shell inspector."
+    }
+
     private func sectionLabel(_ value: String) -> some View {
         Text(value)
             .font(.system(size: 10, weight: .semibold, design: .rounded))
@@ -1936,6 +2011,11 @@ private final class ShellVoiceCommandController: NSObject, ObservableObject, NSS
             "close tab",
             "jump to attention",
             "focus waiting pane",
+            "show inspector",
+            "hide inspector",
+            "open inspector",
+            "close inspector",
+            "toggle inspector",
             "copy snapshot",
         ]
     }
@@ -2002,95 +2082,6 @@ private struct ShellCommandRow: View {
         .shadow(color: isHovered ? Color.black.opacity(0.022) : .clear, radius: 6, y: 3)
         .animation(reduceMotion ? nil : .easeOut(duration: 0.16), value: isHovered)
         .onHover { isHovered = $0 }
-    }
-}
-
-private struct ShellToolbarButton: View {
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var isHovered = false
-    let symbol: String
-    let label: String
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            Image(systemName: symbol)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(ShellPalette.ink)
-                .frame(width: 30, height: 30)
-                .background(
-                    RoundedRectangle(cornerRadius: 9, style: .continuous)
-                        .fill(isHovered ? Color.white.opacity(0.92) : ShellPalette.panel)
-                )
-                .overlay {
-                    RoundedRectangle(cornerRadius: 9, style: .continuous)
-                        .stroke(ShellPalette.line.opacity(isHovered ? 0.32 : 0.16), lineWidth: 1)
-                }
-        }
-        .buttonStyle(.plain)
-        .scaleEffect(isHovered ? 1.03 : 1)
-        .shadow(color: isHovered ? Color.black.opacity(0.032) : .clear, radius: 6, y: 3)
-        .animation(reduceMotion ? nil : .easeOut(duration: 0.14), value: isHovered)
-        .onHover { isHovered = $0 }
-        .help(label)
-    }
-}
-
-private struct ShellToolbarGlyph: View {
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var isHovered = false
-    let symbol: String
-
-    var body: some View {
-        Image(systemName: symbol)
-            .font(.system(size: 13, weight: .semibold))
-            .foregroundStyle(ShellPalette.ink)
-            .frame(width: 30, height: 30)
-            .background(
-                RoundedRectangle(cornerRadius: 9, style: .continuous)
-                    .fill(isHovered ? Color.white.opacity(0.92) : ShellPalette.panel)
-            )
-            .overlay {
-                RoundedRectangle(cornerRadius: 9, style: .continuous)
-                    .stroke(ShellPalette.line.opacity(isHovered ? 0.32 : 0.16), lineWidth: 1)
-            }
-            .scaleEffect(isHovered ? 1.03 : 1)
-            .shadow(color: isHovered ? Color.black.opacity(0.032) : .clear, radius: 6, y: 3)
-            .animation(reduceMotion ? nil : .easeOut(duration: 0.14), value: isHovered)
-            .onHover { isHovered = $0 }
-    }
-}
-
-private struct ShellToolbarBadgeButton: View {
-    let symbol: String
-    let count: Int
-
-    var body: some View {
-        ZStack(alignment: .topTrailing) {
-            ShellToolbarGlyph(symbol: symbol)
-
-            if count > 1 {
-                Text("\(min(count, 9))")
-                    .font(.system(size: 9, weight: .bold))
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 5)
-                    .padding(.vertical, 2)
-                    .background(
-                        Capsule(style: .continuous)
-                            .fill(ShellPalette.attention)
-                    )
-                    .offset(x: 7, y: -6)
-            } else {
-                Circle()
-                    .fill(ShellPalette.attention)
-                    .frame(width: 8, height: 8)
-                    .overlay {
-                        Circle()
-                            .stroke(Color.white.opacity(0.95), lineWidth: 1.5)
-                    }
-                    .offset(x: 6, y: -5)
-            }
-        }
     }
 }
 

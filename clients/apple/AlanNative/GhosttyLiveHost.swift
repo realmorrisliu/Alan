@@ -3,7 +3,6 @@ import Foundation
 #if os(macOS) && canImport(GhosttyKit)
 import AppKit
 import GhosttyKit
-import Metal
 import OSLog
 import QuartzCore
 
@@ -24,6 +23,7 @@ final class AlanGhosttyLiveHost: NSObject {
     private var surface: ghostty_surface_t?
     private var bootProfile: AlanShellBootProfile?
     private var envStorage: [(UnsafeMutablePointer<CChar>, UnsafeMutablePointer<CChar>)] = []
+    private let tickScheduleLock = NSLock()
     private var tickScheduled = false
     private var appObservers: [NSObjectProtocol] = []
     private var didEmitFirstRefresh = false
@@ -79,7 +79,8 @@ final class AlanGhosttyLiveHost: NSObject {
         guard let canvasView, let surface else { return }
         synchronizeDrawableMetrics(for: canvasView)
         ghostty_surface_set_focus(surface, focused)
-        ghostty_surface_set_occlusion(surface, false)
+        let visible = canvasView.window?.occlusionState.contains(.visible) ?? false
+        ghostty_surface_set_occlusion(surface, visible)
         ghostty_surface_refresh(surface)
         markFirstRefreshIfNeeded(on: canvasView)
     }
@@ -99,7 +100,9 @@ final class AlanGhosttyLiveHost: NSObject {
 
     func sendKey(_ keyEvent: ghostty_input_key_s) -> Bool {
         guard let surface else { return false }
-        return ghostty_surface_key(surface, keyEvent)
+        let handled = ghostty_surface_key(surface, keyEvent)
+        ghostty_surface_refresh(surface)
+        return handled
     }
 
     func keyIsBinding(_ keyEvent: ghostty_input_key_s, flags: UnsafeMutablePointer<ghostty_binding_flags_e>?) -> Bool {
@@ -112,6 +115,7 @@ final class AlanGhosttyLiveHost: NSObject {
         text.withCString { cString in
             ghostty_surface_text(surface, cString, UInt(strlen(cString)))
         }
+        ghostty_surface_refresh(surface)
         updateMetadata(summary: "input committed", attention: .active)
     }
 
@@ -214,6 +218,8 @@ final class AlanGhosttyLiveHost: NSObject {
         if getenv("NO_COLOR") != nil {
             unsetenv("NO_COLOR")
         }
+        scrubInheritedTerminalEnvironment()
+        configureGhosttyProcessEnvironment()
 
         let result = ghostty_init(UInt(CommandLine.argc), CommandLine.unsafeArgv)
         guard result == GHOSTTY_SUCCESS else {
@@ -236,6 +242,49 @@ final class AlanGhosttyLiveHost: NSObject {
             detail: "libghostty runtime is ready."
         )
         return true
+    }
+
+    private func configureGhosttyProcessEnvironment() {
+        let integration = GhosttyIntegrationStatus.discover()
+        if let resourcesPath = integration.resourcesPath {
+            let shouldOverride = getenv("ALAN_GHOSTTY_RESOURCES_DIR") != nil
+                || getenv("GHOSTTY_RESOURCES_DIR") == nil
+            if shouldOverride {
+                _ = resourcesPath.withCString { path in
+                    setenv("GHOSTTY_RESOURCES_DIR", path, 1)
+                }
+                logger.info("Using Ghostty resources directory: \(resourcesPath)")
+            }
+        }
+    }
+
+    private func scrubInheritedTerminalEnvironment() {
+        let exactKeys = [
+            "TERM",
+            "TERM_PROGRAM",
+            "TERM_PROGRAM_VERSION",
+            "COLORTERM",
+            "TERMINFO",
+            "TERMINFO_DIRS",
+            "VTE_VERSION",
+            "PWD",
+            "SHLVL",
+            "_",
+            "STARSHIP_SHELL",
+            "STARSHIP_SESSION_KEY",
+            "RBENV_SHELL",
+            "GHOSTTY_SURFACE_ID",
+            "GHOSTTY_SHELL_FEATURES",
+            "GHOSTTY_SHELL_INTEGRATION_XDG_DIR",
+            "GHOSTTY_BIN_DIR",
+        ]
+        exactKeys.forEach { unsetenv($0) }
+
+        for key in ProcessInfo.processInfo.environment.keys {
+            if key.hasPrefix("WARP_") || key.hasPrefix("CODEX_") {
+                unsetenv(key)
+            }
+        }
     }
 
     private func ensureApp() -> Bool {
@@ -403,8 +452,13 @@ final class AlanGhosttyLiveHost: NSObject {
 
         bootProfile.workingDirectory.withCString { cwdCString in
             surfaceConfig.working_directory = cwdCString
-            bootProfile.bootCommand.withCString { commandCString in
-                surfaceConfig.command = commandCString
+            if let surfaceCommand = bootProfile.surfaceCommand, !surfaceCommand.isEmpty {
+                surfaceCommand.withCString { commandCString in
+                    surfaceConfig.command = commandCString
+                    createSurface()
+                }
+            } else {
+                surfaceConfig.command = nil
                 createSurface()
             }
         }
@@ -455,9 +509,6 @@ final class AlanGhosttyLiveHost: NSObject {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         canvasView.layer?.contentsScale = layerScale
-        if let metalLayer = canvasView.layer as? CAMetalLayer {
-            metalLayer.drawableSize = CGSize(width: floor(backingSize.width), height: floor(backingSize.height))
-        }
         CATransaction.commit()
 
         ghostty_surface_set_content_scale(surface, xScale, yScale)
@@ -486,12 +537,11 @@ final class AlanGhosttyLiveHost: NSObject {
     }
 
     private func scheduleTick() {
-        guard !tickScheduled else { return }
-        tickScheduled = true
+        guard markTickScheduledIfNeeded() else { return }
 
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
-            self.tickScheduled = false
+            self.clearScheduledTick()
             if let app = self.app {
                 ghostty_app_tick(app)
             }
@@ -499,6 +549,20 @@ final class AlanGhosttyLiveHost: NSObject {
                 ghostty_surface_refresh(surface)
             }
         }
+    }
+
+    private func markTickScheduledIfNeeded() -> Bool {
+        tickScheduleLock.lock()
+        defer { tickScheduleLock.unlock() }
+        guard !tickScheduled else { return false }
+        tickScheduled = true
+        return true
+    }
+
+    private func clearScheduledTick() {
+        tickScheduleLock.lock()
+        tickScheduled = false
+        tickScheduleLock.unlock()
     }
 
     private func teardownSurface() {
@@ -819,21 +883,14 @@ final class AlanGhosttyLiveHost: NSObject {
 }
 
 final class AlanGhosttyCanvasView: NSView {
+    override var mouseDownCanMoveWindow: Bool { false }
+
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
-        wantsLayer = true
     }
 
     required init?(coder: NSCoder) {
         fatalError("init(coder:) is not supported")
-    }
-
-    override func makeBackingLayer() -> CALayer {
-        let metalLayer = CAMetalLayer()
-        metalLayer.pixelFormat = .bgra8Unorm
-        metalLayer.isOpaque = false
-        metalLayer.framebufferOnly = false
-        return metalLayer
     }
 }
 
