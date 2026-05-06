@@ -216,7 +216,11 @@ struct MacShellRootView: View {
                 .ignoresSafeArea()
 
             HStack(spacing: 0) {
-                ShellSidebarView(host: host, chromeMetrics: windowChromeMetrics) {
+                ShellSidebarView(
+                    host: host,
+                    chromeMetrics: windowChromeMetrics,
+                    showsInspector: $showsInspector
+                ) {
                     withAnimation(.easeOut(duration: 0.18)) {
                         isCommandTabPresented = true
                     }
@@ -224,12 +228,12 @@ struct MacShellRootView: View {
                     .frame(width: 286)
 
                 ShellWorkspaceView(host: host)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .ignoresSafeArea(edges: .top)
-                .background {
-                    ShellMaterialBackgroundView()
-                        .ignoresSafeArea(edges: .top)
-                }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .ignoresSafeArea(edges: .top)
+                    .background {
+                        ShellMaterialBackgroundView()
+                            .ignoresSafeArea(edges: .top)
+                    }
 
                 if showsInspector {
                     ShellInspectorView(host: host)
@@ -251,7 +255,8 @@ struct MacShellRootView: View {
 
                 ShellCommandTabView(
                     host: host,
-                    isPresented: $isCommandTabPresented
+                    isPresented: $isCommandTabPresented,
+                    showsInspector: $showsInspector
                 )
                 .frame(width: 520)
                 .transition(.move(edge: .top).combined(with: .opacity))
@@ -466,6 +471,7 @@ private enum AlanShellWindowPlacement {
 private struct ShellSidebarView: View {
     @ObservedObject var host: ShellHostController
     let chromeMetrics: ShellWindowChromeMetrics
+    @Binding var showsInspector: Bool
     let openCommandTab: () -> Void
     @State private var hoveredTabID: String?
     @State private var hoveredSpaceID: String?
@@ -483,7 +489,7 @@ private struct ShellSidebarView: View {
         .frame(maxHeight: .infinity, alignment: .top)
         .background {
             ShellMaterialBackgroundView()
-            .ignoresSafeArea(edges: .top)
+                .ignoresSafeArea(edges: .top)
         }
     }
 
@@ -510,6 +516,24 @@ private struct ShellSidebarView: View {
             }
 
             Spacer(minLength: 8)
+
+            Button {
+                withAnimation(.easeOut(duration: 0.18)) {
+                    showsInspector.toggle()
+                }
+            } label: {
+                Image(systemName: showsInspector ? "sidebar.trailing" : "sidebar.right")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.primary)
+                    .frame(width: 26, height: 26)
+                    .background(
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .fill(ShellPalette.sidebarControl)
+                    )
+            }
+            .buttonStyle(.plain)
+            .help(showsInspector ? "Hide Inspector" : "Show Inspector")
+            .accessibilityLabel(Text(showsInspector ? "Hide Inspector" : "Show Inspector"))
 
             Menu {
                 Button("New Tab") {
@@ -808,149 +832,6 @@ private struct ShellWorkspaceView: View {
     var body: some View {
         TerminalPaneView(host: host)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-}
-
-private struct ShellTopBarView: View {
-    @ObservedObject var host: ShellHostController
-    @Binding var isCommandTabPresented: Bool
-    @Binding var showsInspector: Bool
-
-    private var title: String {
-        if let selectedTab = host.selectedTab {
-            let tabPanes = host.shellState.panes.filter { $0.tabID == selectedTab.tabID }
-            return shellTabDisplayTitle(
-                tab: selectedTab,
-                panes: tabPanes,
-                fallback: host.selectedSpace?.title ?? "Alan"
-            )
-        }
-
-        return shellDisplayTitle(
-            rawTitle: host.selectedTab?.title ?? host.selectedSpace?.title,
-            workingDirectoryName: nil,
-            cwd: nil,
-            program: nil,
-            launchTarget: .shell,
-            fallback: host.selectedSpace?.title ?? "Alan"
-        )
-    }
-
-    private var subtitle: String? {
-        var parts: [String] = []
-
-        if let selectedSpace = host.selectedSpace?.title, selectedSpace != title {
-            parts.append(selectedSpace)
-        }
-
-        if let branch = host.selectedPane?.context?.gitBranch {
-            parts.append(branch)
-        }
-
-        if host.panesForSelectedTab.count > 1 {
-            parts.append("\(host.panesForSelectedTab.count) panes")
-        }
-
-        if host.selectedPane?.resolvedLaunchTarget == .alan {
-            parts.append("Alan tab")
-        }
-
-        return parts.isEmpty ? nil : parts.joined(separator: "  ·  ")
-    }
-
-    var body: some View {
-        HStack(spacing: 8) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                    .font(.system(size: 16.5, weight: .semibold))
-                    .tracking(-0.2)
-                    .foregroundStyle(ShellPalette.ink)
-                if let subtitle {
-                    Text(subtitle)
-                        .font(.system(size: 10.5, weight: .medium))
-                        .foregroundStyle(ShellPalette.mutedInk)
-                }
-            }
-
-            ShellTopBarDragRegion()
-
-            ShellToolbarButton(
-                symbol: "magnifyingglass",
-                label: "Go to or Command..."
-            ) {
-                isCommandTabPresented = true
-            }
-            .keyboardShortcut("k", modifiers: [.command])
-
-            if host.awaitingAttentionCount > 0,
-               let firstAttention = host.attentionItems.first
-            {
-                Button {
-                    host.focusAttentionItem(firstAttention)
-                } label: {
-                    ShellToolbarBadgeButton(symbol: "bell", count: host.awaitingAttentionCount)
-                }
-                .buttonStyle(.plain)
-            }
-
-            Menu {
-                Button("New Tab") {
-                    _ = host.openTerminalTab()
-                }
-                Button("Open in Alan") {
-                    _ = host.openAlanTab()
-                }
-                Divider()
-                Button("New Space") {
-                    _ = host.createTerminalSpace()
-                }
-                Button("New Space with Alan") {
-                    _ = host.createAlanSpace()
-                }
-            } label: {
-                ShellToolbarGlyph(symbol: "plus")
-            }
-            .menuStyle(.borderlessButton)
-            .buttonStyle(.plain)
-            .menuIndicator(.hidden)
-
-            Menu {
-                Button("Split Horizontally") {
-                    _ = host.splitFocusedPane(direction: .horizontal)
-                }
-                Button("Split Vertically") {
-                    _ = host.splitFocusedPane(direction: .vertical)
-                }
-                Divider()
-                Button("Jump to attention") {
-                    _ = host.focusTopRoutingCandidate(preferredPaneID: host.selectedPane?.paneID)
-                }
-            } label: {
-                ShellToolbarGlyph(symbol: "square.split.2x1")
-            }
-            .menuStyle(.borderlessButton)
-            .buttonStyle(.plain)
-            .menuIndicator(.hidden)
-
-            ShellToolbarButton(
-                symbol: showsInspector ? "sidebar.trailing" : "sidebar.right",
-                label: showsInspector ? "Hide Inspector" : "Show Inspector"
-            ) {
-                showsInspector.toggle()
-            }
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 11)
-    }
-}
-
-private struct ShellTopBarDragRegion: View {
-    var body: some View {
-        Color.clear
-            .frame(maxWidth: .infinity, minHeight: 34)
-            .contentShape(Rectangle())
-            .gesture(WindowDragGesture())
-            .allowsWindowActivationEvents(true)
     }
 }
 
@@ -1574,6 +1455,7 @@ private enum ShellCommandTabAction: String, CaseIterable, Identifiable {
     case openAlanTab
     case jumpToAttention
     case focusBestPane
+    case toggleInspector
     case splitHorizontal
     case splitVertical
     case liftPane
@@ -1597,6 +1479,8 @@ private enum ShellCommandTabAction: String, CaseIterable, Identifiable {
             return "Jump To Attention"
         case .focusBestPane:
             return "Focus Best Routing Pane"
+        case .toggleInspector:
+            return "Toggle Inspector"
         case .splitHorizontal:
             return "Split Focused Pane Horizontally"
         case .splitVertical:
@@ -1626,6 +1510,8 @@ private enum ShellCommandTabAction: String, CaseIterable, Identifiable {
             return "Jump to the strongest pane that currently needs approval or attention."
         case .focusBestPane:
             return "Use shell routing signals to jump to the strongest candidate pane."
+        case .toggleInspector:
+            return "Show or hide the right-side shell inspector."
         case .splitHorizontal:
             return "Create a stacked split beneath the focused pane."
         case .splitVertical:
@@ -1668,6 +1554,16 @@ private enum ShellCommandTabAction: String, CaseIterable, Identifiable {
             return ["jump to attention", "jump attention", "focus waiting pane", "approval", "waiting pane"]
         case .focusBestPane:
             return ["best pane", "route", "routing", "focus best", "jump pane"]
+        case .toggleInspector:
+            return [
+                "inspector",
+                "show inspector",
+                "hide inspector",
+                "open inspector",
+                "close inspector",
+                "toggle inspector",
+                "right sidebar",
+            ]
         case .splitHorizontal:
             return ["split horizontal", "split below", "stack split"]
         case .splitVertical:
@@ -1702,6 +1598,7 @@ private struct ShellCommandTabIntent: Identifiable {
 private struct ShellCommandTabView: View {
     @ObservedObject var host: ShellHostController
     @Binding var isPresented: Bool
+    @Binding var showsInspector: Bool
     @State private var query = ""
     @FocusState private var isQueryFocused: Bool
     @StateObject private var voiceController = ShellVoiceCommandController()
@@ -1718,6 +1615,7 @@ private struct ShellCommandTabView: View {
             .openAlanTab,
             .splitVertical,
             .splitHorizontal,
+            .toggleInspector,
             .jumpToAttention,
             .newSpace,
         ]
@@ -1786,8 +1684,8 @@ private struct ShellCommandTabView: View {
 
         if let action = matchingActions.first {
             return ShellCommandTabIntent(
-                title: action.title,
-                detail: action.detail,
+                title: title(for: action),
+                detail: detail(for: action),
                 accent: ShellPalette.accent,
                 route: .action(action)
             )
@@ -1910,8 +1808,8 @@ private struct ShellCommandTabView: View {
                                 perform(action)
                             } label: {
                                 ShellCommandRow(
-                                    title: action.title,
-                                    detail: action.detail,
+                                    title: title(for: action),
+                                    detail: detail(for: action),
                                     accent: ShellPalette.accent
                                 )
                             }
@@ -2005,6 +1903,14 @@ private struct ShellCommandTabView: View {
             }
         case .focusBestPane:
             _ = host.focusTopRoutingCandidate()
+        case .toggleInspector:
+            withAnimation(.easeOut(duration: 0.18)) {
+                if let requestedInspectorVisibility {
+                    showsInspector = requestedInspectorVisibility
+                } else {
+                    showsInspector.toggle()
+                }
+            }
         case .splitHorizontal:
             _ = host.splitFocusedPane(direction: .horizontal)
         case .splitVertical:
@@ -2047,6 +1953,29 @@ private struct ShellCommandTabView: View {
         return "\(title) • \(detail)"
     }
 
+    private var requestedInspectorVisibility: Bool? {
+        let normalized = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if normalized.contains("show") || normalized.contains("open") {
+            return true
+        }
+        if normalized.contains("hide") || normalized.contains("close") {
+            return false
+        }
+        return nil
+    }
+
+    private func title(for action: ShellCommandTabAction) -> String {
+        guard action == .toggleInspector else { return action.title }
+        let shouldShow = requestedInspectorVisibility ?? !showsInspector
+        return shouldShow ? "Show Inspector" : "Hide Inspector"
+    }
+
+    private func detail(for action: ShellCommandTabAction) -> String {
+        guard action == .toggleInspector else { return action.detail }
+        let shouldShow = requestedInspectorVisibility ?? !showsInspector
+        return shouldShow ? "Open the right-side shell inspector." : "Close the right-side shell inspector."
+    }
+
     private func sectionLabel(_ value: String) -> some View {
         Text(value)
             .font(.system(size: 10, weight: .semibold, design: .rounded))
@@ -2081,6 +2010,11 @@ private final class ShellVoiceCommandController: NSObject, ObservableObject, NSS
             "close tab",
             "jump to attention",
             "focus waiting pane",
+            "show inspector",
+            "hide inspector",
+            "open inspector",
+            "close inspector",
+            "toggle inspector",
             "copy snapshot",
         ]
     }
@@ -2147,95 +2081,6 @@ private struct ShellCommandRow: View {
         .shadow(color: isHovered ? Color.black.opacity(0.022) : .clear, radius: 6, y: 3)
         .animation(reduceMotion ? nil : .easeOut(duration: 0.16), value: isHovered)
         .onHover { isHovered = $0 }
-    }
-}
-
-private struct ShellToolbarButton: View {
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var isHovered = false
-    let symbol: String
-    let label: String
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            Image(systemName: symbol)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(ShellPalette.ink)
-                .frame(width: 30, height: 30)
-                .background(
-                    RoundedRectangle(cornerRadius: 9, style: .continuous)
-                        .fill(isHovered ? Color.white.opacity(0.92) : ShellPalette.panel)
-                )
-                .overlay {
-                    RoundedRectangle(cornerRadius: 9, style: .continuous)
-                        .stroke(ShellPalette.line.opacity(isHovered ? 0.32 : 0.16), lineWidth: 1)
-                }
-        }
-        .buttonStyle(.plain)
-        .scaleEffect(isHovered ? 1.03 : 1)
-        .shadow(color: isHovered ? Color.black.opacity(0.032) : .clear, radius: 6, y: 3)
-        .animation(reduceMotion ? nil : .easeOut(duration: 0.14), value: isHovered)
-        .onHover { isHovered = $0 }
-        .help(label)
-    }
-}
-
-private struct ShellToolbarGlyph: View {
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var isHovered = false
-    let symbol: String
-
-    var body: some View {
-        Image(systemName: symbol)
-            .font(.system(size: 13, weight: .semibold))
-            .foregroundStyle(ShellPalette.ink)
-            .frame(width: 30, height: 30)
-            .background(
-                RoundedRectangle(cornerRadius: 9, style: .continuous)
-                    .fill(isHovered ? Color.white.opacity(0.92) : ShellPalette.panel)
-            )
-            .overlay {
-                RoundedRectangle(cornerRadius: 9, style: .continuous)
-                    .stroke(ShellPalette.line.opacity(isHovered ? 0.32 : 0.16), lineWidth: 1)
-            }
-            .scaleEffect(isHovered ? 1.03 : 1)
-            .shadow(color: isHovered ? Color.black.opacity(0.032) : .clear, radius: 6, y: 3)
-            .animation(reduceMotion ? nil : .easeOut(duration: 0.14), value: isHovered)
-            .onHover { isHovered = $0 }
-    }
-}
-
-private struct ShellToolbarBadgeButton: View {
-    let symbol: String
-    let count: Int
-
-    var body: some View {
-        ZStack(alignment: .topTrailing) {
-            ShellToolbarGlyph(symbol: symbol)
-
-            if count > 1 {
-                Text("\(min(count, 9))")
-                    .font(.system(size: 9, weight: .bold))
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 5)
-                    .padding(.vertical, 2)
-                    .background(
-                        Capsule(style: .continuous)
-                            .fill(ShellPalette.attention)
-                    )
-                    .offset(x: 7, y: -6)
-            } else {
-                Circle()
-                    .fill(ShellPalette.attention)
-                    .frame(width: 8, height: 8)
-                    .overlay {
-                        Circle()
-                            .stroke(Color.white.opacity(0.95), lineWidth: 1.5)
-                    }
-                    .offset(x: 6, y: -5)
-            }
-        }
     }
 }
 
