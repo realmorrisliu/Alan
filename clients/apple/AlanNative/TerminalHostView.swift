@@ -300,6 +300,9 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
         [statusBadge, titleLabel, subtitleLabel, commandLabel, footerLabel].forEach(bodyStack.addArrangedSubview)
 
         let nativeScrollView = surfaceController.nativeScrollViewAdapter.scrollView
+        surfaceController.nativeScrollViewAdapter.onScrollWheel = { [weak self] event in
+            self?.routeScrollWheel(event) ?? false
+        }
         surfaceController.nativeScrollViewAdapter.attachCanvasView(canvasView)
         addSubview(nativeScrollView)
         addSubview(overlayCard)
@@ -714,8 +717,15 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
     }
 
     override func scrollWheel(with event: NSEvent) {
+        if routeScrollWheel(event) {
+            return
+        }
+        super.scrollWheel(with: event)
+    }
+
+    private func routeScrollWheel(_ event: NSEvent) -> Bool {
 #if canImport(GhosttyKit)
-        guard surfaceController.isSurfaceReady == true else { return super.scrollWheel(with: event) }
+        guard surfaceController.isSurfaceReady == true else { return false }
 
         let scrollRoute = surfaceController.routeScroll(
             AlanTerminalScrollInput(
@@ -728,9 +738,9 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
         case .nativeScroll:
             syncNativeScrollback()
             publishRuntimeSnapshot()
-            return
+            return true
         case .ignored:
-            return
+            return true
         case .terminalScroll:
             break
         }
@@ -768,8 +778,9 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
         scrollMods |= momentum << 1
 
         surfaceController.sendMouseScroll(x: x, y: y, mods: ghostty_input_scroll_mods_t(scrollMods))
+        return true
 #else
-        super.scrollWheel(with: event)
+        return false
 #endif
     }
 

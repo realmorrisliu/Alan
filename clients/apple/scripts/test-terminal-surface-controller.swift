@@ -17,6 +17,7 @@ private enum TerminalSurfaceControllerTests {
     static func run() {
         verifiesScrollbackMetricsAndTerminalModes()
         verifiesModeTrackerPreservesTerminalScrollRouting()
+        verifiesNativeScrollViewForwardsWheelEvents()
         verifiesInputCommandRouting()
         verifiesPaneScopedSearchState()
         verifiesSearchActionsReachSurfaceEngine()
@@ -99,6 +100,19 @@ private enum TerminalSurfaceControllerTests {
             mouseCaptured: false
         )
         expect(resetMode == .normalBuffer, "new surfaces must not inherit prior alternate-screen state")
+    }
+
+    private static func verifiesNativeScrollViewForwardsWheelEvents() {
+        let adapter = AlanTerminalNativeScrollViewAdapter()
+        var routedDeltaY: Double?
+        adapter.onScrollWheel = { event in
+            routedDeltaY = event.scrollingDeltaY
+            return true
+        }
+
+        let event = RecordingTerminalScrollWheelEvent(deltaX: 0, deltaY: -7)
+        adapter.scrollView.scrollWheel(with: event)
+        expect(routedDeltaY == -7, "native scroll view must forward wheel events to terminal routing")
     }
 
     private static func verifiesInputCommandRouting() {
@@ -385,5 +399,25 @@ private final class RecordingTerminalPasteboardWriter: AlanTerminalPasteboardWri
         string = text
         return true
     }
+}
+
+private final class RecordingTerminalScrollWheelEvent: NSEvent {
+    private let recordedDeltaX: CGFloat
+    private let recordedDeltaY: CGFloat
+
+    init(deltaX: CGFloat, deltaY: CGFloat) {
+        recordedDeltaX = deltaX
+        recordedDeltaY = deltaY
+        super.init()
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) is not supported")
+    }
+
+    override var scrollingDeltaX: CGFloat { recordedDeltaX }
+    override var scrollingDeltaY: CGFloat { recordedDeltaY }
+    override var hasPreciseScrollingDeltas: Bool { true }
+    override var momentumPhase: NSEvent.Phase { [] }
 }
 #endif

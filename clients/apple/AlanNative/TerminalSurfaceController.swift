@@ -160,8 +160,13 @@ final class AlanTerminalScrollbackAdapter {
 
 @MainActor
 final class AlanTerminalNativeScrollViewAdapter {
-    let scrollView = NSScrollView()
+    let scrollView = AlanTerminalRoutingScrollView()
     var onVisibleRowChange: ((Int) -> Void)?
+    var onScrollWheel: ((NSEvent) -> Bool)? {
+        didSet {
+            scrollView.onScrollWheel = onScrollWheel
+        }
+    }
 
     private let documentView = NSView(frame: .zero)
     private weak var canvasView: NSView?
@@ -270,6 +275,20 @@ final class AlanTerminalNativeScrollViewAdapter {
     private func synchronizeCanvasView() {
         let visibleRect = scrollView.contentView.documentVisibleRect
         canvasView?.frame = NSRect(origin: visibleRect.origin, size: scrollView.contentView.bounds.size)
+    }
+}
+
+@MainActor
+final class AlanTerminalRoutingScrollView: NSScrollView {
+    var onScrollWheel: ((NSEvent) -> Bool)?
+
+    override var mouseDownCanMoveWindow: Bool { false }
+
+    override func scrollWheel(with event: NSEvent) {
+        if onScrollWheel?(event) == true {
+            return
+        }
+        super.scrollWheel(with: event)
     }
 }
 
