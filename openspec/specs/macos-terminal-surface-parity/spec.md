@@ -26,7 +26,7 @@ and terminal mouse modes.
 
 ### Requirement: Keyboard and IME input is complete
 The macOS terminal surface SHALL translate keyboard, modifier, key-equivalent,
-text input, IME/preedit, marked text, and secure-input state into terminal
+text input, IME/preedit, marked text, commit, and cancellation into terminal
 surface operations through one input adapter.
 
 #### Scenario: Printable input
@@ -41,13 +41,9 @@ surface operations through one input adapter.
 - **WHEN** the user composes text with an input method
 - **THEN** marked text, preedit updates, commit, and cancellation are reflected in the terminal surface according to Ghostty input semantics
 
-#### Scenario: Secure input active
-- **WHEN** terminal secure input is active
-- **THEN** the surface records secure-input state and avoids exposing sensitive typed content through debug or automation summaries
-
 ### Requirement: Mouse and pointer input matches terminal modes
 The macOS terminal surface SHALL handle primary, secondary, other-button,
-movement, drag, pressure, scroll, hover, and URL pointer states according to
+movement, drag, pressure, scroll, and hover states according to
 terminal mouse mode and native AppKit behavior.
 
 #### Scenario: Mouse application active
@@ -58,14 +54,9 @@ terminal mouse mode and native AppKit behavior.
 - **WHEN** the terminal is not consuming mouse events for an application
 - **THEN** drag gestures select terminal text and do not accidentally drag the window background
 
-#### Scenario: URL hover
-- **WHEN** the pointer hovers over a terminal URL recognized by the surface
-- **THEN** the UI exposes a native pointer or context affordance without showing raw detection metadata
-
 ### Requirement: Clipboard and selection are native
 The macOS terminal surface SHALL support native selection, copy, paste,
-bracketed paste behavior when available, context menus, and paste failure
-reporting.
+context menus, and paste failure reporting.
 
 #### Scenario: Copy selection
 - **WHEN** the user selects terminal text and invokes Copy
