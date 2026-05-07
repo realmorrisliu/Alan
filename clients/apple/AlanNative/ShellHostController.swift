@@ -435,14 +435,14 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     }
 
     @discardableResult
-    func resizeSplit(splitNodeID: String, ratio: Double) -> Bool {
+    func resizeSplit(splitNodeID: String, ratio: Double, persist: Bool = true) -> Bool {
         let result: ShellStateMutationResult
         do {
             result = try shellState.resizingSplit(splitNodeID, ratio: ratio)
         } catch {
             return false
         }
-        applyMutationResult(result)
+        applyMutationResult(result, publish: persist)
         return true
     }
 
@@ -824,11 +824,17 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         publishControlPlaneState()
     }
 
-    private func applyMutationResult(_ result: ShellStateMutationResult) {
-        adoptStateFromControlPlane(result.state)
+    private func applyMutationResult(
+        _ result: ShellStateMutationResult,
+        publish: Bool = true
+    ) {
+        adoptStateFromControlPlane(result.state, publish: publish)
     }
 
-    private func adoptStateFromControlPlane(_ state: ShellStateSnapshot) {
+    private func adoptStateFromControlPlane(
+        _ state: ShellStateSnapshot,
+        publish: Bool = true
+    ) {
         let paneIDs = Set(state.panes.map(\.paneID))
         terminalRuntimeRegistry.releaseRuntimes(excluding: paneIDs)
 
@@ -878,7 +884,9 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
             panes: hydratedPanes
         )
         synchronizeSelection()
-        publishControlPlaneState()
+        if publish {
+            publishControlPlaneState()
+        }
     }
 
     private func recordControlPlaneDiagnostic(_ message: String) {

@@ -501,6 +501,7 @@ private struct ShellSplitLayoutView: View {
     let node: ShellPaneTreeNode
     @ObservedObject var host: ShellHostController
     @State private var dragStartRatio: Double?
+    @State private var dragPreviewRatio: Double?
 
     private var children: [ShellPaneTreeNode] {
         node.children ?? []
@@ -571,10 +572,16 @@ private struct ShellSplitLayoutView: View {
                     : value.translation.height
                 let usableLength = max(totalLength - dividerThickness, 1)
                 let nextRatio = (dragStartRatio ?? node.splitRatio) + Double(delta / usableLength)
-                _ = host.resizeSplit(splitNodeID: node.nodeID, ratio: nextRatio)
+                if host.resizeSplit(splitNodeID: node.nodeID, ratio: nextRatio, persist: false) {
+                    dragPreviewRatio = nextRatio
+                }
             }
             .onEnded { _ in
+                if let finalRatio = dragPreviewRatio {
+                    _ = host.resizeSplit(splitNodeID: node.nodeID, ratio: finalRatio, persist: true)
+                }
                 dragStartRatio = nil
+                dragPreviewRatio = nil
             }
     }
 }

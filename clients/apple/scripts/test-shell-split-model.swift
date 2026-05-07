@@ -12,6 +12,7 @@ private enum ShellSplitModelTests {
         try verifiesNewSplitsStoreEqualRatio()
         try verifiesSplitRatiosClampWhenResized()
         try verifiesEqualizeRestoresEverySplitRatio()
+        try verifiesSameDirectionAttachKeepsBinarySplitTree()
         try verifiesLegacySplitDecodeDefaultsToEqualRatio()
         print("Shell split model tests passed.")
     }
@@ -57,6 +58,32 @@ private enum ShellSplitModelTests {
         expect(
             equalizedRatio == 0.5,
             "equalize must restore the tab's root split ratio"
+        )
+    }
+
+    private static func verifiesSameDirectionAttachKeepsBinarySplitTree() throws {
+        let state = ShellStateSnapshot.bootstrapDefault(workingDirectory: "/tmp")
+        let split = try state.splittingPane("pane_1", direction: .vertical).state
+        let attached = try requireFocusedTabTree(split).attachingPane(
+            "pane_3",
+            direction: .vertical,
+            splitNodeID: "node_nested_split",
+            newLeafNodeID: "node_pane_3"
+        )
+
+        expect(
+            attached.children?.count == 2,
+            "same-direction pane attachment must keep split branches binary"
+        )
+        guard let nestedSplit = attached.children?.last else {
+            throw TestFailure("nested split missing")
+        }
+        expect(nestedSplit.kind == .split, "same-direction attachment must nest the final child")
+        expect(nestedSplit.direction == .vertical, "nested split must keep the requested direction")
+        expect(nestedSplit.children?.count == 2, "nested split must own exactly two children")
+        expect(
+            attached.paneIDs == ["pane_1", "pane_2", "pane_3"],
+            "same-direction attachment must preserve pane ordering"
         )
     }
 

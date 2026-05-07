@@ -202,6 +202,31 @@ require_pattern \
 
 require_pattern \
     "clients/apple/AlanNative/TerminalPaneView.swift" \
+    "dragPreviewRatio" \
+    "split divider drag must track the live preview ratio until drag end"
+
+require_pattern \
+    "clients/apple/AlanNative/TerminalPaneView.swift" \
+    "resizeSplit\\(splitNodeID: node\\.nodeID, ratio: nextRatio, persist: false\\)" \
+    "split divider drag previews must not persist every pointer sample"
+
+require_pattern \
+    "clients/apple/AlanNative/TerminalPaneView.swift" \
+    "resizeSplit\\(splitNodeID: node\\.nodeID, ratio: finalRatio, persist: true\\)" \
+    "split divider drag end must persist the final ratio"
+
+require_pattern \
+    "clients/apple/AlanNative/ShellHostController.swift" \
+    "func resizeSplit\\(splitNodeID: String, ratio: Double, persist: Bool = true\\)" \
+    "shell split resize must expose a non-persisting preview path"
+
+require_pattern \
+    "clients/apple/AlanNative/ShellHostController.swift" \
+    "applyMutationResult\\(result, publish: persist\\)" \
+    "split resize preview persistence must be controlled at mutation application"
+
+require_pattern \
+    "clients/apple/AlanNative/TerminalPaneView.swift" \
     "ShellTerminalSurfaceFrame" \
     "terminal panes must share one outer rounded terminal surface frame"
 

@@ -552,14 +552,25 @@ extension ShellPaneTreeNode {
         )
 
         if kind == .split,
-           self.direction == direction {
+           self.direction == direction,
+           let existingChildren = children,
+           let lastChild = existingChildren.last {
+            let nestedSplit = ShellPaneTreeNode(
+                nodeID: splitNodeID,
+                kind: .split,
+                direction: direction,
+                ratio: 0.5,
+                paneID: nil,
+                children: [lastChild, newLeaf]
+            )
+
             return ShellPaneTreeNode(
                 nodeID: nodeID,
                 kind: .split,
                 direction: direction,
                 ratio: ratio,
                 paneID: nil,
-                children: (children ?? []) + [newLeaf]
+                children: Array(existingChildren.dropLast()) + [nestedSplit]
             )
         }
 
