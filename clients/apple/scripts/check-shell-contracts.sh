@@ -192,8 +192,33 @@ require_pattern \
 
 require_pattern \
     "clients/apple/AlanNative/TerminalPaneView.swift" \
+    "ShellSplitDividerMetrics\\.thickness" \
+    "split divider must use an intentional seam thickness instead of a hard 1px line"
+
+require_pattern \
+    "clients/apple/AlanNative/TerminalPaneView.swift" \
+    "ShellSplitDividerTint\\.shadow" \
+    "split divider must use a subtle bevel seam rather than a single flat line"
+
+require_pattern \
+    "clients/apple/AlanNative/TerminalPaneView.swift" \
     "ShellTerminalSurfaceFrame" \
     "terminal panes must share one outer rounded terminal surface frame"
+
+require_pattern \
+    "clients/apple/AlanNative/TerminalPaneView.swift" \
+    "ShellInactivePaneDim" \
+    "inactive split panes must use a lightweight dim treatment"
+
+require_pattern \
+    "clients/apple/AlanNative/TerminalPaneView.swift" \
+    "allowsHitTesting\\(false\\)" \
+    "inactive pane dimming must not intercept terminal pointer input"
+
+require_pattern \
+    "clients/apple/AlanNative/TerminalPaneView.swift" \
+    "@AppStorage\\(\"alanShellDimsInactiveSplitPanes\"\\)" \
+    "inactive pane dimming must be backed by a user-default preference"
 
 reject_pattern \
     "clients/apple/AlanNative/TerminalPaneView.swift" \

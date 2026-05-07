@@ -550,7 +550,7 @@ private struct ShellSplitLayoutView: View {
         }
     }
 
-    private var dividerThickness: CGFloat { 1 }
+    private var dividerThickness: CGFloat { ShellSplitDividerMetrics.thickness }
 
     private func primaryLength(total: CGFloat) -> CGFloat {
         max((total - dividerThickness) * node.splitRatio, 0)
@@ -584,25 +584,49 @@ private struct ShellSplitDividerView: View {
     let direction: ShellSplitDirection
 
     var body: some View {
-        Rectangle()
-            .fill(ShellSplitDividerTint.color(isHovered: isHovered))
+        seam
             .frame(
-                width: direction == .vertical ? 1 : nil,
-                height: direction == .horizontal ? 1 : nil
+                width: direction == .vertical ? ShellSplitDividerMetrics.thickness : nil,
+                height: direction == .horizontal ? ShellSplitDividerMetrics.thickness : nil
             )
             .contentShape(Rectangle())
             .onHover { isHovered = $0 }
             .help("Resize split")
     }
+
+    @ViewBuilder
+    private var seam: some View {
+        if direction == .vertical {
+            HStack(spacing: 0) {
+                Rectangle().fill(ShellSplitDividerTint.shadow(isHovered: isHovered))
+                Rectangle().fill(ShellSplitDividerTint.highlight(isHovered: isHovered))
+            }
+        } else {
+            VStack(spacing: 0) {
+                Rectangle().fill(ShellSplitDividerTint.shadow(isHovered: isHovered))
+                Rectangle().fill(ShellSplitDividerTint.highlight(isHovered: isHovered))
+            }
+        }
+    }
+}
+
+private enum ShellSplitDividerMetrics {
+    static let thickness: CGFloat = 2
 }
 
 private enum ShellSplitDividerTint {
-    static func color(isHovered: Bool) -> Color {
-        ShellPalette.terminalSoft.opacity(isHovered ? 0.38 : 0.18)
+    static func shadow(isHovered: Bool) -> Color {
+        Color.black.opacity(isHovered ? 0.22 : 0.14)
+    }
+
+    static func highlight(isHovered: Bool) -> Color {
+        ShellPalette.terminalSoft.opacity(isHovered ? 0.48 : 0.34)
     }
 }
 
 private struct ShellTerminalLeafView: View {
+    @AppStorage("alanShellDimsInactiveSplitPanes") private var dimsInactiveSplitPanes = true
+
     let pane: ShellPane
     let bootProfile: AlanShellBootProfile?
     let isSelected: Bool
@@ -624,6 +648,23 @@ private struct ShellTerminalLeafView: View {
         .id(pane.paneID)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(ShellPalette.terminal)
+        .overlay {
+            ShellInactivePaneDim(
+                isSelected: isSelected,
+                isEnabled: dimsInactiveSplitPanes
+            )
+        }
+    }
+}
+
+private struct ShellInactivePaneDim: View {
+    let isSelected: Bool
+    let isEnabled: Bool
+
+    var body: some View {
+        Rectangle()
+            .fill(Color.black.opacity(isSelected || !isEnabled ? 0 : 0.14))
+            .allowsHitTesting(false)
     }
 }
 
