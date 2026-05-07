@@ -192,20 +192,14 @@ struct ShellMaterialBackgroundView: View {
 }
 
 struct MacShellRootView: View {
-    @StateObject private var host: ShellHostController
+    @ObservedObject private var host: ShellHostController
     @State private var isCommandTabPresented = false
     @State private var windowChromeMetrics = ShellWindowChromeMetrics()
     @AppStorage("alanShellShowsInspector")
     private var showsInspector = false
 
-    init() {
-        let windowContext = ShellWindowContext.make()
-        _host = StateObject(
-            wrappedValue: ShellHostController.live(
-                windowContext: windowContext,
-                startupMode: .fresh
-            )
-        )
+    init(host: ShellHostController) {
+        self.host = host
     }
 
     var body: some View {
