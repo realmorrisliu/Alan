@@ -26,4 +26,5 @@ Window observed: `Alan`, bundle `dev.alan.native`, pid `17907`
 ## Notes And Limits
 
 - The ScreenCaptureKit helper `clients/apple/scripts/capture-alan-window.sh` listed the live Alan window but hung while capturing a screenshot in this Codex-controlled session; the hung helper process was terminated. Verification therefore uses Computer Use screenshots/state plus focused automated tests instead of a committed screenshot artifact.
-- Dedicated bracketed paste and live URL-hover callbacks remain unsupported until Ghostty exposes the needed surface APIs; the accepted specs keep those as terminal-surface contract requirements for future parity work.
+- Live manual evidence is still incomplete for selection/copy, paste, IME composition, child exit, and renderer/fallback states; task 5.5 remains open until those scenarios are checked in the running app.
+- Dedicated bracketed paste, live secure-input callbacks, and live URL-hover callbacks remain unsupported until Ghostty exposes the needed surface APIs. They remain in the in-flight change as future parity work and are intentionally omitted from the accepted specs.
