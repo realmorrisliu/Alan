@@ -17,6 +17,7 @@ final class AlanTerminalHostNSView: NSView {
         isSelected: Bool,
         surfaceHandle: AlanTerminalSurfaceHandle?,
         activationDelegate: TerminalHostActivationDelegate?,
+        onWorkspaceCommand: ((ShellWorkspaceCommand) -> Void)?,
         onRuntimeUpdate: @escaping (TerminalHostRuntimeSnapshot) -> Void,
         onMetadataUpdate: @escaping (TerminalPaneMetadataSnapshot) -> Void
     ) {}

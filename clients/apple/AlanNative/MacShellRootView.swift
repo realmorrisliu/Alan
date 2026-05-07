@@ -559,7 +559,7 @@ private struct ShellSidebarView: View {
                 Image(systemName: "magnifyingglass")
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(.secondary)
-                Text("Go to tab or command")
+                Text("Go to or Command...")
                     .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
@@ -1457,8 +1457,15 @@ private enum ShellCommandTabAction: String, CaseIterable, Identifiable {
     case jumpToAttention
     case focusBestPane
     case toggleInspector
-    case splitHorizontal
-    case splitVertical
+    case splitRight
+    case splitDown
+    case splitLeft
+    case splitUp
+    case focusLeft
+    case focusRight
+    case focusUp
+    case focusDown
+    case equalizeSplits
     case liftPane
     case closePane
     case closeTab
@@ -1482,10 +1489,24 @@ private enum ShellCommandTabAction: String, CaseIterable, Identifiable {
             return "Focus Best Routing Pane"
         case .toggleInspector:
             return "Toggle Inspector"
-        case .splitHorizontal:
-            return "Split Focused Pane Horizontally"
-        case .splitVertical:
-            return "Split Focused Pane Vertically"
+        case .splitRight:
+            return "Split Pane Right"
+        case .splitDown:
+            return "Split Pane Down"
+        case .splitLeft:
+            return "Split Pane Left"
+        case .splitUp:
+            return "Split Pane Up"
+        case .focusLeft:
+            return "Focus Pane Left"
+        case .focusRight:
+            return "Focus Pane Right"
+        case .focusUp:
+            return "Focus Pane Up"
+        case .focusDown:
+            return "Focus Pane Down"
+        case .equalizeSplits:
+            return "Equalize Splits"
         case .liftPane:
             return "Lift Focused Pane To Tab"
         case .closePane:
@@ -1513,10 +1534,24 @@ private enum ShellCommandTabAction: String, CaseIterable, Identifiable {
             return "Use shell routing signals to jump to the strongest candidate pane."
         case .toggleInspector:
             return "Show or hide the right-side shell inspector."
-        case .splitHorizontal:
+        case .splitRight:
+            return "Create a side-by-side split to the right of the focused pane."
+        case .splitDown:
             return "Create a stacked split beneath the focused pane."
-        case .splitVertical:
-            return "Create a side-by-side split next to the focused pane."
+        case .splitLeft:
+            return "Create a side-by-side split to the left of the focused pane."
+        case .splitUp:
+            return "Create a stacked split above the focused pane."
+        case .focusLeft:
+            return "Move terminal focus to the pane on the left."
+        case .focusRight:
+            return "Move terminal focus to the pane on the right."
+        case .focusUp:
+            return "Move terminal focus to the pane above."
+        case .focusDown:
+            return "Move terminal focus to the pane below."
+        case .equalizeSplits:
+            return "Return the current tab's split dividers to equal ratios."
         case .liftPane:
             return "Move the focused pane into its own tab without losing shell identity."
         case .closePane:
@@ -1565,10 +1600,24 @@ private enum ShellCommandTabAction: String, CaseIterable, Identifiable {
                 "toggle inspector",
                 "right sidebar",
             ]
-        case .splitHorizontal:
-            return ["split horizontal", "split below", "stack split"]
-        case .splitVertical:
-            return ["split vertical", "split right", "side by side"]
+        case .splitRight:
+            return ["split right", "split vertical", "side by side"]
+        case .splitDown:
+            return ["split down", "split horizontal", "split below", "stack split"]
+        case .splitLeft:
+            return ["split left"]
+        case .splitUp:
+            return ["split up", "split above"]
+        case .focusLeft:
+            return ["focus left", "pane left"]
+        case .focusRight:
+            return ["focus right", "pane right"]
+        case .focusUp:
+            return ["focus up", "pane up"]
+        case .focusDown:
+            return ["focus down", "pane down"]
+        case .equalizeSplits:
+            return ["equalize", "balance splits", "reset split ratios"]
         case .liftPane:
             return ["lift pane", "move pane", "extract pane"]
         case .closePane:
@@ -1614,8 +1663,9 @@ private struct ShellCommandTabView: View {
         let defaultActions: [ShellCommandTabAction] = [
             .openTab,
             .openAlanTab,
-            .splitVertical,
-            .splitHorizontal,
+            .splitRight,
+            .splitDown,
+            .equalizeSplits,
             .toggleInspector,
             .jumpToAttention,
             .newSpace,
@@ -1664,7 +1714,7 @@ private struct ShellCommandTabView: View {
         {
             if let candidate = matchingRoutingCandidates.first {
                 return ShellCommandTabIntent(
-                    title: "Focus \(candidate.paneID)",
+                    title: "Focus \(routingTitle(for: candidate))",
                     detail: routingDetail(for: candidate),
                     accent: ShellPalette.accent,
                     route: .candidate(candidate)
@@ -1706,7 +1756,7 @@ private struct ShellCommandTabView: View {
                     TextField(
                         "",
                         text: $query,
-                        prompt: Text("Go to tab or run command")
+                        prompt: Text("Go to or Command...")
                             .foregroundStyle(ShellPalette.mutedInk.opacity(0.9))
                     )
                         .textFieldStyle(.plain)
@@ -1828,7 +1878,7 @@ private struct ShellCommandTabView: View {
                                     execute(.candidate(candidate))
                                 } label: {
                                     ShellCommandRow(
-                                        title: "Focus \(candidate.paneID)",
+                                        title: "Focus \(routingTitle(for: candidate))",
                                         detail: routingDetail(for: candidate),
                                         accent: ShellPalette.accent
                                     )
@@ -1895,9 +1945,9 @@ private struct ShellCommandTabView: View {
         case .newAlanSpace:
             _ = host.createAlanSpace()
         case .openTab:
-            _ = host.openTerminalTab()
+            host.performShellWorkspaceCommand(.newTerminalTab)
         case .openAlanTab:
-            _ = host.openAlanTab()
+            host.performShellWorkspaceCommand(.newAlanTab)
         case .jumpToAttention:
             if let firstAttention = host.attentionItems.first {
                 host.focusAttentionItem(firstAttention)
@@ -1912,16 +1962,30 @@ private struct ShellCommandTabView: View {
                     showsInspector.toggle()
                 }
             }
-        case .splitHorizontal:
-            _ = host.splitFocusedPane(direction: .horizontal)
-        case .splitVertical:
-            _ = host.splitFocusedPane(direction: .vertical)
+        case .splitRight:
+            host.performShellWorkspaceCommand(ShellWorkspaceCommand.splitRight)
+        case .splitDown:
+            host.performShellWorkspaceCommand(ShellWorkspaceCommand.splitDown)
+        case .splitLeft:
+            host.performShellWorkspaceCommand(ShellWorkspaceCommand.splitLeft)
+        case .splitUp:
+            host.performShellWorkspaceCommand(ShellWorkspaceCommand.splitUp)
+        case .focusLeft:
+            host.performShellWorkspaceCommand(ShellWorkspaceCommand.focusLeft)
+        case .focusRight:
+            host.performShellWorkspaceCommand(ShellWorkspaceCommand.focusRight)
+        case .focusUp:
+            host.performShellWorkspaceCommand(ShellWorkspaceCommand.focusUp)
+        case .focusDown:
+            host.performShellWorkspaceCommand(ShellWorkspaceCommand.focusDown)
+        case .equalizeSplits:
+            host.performShellWorkspaceCommand(ShellWorkspaceCommand.equalizeSplits)
         case .liftPane:
             _ = host.liftSelectedPaneToTab()
         case .closePane:
-            _ = host.closeSelectedPane()
+            host.performShellWorkspaceCommand(.closePane)
         case .closeTab:
-            _ = host.closeSelectedTab()
+            host.performShellWorkspaceCommand(.closeTab)
         case .copySnapshot:
             host.copySnapshotJSON()
         }
@@ -1947,11 +2011,25 @@ private struct ShellCommandTabView: View {
     }
 
     private func routingDetail(for candidate: AlanShellRoutingCandidate) -> String {
-        let pane = host.shellState.panes.first(where: { $0.paneID == candidate.paneID })
-        let title = pane?.viewport?.title ?? pane?.process?.program ?? candidate.paneID
+        let title = routingTitle(for: candidate)
         let reasons = candidate.reasons.prefix(3).joined(separator: " • ")
         let detail = reasons.isEmpty ? "score \(Int(candidate.score * 100))" : reasons
         return "\(title) • \(detail)"
+    }
+
+    private func routingTitle(for candidate: AlanShellRoutingCandidate) -> String {
+        guard let pane = host.shellState.panes.first(where: { $0.paneID == candidate.paneID }) else {
+            return "Terminal Pane"
+        }
+
+        return shellDisplayTitle(
+            rawTitle: pane.viewport?.title,
+            workingDirectoryName: pane.context?.workingDirectoryName,
+            cwd: pane.cwd,
+            program: pane.process?.program,
+            launchTarget: pane.resolvedLaunchTarget,
+            fallback: pane.viewport?.summary
+        )
     }
 
     private var requestedInspectorVisibility: Bool? {
@@ -2004,8 +2082,15 @@ private final class ShellVoiceCommandController: NSObject, ObservableObject, NSS
             "open in alan",
             "focus best pane",
             "route to best pane",
-            "split horizontal",
-            "split vertical",
+            "split right",
+            "split down",
+            "split left",
+            "split up",
+            "focus left",
+            "focus right",
+            "focus up",
+            "focus down",
+            "equalize splits",
             "lift pane",
             "close pane",
             "close tab",

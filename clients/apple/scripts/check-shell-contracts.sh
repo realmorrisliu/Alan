@@ -226,6 +226,61 @@ require_pattern \
     "split resize preview persistence must be controlled at mutation application"
 
 require_pattern \
+    "clients/apple/AlanNative/ShellModel.swift" \
+    "enum ShellPaneSplitDirection" \
+    "split commands must model left/right/up/down placement separately from split axis"
+
+require_pattern \
+    "clients/apple/AlanNative/ShellModel.swift" \
+    "enum ShellSpatialFocusDirection" \
+    "spatial focus commands must use explicit left/right/up/down directions"
+
+require_pattern \
+    "clients/apple/AlanNative/ShellHostController.swift" \
+    "func performShellWorkspaceCommand\\(_ command: ShellWorkspaceCommand\\)" \
+    "menu, keyboard, and command UI actions must route through one shell command entry point"
+
+require_pattern \
+    "clients/apple/AlanNative/AlanNativeApp.swift" \
+    "AlanMacShellCommands\\(host: primaryShellOwner\\.host\\)" \
+    "native menu commands must receive the primary shell host"
+
+require_pattern \
+    "clients/apple/AlanNative/AlanNativeApp.swift" \
+    "CommandMenu\\(\"Shell\"\\)" \
+    "split workspace actions must be exposed through a native Shell menu"
+
+require_pattern \
+    "clients/apple/AlanNative/AlanNativeApp.swift" \
+    "\\.keyboardShortcut\\(\"d\", modifiers: \\.command\\)" \
+    "split right must have a native command-key shortcut"
+
+require_pattern \
+    "clients/apple/AlanNative/AlanNativeApp.swift" \
+    "\\.keyboardShortcut\\(\"d\", modifiers: \\[\\.command, \\.shift\\]\\)" \
+    "split down must have a native command-shift shortcut"
+
+require_pattern \
+    "clients/apple/AlanNative/MacShellRootView.swift" \
+    "ShellWorkspaceCommand\\.splitRight" \
+    "command UI split actions must call the same shell command router as native menus"
+
+require_pattern \
+    "clients/apple/AlanNative/MacShellRootView.swift" \
+    "Go to or Command\\.\\.\\." \
+    "command entry copy must match the accepted shell command UI label"
+
+require_pattern \
+    "clients/apple/AlanNative/TerminalSurfaceController.swift" \
+    "func routeWorkspaceCommand\\(_ input: AlanTerminalKeyInput\\) -> ShellWorkspaceCommand\\?" \
+    "terminal input routing must recognize Alan workspace shortcuts before terminal bindings"
+
+require_pattern \
+    "clients/apple/AlanNative/TerminalHostView.swift" \
+    "routeWorkspaceKeyCommandIfNeeded\\(event\\)" \
+    "terminal host key equivalents must give Alan workspace shortcuts priority over Ghostty bindings"
+
+require_pattern \
     "clients/apple/AlanNative/TerminalPaneView.swift" \
     "ShellTerminalSurfaceFrame" \
     "terminal panes must share one outer rounded terminal surface frame"

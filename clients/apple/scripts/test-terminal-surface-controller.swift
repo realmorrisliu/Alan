@@ -171,6 +171,39 @@ private enum TerminalSurfaceControllerTests {
             )
         )
         expect(printable == .terminalText("a"), "printable key input must become terminal text")
+
+        let splitDown = adapter.routeWorkspaceCommand(
+            AlanTerminalKeyInput(
+                characters: "d",
+                keyCode: 2,
+                modifiers: [.command, .shift],
+                phase: .down,
+                isRepeat: false
+            )
+        )
+        expect(splitDown == .splitDown, "command-shift-d must route to shell split down before terminal bindings")
+
+        let splitRight = adapter.routeWorkspaceCommand(
+            AlanTerminalKeyInput(
+                characters: "d",
+                keyCode: 2,
+                modifiers: [.command],
+                phase: .down,
+                isRepeat: false
+            )
+        )
+        expect(splitRight == .splitRight, "command-d must route to shell split right before terminal bindings")
+
+        let focusRight = adapter.routeWorkspaceCommand(
+            AlanTerminalKeyInput(
+                characters: nil,
+                keyCode: 0x7C,
+                modifiers: [.command, .control],
+                phase: .down,
+                isRepeat: false
+            )
+        )
+        expect(focusRight == .focusRight, "command-control-right must route to shell focus right")
     }
 
     private static func verifiesPointerRoutingFollowsTerminalMouseModes() {

@@ -57,6 +57,7 @@ final class TerminalRuntimeRegistry: ObservableObject {
         bootProfile: AlanShellBootProfile?,
         isSelected: Bool,
         activationDelegate: TerminalHostActivationDelegate?,
+        onWorkspaceCommand: ((ShellWorkspaceCommand) -> Void)?,
         onRuntimeUpdate: @escaping (TerminalHostRuntimeSnapshot) -> Void,
         onMetadataUpdate: @escaping (TerminalPaneMetadataSnapshot) -> Void
     ) -> AlanTerminalHostNSView {
@@ -86,6 +87,7 @@ final class TerminalRuntimeRegistry: ObservableObject {
             isSelected: isSelected,
             surfaceHandle: surfaceHandle,
             activationDelegate: activationDelegate,
+            onWorkspaceCommand: onWorkspaceCommand,
             onRuntimeUpdate: onRuntimeUpdate,
             onMetadataUpdate: onMetadataUpdate
         )

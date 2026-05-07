@@ -10,9 +10,12 @@ struct ShellSplitModelTestRunner {
 private enum ShellSplitModelTests {
     static func run() throws {
         try verifiesNewSplitsStoreEqualRatio()
+        try verifiesDirectionalSplitsPlaceNewPaneOnRequestedSide()
         try verifiesSplitRatiosClampWhenResized()
         try verifiesEqualizeRestoresEverySplitRatio()
         try verifiesSameDirectionAttachKeepsBinarySplitTree()
+        try verifiesSpatialFocusFollowsSplitTree()
+        try verifiesSpatialFocusPreservesPerpendicularPosition()
         try verifiesLegacySplitDecodeDefaultsToEqualRatio()
         print("Shell split model tests passed.")
     }
@@ -25,6 +28,26 @@ private enum ShellSplitModelTests {
         expect(tree.kind == .split, "splitting a pane must create a split branch")
         expect(tree.ratio == 0.5, "new split branches must persist an equal divider ratio")
         expect(tree.children?.count == 2, "a split branch must keep two structural children")
+    }
+
+    private static func verifiesDirectionalSplitsPlaceNewPaneOnRequestedSide() throws {
+        let base = ShellStateSnapshot.bootstrapDefault(workingDirectory: "/tmp")
+
+        let rightTree = try requireFocusedTabTree(try base.splittingPane("pane_1", placement: .right).state)
+        expect(rightTree.direction == .vertical, "split right must create a vertical split branch")
+        expect(rightTree.paneIDs == ["pane_1", "pane_2"], "split right must place the new pane after the focused pane")
+
+        let leftTree = try requireFocusedTabTree(try base.splittingPane("pane_1", placement: .left).state)
+        expect(leftTree.direction == .vertical, "split left must create a vertical split branch")
+        expect(leftTree.paneIDs == ["pane_2", "pane_1"], "split left must place the new pane before the focused pane")
+
+        let downTree = try requireFocusedTabTree(try base.splittingPane("pane_1", placement: .down).state)
+        expect(downTree.direction == .horizontal, "split down must create a horizontal split branch")
+        expect(downTree.paneIDs == ["pane_1", "pane_2"], "split down must place the new pane after the focused pane")
+
+        let upTree = try requireFocusedTabTree(try base.splittingPane("pane_1", placement: .up).state)
+        expect(upTree.direction == .horizontal, "split up must create a horizontal split branch")
+        expect(upTree.paneIDs == ["pane_2", "pane_1"], "split up must place the new pane before the focused pane")
     }
 
     private static func verifiesSplitRatiosClampWhenResized() throws {
@@ -84,6 +107,64 @@ private enum ShellSplitModelTests {
         expect(
             attached.paneIDs == ["pane_1", "pane_2", "pane_3"],
             "same-direction attachment must preserve pane ordering"
+        )
+    }
+
+    private static func verifiesSpatialFocusFollowsSplitTree() throws {
+        var state = ShellStateSnapshot.bootstrapDefault(workingDirectory: "/tmp")
+        state = try state.splittingPane("pane_1", placement: .right).state
+        let pane2 = state.focusedPaneID ?? "pane_2"
+        let pane1Focused = try state.focusingPane("pane_1").state
+
+        let rightResult = try pane1Focused.focusingAdjacentPane(.right)
+        expect(rightResult.paneID == pane2, "focus right must move to the right sibling pane")
+
+        let leftResult = try rightResult.state.focusingAdjacentPane(.left)
+        expect(leftResult.paneID == "pane_1", "focus left must return to the left sibling pane")
+
+        do {
+            _ = try pane1Focused.focusingAdjacentPane(.left)
+            expect(false, "focus left without a neighbor must throw")
+        } catch ShellStateMutationError.spatialFocusTargetNotFound {
+            // Expected.
+        }
+    }
+
+    private static func verifiesSpatialFocusPreservesPerpendicularPosition() throws {
+        var state = ShellStateSnapshot.bootstrapDefault(workingDirectory: "/tmp")
+        state = try state.splittingPane("pane_1", placement: .right).state
+        state = try state.splittingPane("pane_1", placement: .down).state
+        state = try state.splittingPane("pane_2", placement: .down).state
+
+        let lowerLeftFocused = try state.focusingPane("pane_3").state
+        let rightResult = try lowerLeftFocused.focusingAdjacentPane(.right)
+        expect(
+            rightResult.paneID == "pane_4",
+            "focus right from the lower-left pane must land on the lower-right pane"
+        )
+
+        let leftResult = try rightResult.state.focusingAdjacentPane(.left)
+        expect(
+            leftResult.paneID == "pane_3",
+            "focus left from the lower-right pane must return to the lower-left pane"
+        )
+
+        var rowState = ShellStateSnapshot.bootstrapDefault(workingDirectory: "/tmp")
+        rowState = try rowState.splittingPane("pane_1", placement: .down).state
+        rowState = try rowState.splittingPane("pane_1", placement: .right).state
+        rowState = try rowState.splittingPane("pane_2", placement: .right).state
+
+        let upperRightFocused = try rowState.focusingPane("pane_3").state
+        let downResult = try upperRightFocused.focusingAdjacentPane(.down)
+        expect(
+            downResult.paneID == "pane_4",
+            "focus down from the upper-right pane must land on the lower-right pane"
+        )
+
+        let upResult = try downResult.state.focusingAdjacentPane(.up)
+        expect(
+            upResult.paneID == "pane_3",
+            "focus up from the lower-right pane must return to the upper-right pane"
         )
     }
 
