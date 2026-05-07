@@ -11,7 +11,7 @@ card grid or debug layout.
 
 #### Scenario: Split panes share one terminal surface
 - **WHEN** a tab contains adjacent visible terminal panes
-- **THEN** panes are rendered as one continuous terminal surface with no per-pane rounded cards, shadows, bottom pane tab strip, or fixed gaps; only the split divider separates neighboring panes
+- **THEN** panes are rendered inside one continuous terminal surface whose outer four corners are rounded, with no per-pane rounded cards, shadows, bottom pane tab strip, or fixed gaps; only a subtle low-contrast split seam separates neighboring panes
 
 #### Scenario: Divider hover
 - **WHEN** the user hovers or drags a split divider

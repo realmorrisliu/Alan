@@ -185,6 +185,16 @@ require_pattern \
     "ShellSplitDividerView" \
     "split panes must use an explicit divider instead of visual spacing gaps"
 
+require_pattern \
+    "clients/apple/AlanNative/TerminalPaneView.swift" \
+    "ShellSplitDividerTint" \
+    "split divider tint must stay subtle instead of rendering as a hard line"
+
+require_pattern \
+    "clients/apple/AlanNative/TerminalPaneView.swift" \
+    "ShellTerminalSurfaceFrame" \
+    "terminal panes must share one outer rounded terminal surface frame"
+
 reject_pattern \
     "clients/apple/AlanNative/TerminalPaneView.swift" \
     "splitChildren" \
@@ -192,13 +202,13 @@ reject_pattern \
 
 reject_pattern \
     "clients/apple/AlanNative/TerminalPaneView.swift" \
-    "clipShape\\(RoundedRectangle\\(cornerRadius: 12" \
-    "terminal panes must not render as separate rounded cards inside a split surface"
+    "paneSelectorStrip" \
+    "split panes must not show a bottom pane tab strip by default"
 
 reject_pattern \
     "clients/apple/AlanNative/TerminalPaneView.swift" \
-    "paneSelectorStrip" \
-    "split panes must not show a bottom pane tab strip by default"
+    "Color\\.primary\\.opacity\\(0\\.16\\)" \
+    "split divider must not render as a high-contrast primary-color line"
 
 require_pattern \
     "clients/apple/AlanNative/TerminalHostView.swift" \

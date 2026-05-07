@@ -175,6 +175,7 @@ struct TerminalPaneView: View {
                 .padding(28)
             }
         }
+        .modifier(ShellTerminalSurfaceFrame())
     }
 
     private var runtimeCard: some View {
@@ -448,6 +449,27 @@ struct TerminalPaneView: View {
     }
 }
 
+private struct ShellTerminalSurfaceFrame: ViewModifier {
+    private let shape = RoundedRectangle(cornerRadius: 12, style: .continuous)
+
+    func body(content: Content) -> some View {
+        content
+            .background(ShellPalette.terminal)
+            .clipShape(shape)
+            .overlay {
+                shape.stroke(
+                    ShellPalette.line.opacity(0.18),
+                    lineWidth: 1
+                )
+            }
+            .shadow(
+                color: Color.black.opacity(0.10),
+                radius: 18,
+                y: 8
+            )
+    }
+}
+
 private struct ShellPaneTreeLayoutView: View {
     let node: ShellPaneTreeNode
     @ObservedObject var host: ShellHostController
@@ -558,17 +580,25 @@ private struct ShellSplitLayoutView: View {
 }
 
 private struct ShellSplitDividerView: View {
+    @State private var isHovered = false
     let direction: ShellSplitDirection
 
     var body: some View {
         Rectangle()
-            .fill(Color.primary.opacity(0.16))
+            .fill(ShellSplitDividerTint.color(isHovered: isHovered))
             .frame(
                 width: direction == .vertical ? 1 : nil,
                 height: direction == .horizontal ? 1 : nil
             )
             .contentShape(Rectangle())
+            .onHover { isHovered = $0 }
             .help("Resize split")
+    }
+}
+
+private enum ShellSplitDividerTint {
+    static func color(isHovered: Bool) -> Color {
+        ShellPalette.terminalSoft.opacity(isHovered ? 0.38 : 0.18)
     }
 }
 
