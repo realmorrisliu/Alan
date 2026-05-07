@@ -114,6 +114,13 @@ final class AlanTerminalScrollbackAdapter {
     private(set) var state = AlanTerminalScrollbackState.empty
 
     @discardableResult
+    func reset() -> AlanTerminalScrollbackState {
+        state = .empty
+        preciseScrollRemainder = 0
+        return state
+    }
+
+    @discardableResult
     func updateMetrics(_ metrics: AlanTerminalScrollbackMetrics) -> AlanTerminalScrollbackState {
         let totalRows = max(0, metrics.totalRows)
         let visibleRows = max(0, min(metrics.visibleRows, totalRows))
@@ -810,7 +817,8 @@ final class AlanTerminalSurfaceController {
     }
 
     func bind(surfaceHandle: AlanTerminalSurfaceHandle?, paneID: String?) {
-        if self.surfaceHandle !== surfaceHandle {
+        let surfaceChanged = self.surfaceHandle !== surfaceHandle
+        if surfaceChanged {
             self.surfaceHandle?.detach()
             self.surfaceHandle = surfaceHandle
         }
@@ -826,9 +834,12 @@ final class AlanTerminalSurfaceController {
         if scrollbackEngine !== nextScrollbackEngine {
             scrollbackEngine?.setScrollbackUpdateHandler(nil)
             scrollbackEngine = nextScrollbackEngine
+            resetPerSurfaceStateForSurfaceChange()
             scrollbackEngine?.setScrollbackUpdateHandler { [weak self] metrics in
                 self?.applyScrollbackMetrics(metrics)
             }
+        } else if surfaceChanged {
+            resetPerSurfaceStateForSurfaceChange()
         }
         selectionEngine = surfaceHandle as? AlanTerminalSelectionEngine
         clipboardAdapter.updateSurfaceHandle(surfaceHandle)
@@ -871,6 +882,7 @@ final class AlanTerminalSurfaceController {
         scrollbackEngine?.setScrollbackUpdateHandler(nil)
         scrollbackEngine = nil
         selectionEngine = nil
+        resetPerSurfaceStateForSurfaceChange()
         clipboardAdapter.updateSurfaceHandle(nil)
     }
 
@@ -1065,6 +1077,28 @@ final class AlanTerminalSurfaceController {
     private func applyScrollbackMetrics(_ metrics: AlanTerminalScrollbackMetrics) {
         scrollbackAdapter.updateMetrics(metrics)
         notifySurfaceStateChanged()
+    }
+
+    private func resetPerSurfaceStateForSurfaceChange() {
+        let previousState = scrollbackAdapter.state
+        let previousRenderer = latestRenderer
+        let previousMetadata = latestMetadata
+        let previousReadonly = readonly
+        let previousSecureInput = secureInput
+        scrollbackAdapter.reset()
+        nativeScrollRowHeight = 1
+        latestRenderer = .placeholder
+        latestMetadata = .placeholder
+        readonly = false
+        secureInput = false
+        if previousState != .empty
+            || previousRenderer != .placeholder
+            || previousMetadata != .placeholder
+            || previousReadonly
+            || previousSecureInput
+        {
+            notifySurfaceStateChanged()
+        }
     }
 
     private func notifySearchStateChanged() {
