@@ -318,12 +318,42 @@ require_pattern \
 require_pattern \
     "clients/apple/AlanNative/ShellHostController.swift" \
     "struct ShellWindowContext" \
-    "shell host must expose a per-window context"
+    "shell host must expose a shell context type for the singleton primary window"
 
-require_pattern \
+reject_pattern \
     "clients/apple/AlanNative/MacShellRootView.swift" \
     "ShellWindowContext\\.make\\(\\)" \
-    "each macOS shell window must create its own context"
+    "macOS root view must use the app-scoped primary shell owner instead of creating a fresh context"
+
+require_pattern \
+    "clients/apple/AlanNative/AlanNativeApp.swift" \
+    "Window\\(\"Alan\", id: \"main\"\\)" \
+    "macOS app scene must use a unique primary Window instead of a repeatable WindowGroup"
+
+require_pattern \
+    "clients/apple/AlanNative/AlanNativeApp.swift" \
+    "CommandGroup\\(replacing: \\.newItem\\)" \
+    "macOS app must replace New Window with a focus/reopen command"
+
+require_pattern \
+    "clients/apple/AlanNative/AlanNativeApp.swift" \
+    "AlanMacAppStartup\\.acquireSingletonOrTerminate\\(\\)" \
+    "macOS app startup must acquire the singleton guard before creating shell state"
+
+require_pattern \
+    "clients/apple/AlanNative/AlanAppSingletonGuard.swift" \
+    "flock\\(descriptor, LOCK_EX \\| LOCK_NB\\)" \
+    "macOS app singleton guard must use an OS-backed exclusive lock"
+
+require_pattern \
+    "clients/apple/README.md" \
+    "stable .*window_main.* identity" \
+    "Apple client docs must describe the singleton primary shell identity"
+
+reject_pattern \
+    "clients/apple/README.md" \
+    "Each macOS window creates its own shell context" \
+    "Apple client docs must not describe each macOS window as an independent shell context"
 
 require_pattern \
     "clients/apple/AlanNative/ShellControlPlane.swift" \

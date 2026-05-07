@@ -80,10 +80,11 @@ Without that override, the macOS shell host resolves Alan in this order:
 4. installed `~/.alan/bin/alan`
 5. `alan` from the current `PATH`
 
-Each macOS window creates its own shell context with a distinct `window_id`,
-control directory, socket, state file, event log, and terminal runtime registry.
-Older fixed `shell-state-v0.1.json` files are not loaded for new windows; the
-current persisted state files are scoped as `shell-state-<window_id>.json`.
+The macOS app owns one primary shell context for the process. The default shell
+surface uses the stable `window_main` identity, so reopen, activation, and New
+Window commands focus the existing Alan window instead of creating another
+control plane. Older fixed `shell-state-v0.1.json` files are not loaded; the
+current persisted state file is scoped as `shell-state-window_main.json`.
 
 ### Window Capture Helper
 
