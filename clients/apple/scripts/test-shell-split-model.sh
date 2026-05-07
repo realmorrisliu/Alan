@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
+BUILD_DIR="${TMPDIR:-/tmp}/alan-shell-split-model-tests"
+MODULE_CACHE_DIR="${BUILD_DIR}/clang-module-cache"
+TEST_BINARY="${BUILD_DIR}/shell-split-model-tests"
+
+mkdir -p "$MODULE_CACHE_DIR"
+
+CLANG_MODULE_CACHE_PATH="$MODULE_CACHE_DIR" swiftc \
+    "$REPO_ROOT/clients/apple/AlanNative/ShellModel.swift" \
+    "$REPO_ROOT/clients/apple/scripts/test-shell-split-model.swift" \
+    -o "$TEST_BINARY"
+
+"$TEST_BINARY"

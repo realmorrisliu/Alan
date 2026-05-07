@@ -181,6 +181,86 @@ require_pattern \
     "terminal host views must be keyed by stable pane identity"
 
 require_pattern \
+    "clients/apple/AlanNative/TerminalPaneView.swift" \
+    "ShellSplitDividerView" \
+    "split panes must use an explicit divider instead of visual spacing gaps"
+
+require_pattern \
+    "clients/apple/AlanNative/TerminalPaneView.swift" \
+    "ShellSplitDividerTint" \
+    "split divider tint must stay subtle instead of rendering as a hard line"
+
+require_pattern \
+    "clients/apple/AlanNative/TerminalPaneView.swift" \
+    "ShellSplitDividerMetrics\\.thickness" \
+    "split divider must use an intentional seam thickness instead of a hard 1px line"
+
+require_pattern \
+    "clients/apple/AlanNative/TerminalPaneView.swift" \
+    "ShellSplitDividerTint\\.shadow" \
+    "split divider must use a subtle bevel seam rather than a single flat line"
+
+require_pattern \
+    "clients/apple/AlanNative/TerminalPaneView.swift" \
+    "dragPreviewRatio" \
+    "split divider drag must track the live preview ratio until drag end"
+
+require_pattern \
+    "clients/apple/AlanNative/TerminalPaneView.swift" \
+    "resizeSplit\\(splitNodeID: node\\.nodeID, ratio: nextRatio, persist: false\\)" \
+    "split divider drag previews must not persist every pointer sample"
+
+require_pattern \
+    "clients/apple/AlanNative/TerminalPaneView.swift" \
+    "resizeSplit\\(splitNodeID: node\\.nodeID, ratio: finalRatio, persist: true\\)" \
+    "split divider drag end must persist the final ratio"
+
+require_pattern \
+    "clients/apple/AlanNative/ShellHostController.swift" \
+    "func resizeSplit\\(splitNodeID: String, ratio: Double, persist: Bool = true\\)" \
+    "shell split resize must expose a non-persisting preview path"
+
+require_pattern \
+    "clients/apple/AlanNative/ShellHostController.swift" \
+    "applyMutationResult\\(result, publish: persist\\)" \
+    "split resize preview persistence must be controlled at mutation application"
+
+require_pattern \
+    "clients/apple/AlanNative/TerminalPaneView.swift" \
+    "ShellTerminalSurfaceFrame" \
+    "terminal panes must share one outer rounded terminal surface frame"
+
+require_pattern \
+    "clients/apple/AlanNative/TerminalPaneView.swift" \
+    "ShellInactivePaneDim" \
+    "inactive split panes must use a lightweight dim treatment"
+
+require_pattern \
+    "clients/apple/AlanNative/TerminalPaneView.swift" \
+    "allowsHitTesting\\(false\\)" \
+    "inactive pane dimming must not intercept terminal pointer input"
+
+require_pattern \
+    "clients/apple/AlanNative/TerminalPaneView.swift" \
+    "@AppStorage\\(\"alanShellDimsInactiveSplitPanes\"\\)" \
+    "inactive pane dimming must be backed by a user-default preference"
+
+reject_pattern \
+    "clients/apple/AlanNative/TerminalPaneView.swift" \
+    "splitChildren" \
+    "split panes must not leave a fixed gap between adjacent terminal panes"
+
+reject_pattern \
+    "clients/apple/AlanNative/TerminalPaneView.swift" \
+    "paneSelectorStrip" \
+    "split panes must not show a bottom pane tab strip by default"
+
+reject_pattern \
+    "clients/apple/AlanNative/TerminalPaneView.swift" \
+    "Color\\.primary\\.opacity\\(0\\.16\\)" \
+    "split divider must not render as a high-contrast primary-color line"
+
+require_pattern \
     "clients/apple/AlanNative/TerminalHostView.swift" \
     "hasTornDownRuntime" \
     "terminal teardown must be idempotent"

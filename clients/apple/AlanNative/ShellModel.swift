@@ -302,9 +302,13 @@ extension ShellPane {
 }
 
 struct ShellPaneTreeNode: Identifiable, Codable, Equatable {
+    static let minimumSplitRatio = 0.15
+    static let maximumSplitRatio = 0.85
+
     let nodeID: String
     let kind: ShellPaneTreeKind
     let direction: ShellSplitDirection?
+    let ratio: Double?
     let paneID: String?
     let children: [ShellPaneTreeNode]?
 
@@ -314,8 +318,63 @@ struct ShellPaneTreeNode: Identifiable, Codable, Equatable {
         case nodeID = "node_id"
         case kind
         case direction
+        case ratio
         case paneID = "pane_id"
         case children
+    }
+
+    init(
+        nodeID: String,
+        kind: ShellPaneTreeKind,
+        direction: ShellSplitDirection?,
+        ratio: Double? = nil,
+        paneID: String?,
+        children: [ShellPaneTreeNode]?
+    ) {
+        self.nodeID = nodeID
+        self.kind = kind
+        self.direction = direction
+        self.ratio = kind == .split
+            ? Self.clampedSplitRatio(ratio ?? 0.5)
+            : nil
+        self.paneID = paneID
+        self.children = children
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let kind = try container.decode(ShellPaneTreeKind.self, forKey: .kind)
+        let decodedRatio = try container.decodeIfPresent(Double.self, forKey: .ratio)
+
+        self.init(
+            nodeID: try container.decode(String.self, forKey: .nodeID),
+            kind: kind,
+            direction: try container.decodeIfPresent(ShellSplitDirection.self, forKey: .direction),
+            ratio: kind == .split ? decodedRatio : nil,
+            paneID: try container.decodeIfPresent(String.self, forKey: .paneID),
+            children: try container.decodeIfPresent([ShellPaneTreeNode].self, forKey: .children)
+        )
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(nodeID, forKey: .nodeID)
+        try container.encode(kind, forKey: .kind)
+        try container.encodeIfPresent(direction, forKey: .direction)
+        if kind == .split {
+            try container.encode(ratio ?? 0.5, forKey: .ratio)
+        }
+        try container.encodeIfPresent(paneID, forKey: .paneID)
+        try container.encodeIfPresent(children, forKey: .children)
+    }
+
+    static func clampedSplitRatio(_ ratio: Double) -> Double {
+        guard ratio.isFinite else { return 0.5 }
+        return min(max(ratio, minimumSplitRatio), maximumSplitRatio)
+    }
+
+    var splitRatio: Double {
+        Self.clampedSplitRatio(ratio ?? 0.5)
     }
 }
 
@@ -339,6 +398,67 @@ extension ShellPaneTreeNode {
             return paneID == targetPaneID
         case .split:
             return (children ?? []).contains { $0.contains(paneID: targetPaneID) }
+        }
+    }
+
+    func contains(nodeID targetNodeID: String) -> Bool {
+        if nodeID == targetNodeID { return true }
+        return (children ?? []).contains { $0.contains(nodeID: targetNodeID) }
+    }
+
+    func resizingSplit(
+        _ targetNodeID: String,
+        ratio targetRatio: Double
+    ) -> (node: ShellPaneTreeNode, changed: Bool) {
+        if kind == .split, nodeID == targetNodeID {
+            return (
+                ShellPaneTreeNode(
+                    nodeID: nodeID,
+                    kind: kind,
+                    direction: direction,
+                    ratio: targetRatio,
+                    paneID: paneID,
+                    children: children
+                ),
+                true
+            )
+        }
+
+        guard let children, !children.isEmpty else { return (self, false) }
+        var didChange = false
+        let nextChildren = children.map { child in
+            let result = child.resizingSplit(targetNodeID, ratio: targetRatio)
+            didChange = didChange || result.changed
+            return result.node
+        }
+
+        guard didChange else { return (self, false) }
+        return (
+            ShellPaneTreeNode(
+                nodeID: nodeID,
+                kind: kind,
+                direction: direction,
+                ratio: ratio,
+                paneID: paneID,
+                children: nextChildren
+            ),
+            true
+        )
+    }
+
+    func equalizedSplits() -> ShellPaneTreeNode {
+        switch kind {
+        case .pane:
+            return self
+        case .split:
+            return ShellPaneTreeNode(
+                nodeID: nodeID,
+                kind: kind,
+                direction: direction,
+                ratio: 0.5,
+                paneID: paneID,
+                children: children?.map { $0.equalizedSplits() }
+            )
         }
     }
 
@@ -370,6 +490,7 @@ extension ShellPaneTreeNode {
                 nodeID: splitNodeID,
                 kind: .split,
                 direction: direction,
+                ratio: 0.5,
                 paneID: nil,
                 children: [currentLeaf, newLeaf]
             )
@@ -378,6 +499,7 @@ extension ShellPaneTreeNode {
                 nodeID: nodeID,
                 kind: .split,
                 direction: self.direction,
+                ratio: ratio,
                 paneID: nil,
                 children: (children ?? []).map {
                     $0.splittingPane(
@@ -408,6 +530,7 @@ extension ShellPaneTreeNode {
                 nodeID: nodeID,
                 kind: .split,
                 direction: direction,
+                ratio: ratio,
                 paneID: nil,
                 children: remainingChildren
             )
@@ -429,13 +552,25 @@ extension ShellPaneTreeNode {
         )
 
         if kind == .split,
-           self.direction == direction {
+           self.direction == direction,
+           let existingChildren = children,
+           let lastChild = existingChildren.last {
+            let nestedSplit = ShellPaneTreeNode(
+                nodeID: splitNodeID,
+                kind: .split,
+                direction: direction,
+                ratio: 0.5,
+                paneID: nil,
+                children: [lastChild, newLeaf]
+            )
+
             return ShellPaneTreeNode(
                 nodeID: nodeID,
                 kind: .split,
                 direction: direction,
+                ratio: ratio,
                 paneID: nil,
-                children: (children ?? []) + [newLeaf]
+                children: Array(existingChildren.dropLast()) + [nestedSplit]
             )
         }
 
@@ -443,6 +578,7 @@ extension ShellPaneTreeNode {
             nodeID: splitNodeID,
             kind: .split,
             direction: direction,
+            ratio: 0.5,
             paneID: nil,
             children: [self, newLeaf]
         )
@@ -453,6 +589,7 @@ enum ShellStateMutationError: String, Error {
     case spaceNotFound = "space_not_found"
     case tabNotFound = "tab_not_found"
     case paneNotFound = "pane_not_found"
+    case splitNotFound = "split_not_found"
     case lastTab = "last_tab"
     case lastPane = "last_pane"
     case invalidMoveTarget = "invalid_move_target"
@@ -965,6 +1102,42 @@ extension ShellStateSnapshot {
         )
     }
 
+    func resizingSplit(
+        _ splitNodeID: String,
+        ratio: Double
+    ) throws -> ShellStateMutationResult {
+        guard let tab = spaces.lazy
+            .flatMap(\.tabs)
+            .first(where: { $0.paneTree.contains(nodeID: splitNodeID) })
+        else {
+            throw ShellStateMutationError.splitNotFound
+        }
+
+        let resizeResult = tab.paneTree.resizingSplit(splitNodeID, ratio: ratio)
+        guard resizeResult.changed else {
+            throw ShellStateMutationError.splitNotFound
+        }
+
+        return try replacingTabTree(
+            tabID: tab.tabID,
+            paneTree: resizeResult.node
+        )
+    }
+
+    func equalizingSplits(in requestedTabID: String?) throws -> ShellStateMutationResult {
+        let tabID = requestedTabID ?? focusedTabID
+        guard let tabID,
+              let tab = tab(tabID: tabID)
+        else {
+            throw ShellStateMutationError.tabNotFound
+        }
+
+        return try replacingTabTree(
+            tabID: tab.tabID,
+            paneTree: tab.paneTree.equalizedSplits()
+        )
+    }
+
     func closingPane(_ paneID: String) throws -> ShellStateMutationResult {
         guard let pane = pane(paneID: paneID),
               let tab = tab(tabID: pane.tabID)
@@ -1260,6 +1433,48 @@ extension ShellStateSnapshot {
             spaceID: pane(paneID: paneID)?.spaceID,
             tabID: pane(paneID: paneID)?.tabID,
             paneID: paneID
+        )
+    }
+
+    private func replacingTabTree(
+        tabID: String,
+        paneTree: ShellPaneTreeNode
+    ) throws -> ShellStateMutationResult {
+        guard let targetSpace = spaces.first(where: { space in
+            space.tabs.contains(where: { $0.tabID == tabID })
+        }),
+        let targetTab = targetSpace.tabs.first(where: { $0.tabID == tabID })
+        else {
+            throw ShellStateMutationError.tabNotFound
+        }
+
+        let updatedTab = ShellTab(
+            tabID: targetTab.tabID,
+            kind: targetTab.kind,
+            title: targetTab.title,
+            paneTree: paneTree
+        )
+        let nextSpaces = spaces.map { space in
+            guard space.spaceID == targetSpace.spaceID else { return space }
+            return ShellSpace(
+                spaceID: space.spaceID,
+                title: space.title,
+                attention: space.attention,
+                tabs: space.tabs.map { tab in
+                    tab.tabID == updatedTab.tabID ? updatedTab : tab
+                }
+            )
+        }
+
+        return ShellStateMutationResult(
+            state: replacing(
+                spaces: nextSpaces,
+                panes: panes,
+                focusedPaneID: focusedPaneID
+            ),
+            spaceID: targetSpace.spaceID,
+            tabID: updatedTab.tabID,
+            paneID: focusedPaneID
         )
     }
 

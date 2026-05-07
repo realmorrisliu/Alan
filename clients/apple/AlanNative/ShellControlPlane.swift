@@ -809,6 +809,16 @@ private enum AlanShellLocalCommandExecutor {
                 errorCode: error.rawValue,
                 errorMessage: "The requested pane does not exist."
             )
+        case .splitNotFound:
+            return response(
+                for: command,
+                state: state,
+                applied: false,
+                tabID: command.tabID,
+                paneID: command.paneID,
+                errorCode: error.rawValue,
+                errorMessage: "The requested split does not exist."
+            )
         case .lastTab:
             return response(
                 for: command,

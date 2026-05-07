@@ -1,16 +1,17 @@
 ## 1. Split Model
 
-- [ ] 1.1 Add split branch ratio, structural identity, and validation/clamping to the shell model.
-- [ ] 1.2 Add migration/loading behavior for existing equal split trees.
+- [x] 1.1 Add split branch ratio, structural identity, and validation/clamping to the shell model.
+- [x] 1.2 Add migration/loading behavior for existing equal split trees.
 - [ ] 1.3 Add model operations for split directional creation, resize, equalize, zoom, unzoom, close, focus, and move.
 - [ ] 1.4 Add focused model tests for ratio persistence, invalid ratios, tree repair, and empty-container handling.
 
 ## 2. Split Layout UI
 
-- [ ] 2.1 Replace equal `HStack`/`VStack` recursion with a ratio-aware split layout view.
-- [ ] 2.2 Add native divider resize affordances with stable minimum pane sizes.
+- [x] 2.1 Replace equal `HStack`/`VStack` recursion with a ratio-aware split layout view.
+- [x] 2.2 Add native divider resize affordances with stable minimum pane sizes.
 - [ ] 2.3 Add split zoom and unzoom UI that preserves sibling runtime handles.
 - [ ] 2.4 Add visual treatment for focused panes that stays lightweight and hides debug identifiers.
+- [x] 2.5 Keep adjacent split panes as one continuous terminal surface without per-pane rounded cards or a bottom pane tab strip.
 
 ## 3. Native Commands And Menus
 
