@@ -12,6 +12,32 @@ enum AlanTerminalMode: String, Equatable {
     case mouseReporting = "mouse_reporting"
 }
 
+final class AlanTerminalModeTracker {
+    private var hasSeenScrollableNormalBuffer = false
+
+    func reset() {
+        hasSeenScrollableNormalBuffer = false
+    }
+
+    func resolveMode(totalRows: Int, visibleRows: Int, mouseCaptured: Bool) -> AlanTerminalMode {
+        if mouseCaptured {
+            return .mouseReporting
+        }
+
+        let hasScrollableRows = max(0, totalRows) > max(0, visibleRows)
+        if hasScrollableRows {
+            hasSeenScrollableNormalBuffer = true
+            return .normalBuffer
+        }
+
+        if hasSeenScrollableNormalBuffer {
+            return .alternateScreen
+        }
+
+        return .normalBuffer
+    }
+}
+
 struct AlanTerminalScrollbackMetrics: Equatable {
     let totalRows: Int
     let visibleRows: Int
@@ -38,9 +64,61 @@ struct AlanTerminalScrollbackState: Equatable {
     )
 }
 
+struct AlanTerminalScrollInput: Equatable {
+    let deltaX: Double
+    let deltaY: Double
+    let precise: Bool
+}
+
+enum AlanTerminalScrollRoutingDecision: Equatable {
+    case nativeScroll(row: Int)
+    case terminalScroll
+    case ignored
+}
+
+@MainActor
+protocol AlanTerminalScrollbackEngine: AnyObject {
+    func setScrollbackUpdateHandler(_ handler: ((AlanTerminalScrollbackMetrics) -> Void)?)
+    func scrollTo(row: Int) -> Bool
+}
+
+@MainActor
+protocol AlanTerminalSelectionEngine: AnyObject {
+    func readSelectionText() -> String?
+    func hasSelection() -> Bool
+}
+
+@MainActor
+protocol AlanTerminalPasteboardWriting: AnyObject {
+    func writeString(_ text: String) -> Bool
+}
+
+@MainActor
+final class AlanTerminalSystemPasteboardWriter: AlanTerminalPasteboardWriting {
+    private let pasteboard: NSPasteboard
+
+    init(pasteboard: NSPasteboard = .general) {
+        self.pasteboard = pasteboard
+    }
+
+    func writeString(_ text: String) -> Bool {
+        pasteboard.clearContents()
+        pasteboard.declareTypes([.string], owner: nil)
+        return pasteboard.setString(text, forType: .string)
+    }
+}
+
 @MainActor
 final class AlanTerminalScrollbackAdapter {
+    private var preciseScrollRemainder = 0.0
     private(set) var state = AlanTerminalScrollbackState.empty
+
+    @discardableResult
+    func reset() -> AlanTerminalScrollbackState {
+        state = .empty
+        preciseScrollRemainder = 0
+        return state
+    }
 
     @discardableResult
     func updateMetrics(_ metrics: AlanTerminalScrollbackMetrics) -> AlanTerminalScrollbackState {
@@ -59,11 +137,308 @@ final class AlanTerminalScrollbackAdapter {
             nativeScrollbarVisible: hasScrollableNormalBuffer,
             thumbRange: firstVisibleRow..<(firstVisibleRow + visibleRows)
         )
+        if !hasScrollableNormalBuffer {
+            preciseScrollRemainder = 0
+        }
         return state
+    }
+
+    @discardableResult
+    func scrollTo(firstVisibleRow: Int) -> AlanTerminalScrollbackState {
+        updateMetrics(
+            AlanTerminalScrollbackMetrics(
+                totalRows: state.metrics.totalRows,
+                visibleRows: state.metrics.visibleRows,
+                firstVisibleRow: firstVisibleRow,
+                mode: state.metrics.mode
+            )
+        )
+    }
+
+    func shouldConsumeNativeScrollInput(_ input: AlanTerminalScrollInput) -> Bool {
+        guard state.nativeScrollbarVisible else { return false }
+        guard abs(input.deltaY) >= abs(input.deltaX) else { return false }
+        return input.deltaY != 0 || preciseScrollRemainder != 0
+    }
+
+    func resetPreciseScrollAccumulator() {
+        preciseScrollRemainder = 0
+    }
+
+    func targetFirstVisibleRow(for input: AlanTerminalScrollInput, rowHeight: CGFloat = 1) -> Int? {
+        guard shouldConsumeNativeScrollInput(input) else { return nil }
+        let rowDelta: Int
+        if input.precise {
+            let rows = (-input.deltaY / max(Double(rowHeight), 1)) + preciseScrollRemainder
+            rowDelta = Int(rows.rounded(.towardZero))
+            preciseScrollRemainder = rows - Double(rowDelta)
+        } else {
+            preciseScrollRemainder = 0
+            rowDelta = Int((-input.deltaY).rounded(.toNearestOrAwayFromZero))
+        }
+        guard rowDelta != 0 else { return nil }
+        let maxFirstVisibleRow = max(state.metrics.totalRows - state.metrics.visibleRows, 0)
+        let targetRow = max(0, min(state.metrics.firstVisibleRow + rowDelta, maxFirstVisibleRow))
+        guard targetRow != state.metrics.firstVisibleRow else {
+            preciseScrollRemainder = 0
+            return nil
+        }
+        return targetRow
     }
 
     func shouldForwardScrollToTerminal() -> Bool {
         state.metrics.mode == .alternateScreen || state.metrics.mode == .mouseReporting
+    }
+}
+
+enum AlanTerminalRoutedMouseEvent: Equatable {
+    case mouseDown
+    case mouseUp
+    case rightMouseDown
+    case rightMouseUp
+    case otherMouseDown
+    case otherMouseUp
+    case mouseEntered
+    case mouseMoved
+    case mouseDragged
+    case rightMouseDragged
+    case otherMouseDragged
+    case mouseExited
+    case pressureChange
+}
+
+@MainActor
+final class AlanTerminalNativeScrollViewAdapter {
+    let scrollView = AlanTerminalRoutingScrollView()
+    var onVisibleRowChange: ((Int) -> Void)?
+    var onScrollWheel: ((NSEvent) -> Bool)? {
+        didSet {
+            scrollView.onScrollWheel = onScrollWheel
+        }
+    }
+    var onMouseEvent: ((AlanTerminalRoutedMouseEvent, NSEvent) -> Bool)? {
+        didSet {
+            scrollView.onMouseEvent = onMouseEvent
+        }
+    }
+
+    private let documentView = NSView(frame: .zero)
+    private weak var canvasView: NSView?
+    private var observers: [NSObjectProtocol] = []
+    private var state = AlanTerminalScrollbackState.empty
+    private var rowHeight: CGFloat = 1
+    private var isProgrammaticSync = false
+    private var lastSentRow: Int?
+
+    init() {
+        scrollView.hasVerticalScroller = false
+        scrollView.hasHorizontalScroller = false
+        scrollView.autohidesScrollers = false
+        scrollView.usesPredominantAxisScrolling = true
+        scrollView.scrollerStyle = .overlay
+        scrollView.drawsBackground = false
+        scrollView.contentView.clipsToBounds = false
+        scrollView.contentView.postsBoundsChangedNotifications = true
+        scrollView.documentView = documentView
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+        observers.append(
+            NotificationCenter.default.addObserver(
+                forName: NSView.boundsDidChangeNotification,
+                object: scrollView.contentView,
+                queue: .main
+            ) { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    self?.handleBoundsChange()
+                }
+            }
+        )
+    }
+
+    deinit {
+        observers.forEach { NotificationCenter.default.removeObserver($0) }
+    }
+
+    func attachCanvasView(_ canvasView: NSView) {
+        guard self.canvasView !== canvasView else { return }
+        self.canvasView?.removeFromSuperview()
+        self.canvasView = canvasView
+        canvasView.removeFromSuperview()
+        canvasView.translatesAutoresizingMaskIntoConstraints = true
+        canvasView.autoresizingMask = [.width, .height]
+        canvasView.frame = scrollView.contentView.bounds
+        scrollView.contentView.addSubview(canvasView)
+    }
+
+    func sync(
+        state: AlanTerminalScrollbackState,
+        viewportSize: CGSize,
+        rowHeight: CGFloat = 1
+    ) {
+        self.state = state
+        self.rowHeight = max(rowHeight, 1)
+        let viewportWidth = max(viewportSize.width, 0)
+        let viewportHeight = max(viewportSize.height, 0)
+        documentView.frame.size.width = viewportWidth
+        scrollView.hasVerticalScroller = state.nativeScrollbarVisible
+        scrollView.verticalScrollElasticity = state.nativeScrollbarVisible ? .allowed : .none
+
+        guard viewportWidth > 0, viewportHeight > 0, state.nativeScrollbarVisible else {
+            documentView.frame.size.height = viewportHeight
+            scrollView.contentView.scroll(to: .zero)
+            synchronizeCanvasView()
+            scrollView.reflectScrolledClipView(scrollView.contentView)
+            return
+        }
+
+        let contentHeight = max(CGFloat(state.metrics.totalRows) * self.rowHeight, viewportHeight)
+        documentView.frame.size.height = contentHeight
+        let offsetY = CGFloat(
+            state.metrics.totalRows
+                - state.metrics.firstVisibleRow
+                - state.metrics.visibleRows
+        ) * self.rowHeight
+        isProgrammaticSync = true
+        scrollView.contentView.scroll(to: CGPoint(x: 0, y: max(offsetY, 0)))
+        synchronizeCanvasView()
+        scrollView.reflectScrolledClipView(scrollView.contentView)
+        lastSentRow = state.metrics.firstVisibleRow
+        isProgrammaticSync = false
+    }
+
+    private func handleBoundsChange() {
+        synchronizeCanvasView()
+        guard !isProgrammaticSync else { return }
+        guard state.nativeScrollbarVisible else { return }
+        let visibleRect = scrollView.contentView.documentVisibleRect
+        let documentHeight = documentView.frame.height
+        guard rowHeight > 0, visibleRect.height > 0, documentHeight > visibleRect.height else {
+            return
+        }
+
+        let scrollOffset = documentHeight - visibleRect.origin.y - visibleRect.height
+        let row = max(0, min(Int((scrollOffset / rowHeight).rounded()), maxFirstVisibleRow))
+        guard row != lastSentRow else { return }
+        lastSentRow = row
+        onVisibleRowChange?(row)
+    }
+
+    private var maxFirstVisibleRow: Int {
+        max(state.metrics.totalRows - state.metrics.visibleRows, 0)
+    }
+
+    private func synchronizeCanvasView() {
+        let visibleRect = scrollView.contentView.documentVisibleRect
+        canvasView?.frame = NSRect(origin: visibleRect.origin, size: scrollView.contentView.bounds.size)
+    }
+}
+
+@MainActor
+final class AlanTerminalRoutingScrollView: NSScrollView {
+    var onScrollWheel: ((NSEvent) -> Bool)?
+    var onMouseEvent: ((AlanTerminalRoutedMouseEvent, NSEvent) -> Bool)?
+
+    override var mouseDownCanMoveWindow: Bool { false }
+
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
+        true
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        if onMouseEvent?(.mouseDown, event) == true {
+            return
+        }
+        super.mouseDown(with: event)
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        if onMouseEvent?(.mouseUp, event) == true {
+            return
+        }
+        super.mouseUp(with: event)
+    }
+
+    override func rightMouseDown(with event: NSEvent) {
+        if onMouseEvent?(.rightMouseDown, event) == true {
+            return
+        }
+        super.rightMouseDown(with: event)
+    }
+
+    override func rightMouseUp(with event: NSEvent) {
+        if onMouseEvent?(.rightMouseUp, event) == true {
+            return
+        }
+        super.rightMouseUp(with: event)
+    }
+
+    override func otherMouseDown(with event: NSEvent) {
+        if onMouseEvent?(.otherMouseDown, event) == true {
+            return
+        }
+        super.otherMouseDown(with: event)
+    }
+
+    override func otherMouseUp(with event: NSEvent) {
+        if onMouseEvent?(.otherMouseUp, event) == true {
+            return
+        }
+        super.otherMouseUp(with: event)
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        if onMouseEvent?(.mouseEntered, event) == true {
+            return
+        }
+        super.mouseEntered(with: event)
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        if onMouseEvent?(.mouseMoved, event) == true {
+            return
+        }
+        super.mouseMoved(with: event)
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        if onMouseEvent?(.mouseDragged, event) == true {
+            return
+        }
+        super.mouseDragged(with: event)
+    }
+
+    override func rightMouseDragged(with event: NSEvent) {
+        if onMouseEvent?(.rightMouseDragged, event) == true {
+            return
+        }
+        super.rightMouseDragged(with: event)
+    }
+
+    override func otherMouseDragged(with event: NSEvent) {
+        if onMouseEvent?(.otherMouseDragged, event) == true {
+            return
+        }
+        super.otherMouseDragged(with: event)
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        if onMouseEvent?(.mouseExited, event) == true {
+            return
+        }
+        super.mouseExited(with: event)
+    }
+
+    override func scrollWheel(with event: NSEvent) {
+        if onScrollWheel?(event) == true {
+            return
+        }
+        super.scrollWheel(with: event)
+    }
+
+    override func pressureChange(with event: NSEvent) {
+        if onMouseEvent?(.pressureChange, event) == true {
+            return
+        }
+        super.pressureChange(with: event)
     }
 }
 
@@ -128,6 +503,184 @@ final class AlanTerminalInputAdapter {
             }
         }
         return .terminalText(characters)
+    }
+}
+
+enum AlanTerminalPointerPhase: Equatable {
+    case entered
+    case moved
+    case exited
+    case buttonDown
+    case buttonUp
+    case drag
+    case pressure
+}
+
+enum AlanTerminalPointerButton: Equatable {
+    case unknown
+    case primary
+    case secondary
+    case middle
+    case four
+    case five
+    case six
+    case seven
+    case eight
+    case nine
+    case ten
+    case eleven
+
+    static func fromAppKitButtonNumber(_ buttonNumber: Int) -> AlanTerminalPointerButton {
+        switch buttonNumber {
+        case 0:
+            .primary
+        case 1:
+            .secondary
+        case 2:
+            .middle
+        case 3:
+            .eight
+        case 4:
+            .nine
+        case 5:
+            .six
+        case 6:
+            .seven
+        case 7:
+            .four
+        case 8:
+            .five
+        case 9:
+            .ten
+        case 10:
+            .eleven
+        default:
+            .unknown
+        }
+    }
+}
+
+enum AlanTerminalPointerButtonState: Equatable {
+    case press
+    case release
+}
+
+struct AlanTerminalPointerInput: Equatable {
+    let phase: AlanTerminalPointerPhase
+    let button: AlanTerminalPointerButton?
+    let buttonNumber: Int?
+    let x: Double
+    let y: Double
+    let modifiers: AlanTerminalKeyModifiers
+    let pressureStage: Int?
+    let pressure: Double?
+
+    var normalizedButton: AlanTerminalPointerButton? {
+        if let button {
+            return button
+        }
+        guard let buttonNumber else { return nil }
+        return AlanTerminalPointerButton.fromAppKitButtonNumber(buttonNumber)
+    }
+}
+
+enum AlanTerminalPointerOperation: Equatable {
+    case position(x: Double, y: Double, modifiers: AlanTerminalKeyModifiers)
+    case button(
+        state: AlanTerminalPointerButtonState,
+        button: AlanTerminalPointerButton,
+        x: Double,
+        y: Double,
+        modifiers: AlanTerminalKeyModifiers
+    )
+    case pressure(stage: Int, pressure: Double)
+}
+
+enum AlanTerminalPointerRoutingDecision: Equatable {
+    case terminalMouse(AlanTerminalPointerOperation)
+    case terminalSelection(AlanTerminalPointerOperation)
+    case terminalHover(AlanTerminalPointerOperation)
+    case ignored
+}
+
+@MainActor
+final class AlanTerminalPointerAdapter {
+    func routePointer(
+        _ input: AlanTerminalPointerInput,
+        terminalMode: AlanTerminalMode,
+        surfaceReady: Bool
+    ) -> AlanTerminalPointerRoutingDecision {
+        guard surfaceReady else { return .ignored }
+
+        switch input.phase {
+        case .entered, .moved:
+            return routePosition(input, terminalMode: terminalMode)
+        case .exited:
+            return .terminalHover(.position(x: -1, y: -1, modifiers: input.modifiers))
+        case .drag:
+            return routeDrag(input, terminalMode: terminalMode)
+        case .buttonDown, .buttonUp:
+            return routeButton(input, terminalMode: terminalMode)
+        case .pressure:
+            return .terminalMouse(
+                .pressure(stage: input.pressureStage ?? 0, pressure: input.pressure ?? 0)
+            )
+        }
+    }
+
+    private func routePosition(
+        _ input: AlanTerminalPointerInput,
+        terminalMode: AlanTerminalMode
+    ) -> AlanTerminalPointerRoutingDecision {
+        let operation = AlanTerminalPointerOperation.position(
+            x: input.x,
+            y: input.y,
+            modifiers: input.modifiers
+        )
+        switch terminalMode {
+        case .normalBuffer:
+            return .terminalHover(operation)
+        case .alternateScreen, .mouseReporting:
+            return .terminalMouse(operation)
+        }
+    }
+
+    private func routeDrag(
+        _ input: AlanTerminalPointerInput,
+        terminalMode: AlanTerminalMode
+    ) -> AlanTerminalPointerRoutingDecision {
+        let operation = AlanTerminalPointerOperation.position(
+            x: input.x,
+            y: input.y,
+            modifiers: input.modifiers
+        )
+        switch terminalMode {
+        case .normalBuffer:
+            return .terminalSelection(operation)
+        case .alternateScreen, .mouseReporting:
+            return .terminalMouse(operation)
+        }
+    }
+
+    private func routeButton(
+        _ input: AlanTerminalPointerInput,
+        terminalMode: AlanTerminalMode
+    ) -> AlanTerminalPointerRoutingDecision {
+        guard let button = input.normalizedButton else { return .ignored }
+        let state: AlanTerminalPointerButtonState = input.phase == .buttonDown ? .press : .release
+        let operation = AlanTerminalPointerOperation.button(
+            state: state,
+            button: button,
+            x: input.x,
+            y: input.y,
+            modifiers: input.modifiers
+        )
+        switch terminalMode {
+        case .normalBuffer:
+            return .terminalSelection(operation)
+        case .alternateScreen, .mouseReporting:
+            return .terminalMouse(operation)
+        }
     }
 }
 
@@ -250,10 +803,13 @@ final class AlanTerminalSelectionClipboardAdapter {
         return surfaceHandle.sendControlText(text)
     }
 
-    func writeSelectionToPasteboard(_ text: String?, pasteboard: NSPasteboard = .general) -> Bool {
+    func writeSelection(_ text: String?, to writer: AlanTerminalPasteboardWriting) -> Bool {
         guard let text, !text.isEmpty else { return false }
-        pasteboard.clearContents()
-        return pasteboard.setString(text, forType: .string)
+        return writer.writeString(text)
+    }
+
+    func writeSelectionToPasteboard(_ text: String?, pasteboard: NSPasteboard = .general) -> Bool {
+        writeSelection(text, to: AlanTerminalSystemPasteboardWriter(pasteboard: pasteboard))
     }
 }
 
@@ -395,18 +951,30 @@ final class AlanTerminalMetadataAdapter {
 @MainActor
 final class AlanTerminalSurfaceController {
     let inputAdapter = AlanTerminalInputAdapter()
+    let pointerAdapter = AlanTerminalPointerAdapter()
     let scrollbackAdapter = AlanTerminalScrollbackAdapter()
+    let nativeScrollViewAdapter = AlanTerminalNativeScrollViewAdapter()
     let metadataAdapter = AlanTerminalMetadataAdapter()
     var onSearchStateChange: (() -> Void)?
+    var onSurfaceStateChange: (() -> Void)?
 
     private(set) var searchAdapter: AlanTerminalSearchAdapter?
     private(set) var clipboardAdapter = AlanTerminalSelectionClipboardAdapter(surfaceHandle: nil)
     private weak var surfaceHandle: AlanTerminalSurfaceHandle?
     private weak var searchEngine: AlanTerminalSearchEngine?
+    private weak var scrollbackEngine: AlanTerminalScrollbackEngine?
+    private weak var selectionEngine: AlanTerminalSelectionEngine?
     private var latestRenderer = TerminalRendererSnapshot.placeholder
     private var latestMetadata = TerminalPaneMetadataSnapshot.placeholder
     private var readonly = false
     private var secureInput = false
+    private var nativeScrollRowHeight: CGFloat = 1
+
+    init() {
+        nativeScrollViewAdapter.onVisibleRowChange = { [weak self] row in
+            self?.scrollToNativeRow(row)
+        }
+    }
 
     var isSurfaceReady: Bool {
         surfaceReadiness == .ready
@@ -428,7 +996,8 @@ final class AlanTerminalSurfaceController {
     }
 
     func bind(surfaceHandle: AlanTerminalSurfaceHandle?, paneID: String?) {
-        if self.surfaceHandle !== surfaceHandle {
+        let surfaceChanged = self.surfaceHandle !== surfaceHandle
+        if surfaceChanged {
             self.surfaceHandle?.detach()
             self.surfaceHandle = surfaceHandle
         }
@@ -440,6 +1009,18 @@ final class AlanTerminalSurfaceController {
                 self?.applySearchEngineUpdate(update)
             }
         }
+        let nextScrollbackEngine = surfaceHandle as? AlanTerminalScrollbackEngine
+        if scrollbackEngine !== nextScrollbackEngine {
+            scrollbackEngine?.setScrollbackUpdateHandler(nil)
+            scrollbackEngine = nextScrollbackEngine
+            resetPerSurfaceStateForSurfaceChange()
+            scrollbackEngine?.setScrollbackUpdateHandler { [weak self] metrics in
+                self?.applyScrollbackMetrics(metrics)
+            }
+        } else if surfaceChanged {
+            resetPerSurfaceStateForSurfaceChange()
+        }
+        selectionEngine = surfaceHandle as? AlanTerminalSelectionEngine
         clipboardAdapter.updateSurfaceHandle(surfaceHandle)
         if let paneID, searchAdapter?.state.paneID != paneID {
             searchAdapter = AlanTerminalSearchAdapter(paneID: paneID)
@@ -477,6 +1058,10 @@ final class AlanTerminalSurfaceController {
         surfaceHandle = nil
         searchEngine?.setSearchUpdateHandler(nil)
         searchEngine = nil
+        scrollbackEngine?.setScrollbackUpdateHandler(nil)
+        scrollbackEngine = nil
+        selectionEngine = nil
+        resetPerSurfaceStateForSurfaceChange()
         clipboardAdapter.updateSurfaceHandle(nil)
     }
 
@@ -551,6 +1136,68 @@ final class AlanTerminalSurfaceController {
         return surfaceHandle.sendControlText(text)
     }
 
+    func syncNativeScrollView(viewportSize: CGSize) {
+        let visibleRows = max(scrollbackAdapter.state.metrics.visibleRows, 1)
+        let rowHeight = viewportSize.height / CGFloat(visibleRows)
+        nativeScrollRowHeight = max(rowHeight, 1)
+        nativeScrollViewAdapter.sync(
+            state: scrollbackAdapter.state,
+            viewportSize: viewportSize,
+            rowHeight: nativeScrollRowHeight
+        )
+    }
+
+    func routeScroll(_ input: AlanTerminalScrollInput) -> AlanTerminalScrollRoutingDecision {
+        guard isSurfaceReady else { return .ignored }
+        guard !scrollbackAdapter.shouldForwardScrollToTerminal() else { return .terminalScroll }
+        guard scrollbackAdapter.shouldConsumeNativeScrollInput(input) else {
+            scrollbackAdapter.resetPreciseScrollAccumulator()
+            return .terminalScroll
+        }
+        guard let row = scrollbackAdapter.targetFirstVisibleRow(
+            for: input,
+            rowHeight: nativeScrollRowHeight
+        ) else { return .ignored }
+        guard scrollToNativeRow(row) else { return .terminalScroll }
+        return .nativeScroll(row: row)
+    }
+
+    func routePointer(_ input: AlanTerminalPointerInput) -> AlanTerminalPointerRoutingDecision {
+        pointerAdapter.routePointer(
+            input,
+            terminalMode: scrollbackAdapter.state.metrics.mode,
+            surfaceReady: isSurfaceReady
+        )
+    }
+
+    @discardableResult
+    private func scrollToNativeRow(_ row: Int) -> Bool {
+        guard scrollbackEngine?.scrollTo(row: row) == true else { return false }
+        scrollbackAdapter.scrollTo(firstVisibleRow: row)
+        notifySurfaceStateChanged()
+        return true
+    }
+
+    func copySelection(to pasteboard: NSPasteboard = .general) -> Bool {
+        clipboardAdapter.writeSelectionToPasteboard(selectionEngine?.readSelectionText(), pasteboard: pasteboard)
+    }
+
+    func copySelection(to writer: AlanTerminalPasteboardWriting) -> Bool {
+        clipboardAdapter.writeSelection(selectionEngine?.readSelectionText(), to: writer)
+    }
+
+    func paste(_ text: String) -> TerminalRuntimeDeliveryResult {
+        clipboardAdapter.paste(text)
+    }
+
+    func readSelectionText() -> String? {
+        selectionEngine?.readSelectionText()
+    }
+
+    func hasSelection() -> Bool {
+        selectionEngine?.hasSelection() ?? false
+    }
+
     @discardableResult
     func beginSearch() -> Bool {
         guard let paneID = searchAdapter?.state.paneID ?? surfaceHandle?.paneID else { return false }
@@ -611,7 +1258,43 @@ final class AlanTerminalSurfaceController {
                 selectedIndex: index
             )
         }
+        notifySearchStateChanged()
+    }
+
+    private func applyScrollbackMetrics(_ metrics: AlanTerminalScrollbackMetrics) {
+        scrollbackAdapter.updateMetrics(metrics)
+        notifySurfaceStateChanged()
+    }
+
+    private func resetPerSurfaceStateForSurfaceChange() {
+        let previousState = scrollbackAdapter.state
+        let previousRenderer = latestRenderer
+        let previousMetadata = latestMetadata
+        let previousReadonly = readonly
+        let previousSecureInput = secureInput
+        scrollbackAdapter.reset()
+        nativeScrollRowHeight = 1
+        latestRenderer = .placeholder
+        latestMetadata = .placeholder
+        readonly = false
+        secureInput = false
+        if previousState != .empty
+            || previousRenderer != .placeholder
+            || previousMetadata != .placeholder
+            || previousReadonly
+            || previousSecureInput
+        {
+            notifySurfaceStateChanged()
+        }
+    }
+
+    private func notifySearchStateChanged() {
         onSearchStateChange?()
+        notifySurfaceStateChanged()
+    }
+
+    private func notifySurfaceStateChanged() {
+        onSurfaceStateChange?()
     }
 
     private var surfaceReadiness: AlanTerminalSurfaceReadiness {
@@ -679,14 +1362,6 @@ extension AlanTerminalSurfaceController {
 
     func sendMousePressure(stage: UInt32, pressure: Double) {
         ghosttySurfaceHandle?.sendMousePressure(stage: stage, pressure: pressure)
-    }
-
-    func readSelectionText() -> String? {
-        ghosttySurfaceHandle?.readSelectionText()
-    }
-
-    func hasSelection() -> Bool {
-        ghosttySurfaceHandle?.hasSelection() ?? false
     }
 
     func imeRect(in view: NSView) -> NSRect? {

@@ -78,7 +78,8 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
-        surfaceController.onSearchStateChange = { [weak self] in
+        surfaceController.onSurfaceStateChange = { [weak self] in
+            self?.syncNativeScrollback()
             self?.syncOverlayVisibility()
             self?.publishRuntimeSnapshot()
         }
@@ -164,6 +165,7 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
     override func layout() {
         super.layout()
         synchronizeLiveHost()
+        syncNativeScrollback()
         publishRuntimeSnapshot()
     }
 
@@ -216,6 +218,7 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
         syncStatusBadge()
         syncOverlayVisibility()
         synchronizeLiveHost()
+        syncNativeScrollback()
         if shouldAutoFocusAfterConfigure(
             previousPaneID: previousPaneID,
             paneID: pane?.paneID,
@@ -296,15 +299,23 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
 
         [statusBadge, titleLabel, subtitleLabel, commandLabel, footerLabel].forEach(bodyStack.addArrangedSubview)
 
-        addSubview(canvasView)
+        let nativeScrollView = surfaceController.nativeScrollViewAdapter.scrollView
+        surfaceController.nativeScrollViewAdapter.onScrollWheel = { [weak self] event in
+            self?.routeScrollWheel(event) ?? false
+        }
+        surfaceController.nativeScrollViewAdapter.onMouseEvent = { [weak self] routedEvent, event in
+            self?.routeWrappedMouseEvent(routedEvent, event) ?? false
+        }
+        surfaceController.nativeScrollViewAdapter.attachCanvasView(canvasView)
+        addSubview(nativeScrollView)
         addSubview(overlayCard)
         overlayCard.addSubview(bodyStack)
 
         NSLayoutConstraint.activate([
-            canvasView.topAnchor.constraint(equalTo: topAnchor),
-            canvasView.leadingAnchor.constraint(equalTo: leadingAnchor),
-            canvasView.trailingAnchor.constraint(equalTo: trailingAnchor),
-            canvasView.bottomAnchor.constraint(equalTo: bottomAnchor),
+            nativeScrollView.topAnchor.constraint(equalTo: topAnchor),
+            nativeScrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            nativeScrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            nativeScrollView.bottomAnchor.constraint(equalTo: bottomAnchor),
 
             overlayCard.centerXAnchor.constraint(equalTo: centerXAnchor),
             overlayCard.centerYAnchor.constraint(equalTo: centerYAnchor),
@@ -489,6 +500,10 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
 #endif
     }
 
+    private func syncNativeScrollback() {
+        surfaceController.syncNativeScrollView(viewportSize: bounds.size)
+    }
+
     private func synchronizeRendererSnapshot(with bootProfile: AlanShellBootProfile?) {
 #if canImport(GhosttyKit)
         if rendererSnapshot.kind == .scaffold {
@@ -605,108 +620,207 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
         return CGPoint(x: point.x, y: bounds.height - point.y)
     }
 
-    private func sendMousePosition(for event: NSEvent) {
-#if canImport(GhosttyKit)
+    private func terminalPointerInput(
+        for event: NSEvent,
+        phase: AlanTerminalPointerPhase,
+        button: AlanTerminalPointerButton? = nil
+    ) -> AlanTerminalPointerInput {
         let point = ghosttyPoint(for: event)
-        surfaceController.sendMousePosition(x: point.x, y: point.y, mods: modsFromEvent(event))
+        return AlanTerminalPointerInput(
+            phase: phase,
+            button: button,
+            buttonNumber: event.buttonNumber,
+            x: point.x,
+            y: point.y,
+            modifiers: terminalKeyModifiers(from: event.modifierFlags),
+            pressureStage: nil,
+            pressure: nil
+        )
+    }
+
+    private func terminalPointerPressureInput(for event: NSEvent) -> AlanTerminalPointerInput {
+        AlanTerminalPointerInput(
+            phase: .pressure,
+            button: nil,
+            buttonNumber: nil,
+            x: 0,
+            y: 0,
+            modifiers: terminalKeyModifiers(from: event.modifierFlags),
+            pressureStage: event.stage,
+            pressure: Double(event.pressure)
+        )
+    }
+
+    @discardableResult
+    private func routePointer(_ input: AlanTerminalPointerInput) -> Bool {
+#if canImport(GhosttyKit)
+        return deliverPointerDecision(surfaceController.routePointer(input))
+#else
+        return false
 #endif
     }
 
     override func mouseDown(with event: NSEvent) {
         activateTerminalHostForMouseEvent()
-#if canImport(GhosttyKit)
-        sendMousePosition(for: event)
-        _ = surfaceController.sendMouseButton(state: GHOSTTY_MOUSE_PRESS, button: GHOSTTY_MOUSE_LEFT, mods: modsFromEvent(event))
-#endif
+        routePointer(terminalPointerInput(for: event, phase: .buttonDown, button: .primary))
     }
 
     override func mouseUp(with event: NSEvent) {
         previousPressureStage = 0
-#if canImport(GhosttyKit)
-        _ = surfaceController.sendMouseButton(state: GHOSTTY_MOUSE_RELEASE, button: GHOSTTY_MOUSE_LEFT, mods: modsFromEvent(event))
-        surfaceController.sendMousePressure(stage: 0, pressure: 0)
-#endif
+        routePointer(terminalPointerInput(for: event, phase: .buttonUp, button: .primary))
+        routePointer(
+            AlanTerminalPointerInput(
+                phase: .pressure,
+                button: nil,
+                buttonNumber: nil,
+                x: 0,
+                y: 0,
+                modifiers: terminalKeyModifiers(from: event.modifierFlags),
+                pressureStage: 0,
+                pressure: 0
+            )
+        )
     }
 
     override func rightMouseDown(with event: NSEvent) {
         activateTerminalHostForMouseEvent()
-#if canImport(GhosttyKit)
-        sendMousePosition(for: event)
-        _ = surfaceController.sendMouseButton(state: GHOSTTY_MOUSE_PRESS, button: GHOSTTY_MOUSE_RIGHT, mods: modsFromEvent(event))
-#else
-        super.rightMouseDown(with: event)
-#endif
+        let consumed = routePointer(
+            terminalPointerInput(for: event, phase: .buttonDown, button: .secondary)
+        )
+        if !consumed {
+            super.rightMouseDown(with: event)
+        }
     }
 
     override func rightMouseUp(with event: NSEvent) {
-#if canImport(GhosttyKit)
-        _ = surfaceController.sendMouseButton(state: GHOSTTY_MOUSE_RELEASE, button: GHOSTTY_MOUSE_RIGHT, mods: modsFromEvent(event))
-#else
-        super.rightMouseUp(with: event)
-#endif
+        let consumed = routePointer(
+            terminalPointerInput(for: event, phase: .buttonUp, button: .secondary)
+        )
+        if !consumed {
+            super.rightMouseUp(with: event)
+        }
     }
 
     override func otherMouseDown(with event: NSEvent) {
         activateTerminalHostForMouseEvent()
-#if canImport(GhosttyKit)
-        sendMousePosition(for: event)
-        let button = event.buttonNumber == 2 ? GHOSTTY_MOUSE_MIDDLE : GHOSTTY_MOUSE_MIDDLE
-        _ = surfaceController.sendMouseButton(state: GHOSTTY_MOUSE_PRESS, button: button, mods: modsFromEvent(event))
-#else
-        super.otherMouseDown(with: event)
-#endif
+        let consumed = routePointer(
+            terminalPointerInput(
+                for: event,
+                phase: .buttonDown,
+                button: AlanTerminalPointerButton.fromAppKitButtonNumber(event.buttonNumber)
+            )
+        )
+        if !consumed {
+            super.otherMouseDown(with: event)
+        }
     }
 
     override func otherMouseUp(with event: NSEvent) {
-#if canImport(GhosttyKit)
-        let button = event.buttonNumber == 2 ? GHOSTTY_MOUSE_MIDDLE : GHOSTTY_MOUSE_MIDDLE
-        _ = surfaceController.sendMouseButton(state: GHOSTTY_MOUSE_RELEASE, button: button, mods: modsFromEvent(event))
-#else
-        super.otherMouseUp(with: event)
-#endif
+        let consumed = routePointer(
+            terminalPointerInput(
+                for: event,
+                phase: .buttonUp,
+                button: AlanTerminalPointerButton.fromAppKitButtonNumber(event.buttonNumber)
+            )
+        )
+        if !consumed {
+            super.otherMouseUp(with: event)
+        }
     }
 
     override func mouseEntered(with event: NSEvent) {
         super.mouseEntered(with: event)
-#if canImport(GhosttyKit)
-        sendMousePosition(for: event)
-#endif
+        routePointer(terminalPointerInput(for: event, phase: .entered))
     }
 
     override func mouseMoved(with event: NSEvent) {
-#if canImport(GhosttyKit)
-        sendMousePosition(for: event)
-#endif
+        routePointer(terminalPointerInput(for: event, phase: .moved))
     }
 
     override func mouseDragged(with event: NSEvent) {
-#if canImport(GhosttyKit)
-        sendMousePosition(for: event)
-#endif
+        routePointer(terminalPointerInput(for: event, phase: .drag, button: .primary))
     }
 
     override func rightMouseDragged(with event: NSEvent) {
-#if canImport(GhosttyKit)
-        sendMousePosition(for: event)
-#endif
+        routePointer(terminalPointerInput(for: event, phase: .drag, button: .secondary))
     }
 
     override func otherMouseDragged(with event: NSEvent) {
-#if canImport(GhosttyKit)
-        sendMousePosition(for: event)
-#endif
+        routePointer(
+            terminalPointerInput(
+                for: event,
+                phase: .drag,
+                button: AlanTerminalPointerButton.fromAppKitButtonNumber(event.buttonNumber)
+            )
+        )
     }
 
     override func mouseExited(with event: NSEvent) {
         super.mouseExited(with: event)
-#if canImport(GhosttyKit)
-        surfaceController.sendMousePosition(x: -1, y: -1, mods: modsFromEvent(event))
-#endif
+        routePointer(terminalPointerInput(for: event, phase: .exited))
+    }
+
+    @discardableResult
+    private func routeWrappedMouseEvent(_ routedEvent: AlanTerminalRoutedMouseEvent, _ event: NSEvent) -> Bool {
+        switch routedEvent {
+        case .mouseDown:
+            mouseDown(with: event)
+        case .mouseUp:
+            mouseUp(with: event)
+        case .rightMouseDown:
+            rightMouseDown(with: event)
+        case .rightMouseUp:
+            rightMouseUp(with: event)
+        case .otherMouseDown:
+            otherMouseDown(with: event)
+        case .otherMouseUp:
+            otherMouseUp(with: event)
+        case .mouseEntered:
+            mouseEntered(with: event)
+        case .mouseMoved:
+            mouseMoved(with: event)
+        case .mouseDragged:
+            mouseDragged(with: event)
+        case .rightMouseDragged:
+            rightMouseDragged(with: event)
+        case .otherMouseDragged:
+            otherMouseDragged(with: event)
+        case .mouseExited:
+            mouseExited(with: event)
+        case .pressureChange:
+            pressureChange(with: event)
+        }
+        return true
     }
 
     override func scrollWheel(with event: NSEvent) {
+        if routeScrollWheel(event) {
+            return
+        }
+        super.scrollWheel(with: event)
+    }
+
+    private func routeScrollWheel(_ event: NSEvent) -> Bool {
 #if canImport(GhosttyKit)
-        guard surfaceController.isSurfaceReady == true else { return super.scrollWheel(with: event) }
+        guard surfaceController.isSurfaceReady == true else { return false }
+
+        let scrollRoute = surfaceController.routeScroll(
+            AlanTerminalScrollInput(
+                deltaX: event.scrollingDeltaX,
+                deltaY: event.scrollingDeltaY,
+                precise: event.hasPreciseScrollingDeltas
+            )
+        )
+        switch scrollRoute {
+        case .nativeScroll:
+            syncNativeScrollback()
+            publishRuntimeSnapshot()
+            return true
+        case .ignored:
+            return true
+        case .terminalScroll:
+            break
+        }
 
         var x = event.scrollingDeltaX
         var y = event.scrollingDeltaY
@@ -741,19 +855,106 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
         scrollMods |= momentum << 1
 
         surfaceController.sendMouseScroll(x: x, y: y, mods: ghostty_input_scroll_mods_t(scrollMods))
+        return true
 #else
-        super.scrollWheel(with: event)
+        return false
 #endif
     }
 
     override func pressureChange(with event: NSEvent) {
         super.pressureChange(with: event)
-#if canImport(GhosttyKit)
-        guard surfaceController.isSurfaceReady == true else { return }
-        surfaceController.sendMousePressure(stage: UInt32(event.stage), pressure: Double(event.pressure))
+        guard routePointer(terminalPointerPressureInput(for: event)) else { return }
         previousPressureStage = event.stage
-#endif
     }
+
+#if canImport(GhosttyKit)
+    @discardableResult
+    private func deliverPointerDecision(_ decision: AlanTerminalPointerRoutingDecision) -> Bool {
+        switch decision {
+        case .terminalMouse(let operation),
+             .terminalSelection(let operation),
+             .terminalHover(let operation):
+            return deliverPointerOperation(operation)
+        case .ignored:
+            return false
+        }
+    }
+
+    @discardableResult
+    private func deliverPointerOperation(_ operation: AlanTerminalPointerOperation) -> Bool {
+        switch operation {
+        case .position(let x, let y, let modifiers):
+            surfaceController.sendMousePosition(
+                x: x,
+                y: y,
+                mods: ghosttyMods(from: modifiers)
+            )
+            return true
+        case .button(let state, let button, let x, let y, let modifiers):
+            let mods = ghosttyMods(from: modifiers)
+            surfaceController.sendMousePosition(x: x, y: y, mods: mods)
+            return surfaceController.sendMouseButton(
+                state: ghosttyMouseState(from: state),
+                button: ghosttyMouseButton(from: button),
+                mods: mods
+            )
+        case .pressure(let stage, let pressure):
+            surfaceController.sendMousePressure(stage: UInt32(max(stage, 0)), pressure: pressure)
+            return true
+        }
+    }
+
+    private func ghosttyMouseState(
+        from state: AlanTerminalPointerButtonState
+    ) -> ghostty_input_mouse_state_e {
+        switch state {
+        case .press:
+            GHOSTTY_MOUSE_PRESS
+        case .release:
+            GHOSTTY_MOUSE_RELEASE
+        }
+    }
+
+    private func ghosttyMouseButton(
+        from button: AlanTerminalPointerButton
+    ) -> ghostty_input_mouse_button_e {
+        switch button {
+        case .unknown:
+            GHOSTTY_MOUSE_UNKNOWN
+        case .primary:
+            GHOSTTY_MOUSE_LEFT
+        case .secondary:
+            GHOSTTY_MOUSE_RIGHT
+        case .middle:
+            GHOSTTY_MOUSE_MIDDLE
+        case .four:
+            GHOSTTY_MOUSE_FOUR
+        case .five:
+            GHOSTTY_MOUSE_FIVE
+        case .six:
+            GHOSTTY_MOUSE_SIX
+        case .seven:
+            GHOSTTY_MOUSE_SEVEN
+        case .eight:
+            GHOSTTY_MOUSE_EIGHT
+        case .nine:
+            GHOSTTY_MOUSE_NINE
+        case .ten:
+            GHOSTTY_MOUSE_TEN
+        case .eleven:
+            GHOSTTY_MOUSE_ELEVEN
+        }
+    }
+
+    private func ghosttyMods(from modifiers: AlanTerminalKeyModifiers) -> ghostty_input_mods_e {
+        var mods = GHOSTTY_MODS_NONE.rawValue
+        if modifiers.contains(.shift) { mods |= GHOSTTY_MODS_SHIFT.rawValue }
+        if modifiers.contains(.control) { mods |= GHOSTTY_MODS_CTRL.rawValue }
+        if modifiers.contains(.option) { mods |= GHOSTTY_MODS_ALT.rawValue }
+        if modifiers.contains(.command) { mods |= GHOSTTY_MODS_SUPER.rawValue }
+        return ghostty_input_mods_e(rawValue: mods)
+    }
+#endif
 
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
         if routeNativeKeyCommandIfNeeded(event) {
@@ -908,19 +1109,14 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
 
         let keyEvent = ghosttyKeyEvent(for: event, action: action)
         _ = surfaceController.sendKey(keyEvent)
-        sendMousePosition(for: event)
+        routePointer(terminalPointerInput(for: event, phase: .moved))
 #else
         super.flagsChanged(with: event)
 #endif
     }
 
     @objc func copy(_ sender: Any?) {
-#if canImport(GhosttyKit)
-        guard let text = surfaceController.readSelectionText(), !text.isEmpty else { return }
-        let pasteboard = NSPasteboard.general
-        pasteboard.clearContents()
-        pasteboard.setString(text, forType: .string)
-#endif
+        _ = surfaceController.copySelection(to: .general)
     }
 
     @objc func cut(_ sender: Any?) {
@@ -928,10 +1124,9 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
     }
 
     @objc func paste(_ sender: Any?) {
-#if canImport(GhosttyKit)
         guard let text = NSPasteboard.general.string(forType: .string), !text.isEmpty else { return }
-        surfaceController.sendText(text)
-#endif
+        _ = surfaceController.paste(text)
+        publishRuntimeSnapshot()
     }
 
     private func modsFromEvent(_ event: NSEvent) -> ghostty_input_mods_e {

@@ -969,6 +969,13 @@ private enum AlanShellPublishedStateMerger {
             incomingContext?.shellIntegrationSource ?? authoritativeContext?.shellIntegrationSource
         let processState = incomingContext?.processState ?? authoritativeContext?.processState
         let rendererPhase = incomingContext?.rendererPhase ?? authoritativeContext?.rendererPhase
+        let rendererHealth =
+            incomingContext?.rendererHealth ?? authoritativeContext?.rendererHealth
+        let surfaceReadiness =
+            incomingContext?.surfaceReadiness ?? authoritativeContext?.surfaceReadiness
+        let inputReady = incomingContext?.inputReady ?? authoritativeContext?.inputReady
+        let readonly = incomingContext?.readonly ?? authoritativeContext?.readonly
+        let terminalMode = incomingContext?.terminalMode ?? authoritativeContext?.terminalMode
         let displayName = incomingContext?.displayName ?? authoritativeContext?.displayName
         let displayID = incomingContext?.displayID ?? authoritativeContext?.displayID
         let windowTitle = incomingContext?.windowTitle ?? authoritativeContext?.windowTitle
@@ -989,6 +996,11 @@ private enum AlanShellPublishedStateMerger {
             shellIntegrationSource: shellIntegrationSource,
             processState: processState,
             rendererPhase: rendererPhase,
+            rendererHealth: rendererHealth,
+            surfaceReadiness: surfaceReadiness,
+            inputReady: inputReady,
+            readonly: readonly,
+            terminalMode: terminalMode,
             displayName: displayName,
             displayID: displayID,
             windowTitle: windowTitle,

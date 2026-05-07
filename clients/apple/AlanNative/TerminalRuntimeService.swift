@@ -308,7 +308,12 @@ protocol AlanTerminalSurfaceHandle: AnyObject {
 
 #if canImport(GhosttyKit)
 @MainActor
-protocol AlanGhosttyEventSurfaceHandle: AlanTerminalSurfaceHandle, AlanTerminalSearchEngine {
+protocol AlanGhosttyEventSurfaceHandle:
+    AlanTerminalSurfaceHandle,
+    AlanTerminalSearchEngine,
+    AlanTerminalScrollbackEngine,
+    AlanTerminalSelectionEngine
+{
     func keyTranslationMods(for mods: ghostty_input_mods_e) -> ghostty_input_mods_e
     func sendKey(_ keyEvent: ghostty_input_key_s) -> Bool
     func keyIsBinding(
@@ -641,6 +646,10 @@ extension AlanGhosttySurfaceHandle: AlanGhosttyEventSurfaceHandle {
         liveHost.onSearchUpdate = handler
     }
 
+    func setScrollbackUpdateHandler(_ handler: ((AlanTerminalScrollbackMetrics) -> Void)?) {
+        liveHost.onScrollbackUpdate = handler
+    }
+
     func startSearch() -> Bool {
         liveHost.performBindingAction("start_search")
     }
@@ -660,6 +669,10 @@ extension AlanGhosttySurfaceHandle: AlanGhosttyEventSurfaceHandle {
 
     func endSearch() -> Bool {
         liveHost.performBindingAction("end_search")
+    }
+
+    func scrollTo(row: Int) -> Bool {
+        liveHost.performBindingAction("scroll_to_row:\(row)")
     }
 }
 #endif
@@ -808,10 +821,14 @@ final class FakeAlanTerminalSurfaceHandle: AlanTerminalSurfaceHandle {
     private(set) var teardownCount = 0
     private(set) var deliveredText: [String] = []
     private(set) var searchActions: [String] = []
+    private(set) var scrollActions: [String] = []
     var deliveryResult: TerminalRuntimeDeliveryResult?
     var searchActionsShouldSucceed = true
+    var scrollActionsShouldSucceed = true
+    var selectedText: String?
     var ready = true
     private var searchUpdateHandler: ((AlanTerminalSearchEngineUpdate) -> Void)?
+    private var scrollbackUpdateHandler: ((AlanTerminalScrollbackMetrics) -> Void)?
     private var currentSnapshot: AlanTerminalSurfaceSnapshot
 
     init(paneID: String) {
@@ -935,6 +952,31 @@ extension FakeAlanTerminalSurfaceHandle: AlanTerminalSearchEngine {
 
     private func recordSearchAction(_ action: String) {
         searchActions.append(action)
+    }
+}
+
+extension FakeAlanTerminalSurfaceHandle: AlanTerminalScrollbackEngine {
+    func setScrollbackUpdateHandler(_ handler: ((AlanTerminalScrollbackMetrics) -> Void)?) {
+        scrollbackUpdateHandler = handler
+    }
+
+    func scrollTo(row: Int) -> Bool {
+        scrollActions.append("scroll_to_row:\(row)")
+        return scrollActionsShouldSucceed
+    }
+
+    func emitScrollbackUpdate(_ metrics: AlanTerminalScrollbackMetrics) {
+        scrollbackUpdateHandler?(metrics)
+    }
+}
+
+extension FakeAlanTerminalSurfaceHandle: AlanTerminalSelectionEngine {
+    func readSelectionText() -> String? {
+        selectedText
+    }
+
+    func hasSelection() -> Bool {
+        selectedText?.isEmpty == false
     }
 }
 

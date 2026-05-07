@@ -82,8 +82,23 @@ require_pattern \
 
 require_pattern \
     "clients/apple/AlanNative/TerminalSurfaceController.swift" \
+    "final class AlanTerminalPointerAdapter" \
+    "terminal mouse and pointer behavior must be normalized through a pointer adapter"
+
+require_pattern \
+    "clients/apple/AlanNative/TerminalSurfaceController.swift" \
     "final class AlanTerminalScrollbackAdapter" \
     "terminal scrollback behavior must be normalized through a scrollback adapter"
+
+require_pattern \
+    "clients/apple/AlanNative/TerminalSurfaceController.swift" \
+    "final class AlanTerminalNativeScrollViewAdapter" \
+    "terminal scrollback must have an AppKit scroll view adapter"
+
+require_pattern \
+    "clients/apple/AlanNative/TerminalSurfaceController.swift" \
+    "protocol AlanTerminalScrollbackEngine" \
+    "terminal scrollback must delegate native row scrolls to a surface engine"
 
 require_pattern \
     "clients/apple/AlanNative/TerminalSurfaceController.swift" \
@@ -99,6 +114,36 @@ require_pattern \
     "clients/apple/scripts/test-terminal-surface-controller.swift" \
     "verifiesSearchActionsReachSurfaceEngine" \
     "surface controller tests must prove search actions reach the surface engine"
+
+require_pattern \
+    "clients/apple/scripts/test-terminal-surface-controller.swift" \
+    "verifiesScrollbackActionsReachSurfaceEngine" \
+    "surface controller tests must prove scrollback actions reach the surface engine"
+
+require_pattern \
+    "clients/apple/scripts/test-terminal-surface-controller.swift" \
+    "verifiesPointerRoutingFollowsTerminalMouseModes" \
+    "surface controller tests must prove pointer routing follows terminal mouse modes"
+
+require_pattern \
+    "clients/apple/scripts/test-terminal-surface-controller.swift" \
+    "verifiesPointerButtonMappingMatchesGhostty" \
+    "surface controller tests must prove other-button mapping matches Ghostty"
+
+require_pattern \
+    "clients/apple/scripts/test-terminal-surface-controller.swift" \
+    "verifiesSelectionCopyAndPasteUseController" \
+    "surface controller tests must prove copy and paste use controller-owned clipboard paths"
+
+require_pattern \
+    "clients/apple/scripts/test-shell-runtime-metadata.swift" \
+    "verifiesRuntimeProjectsTerminalStatusIntoPaneMetadata" \
+    "shell runtime tests must prove terminal status projects into pane metadata"
+
+require_pattern \
+    "clients/apple/scripts/test-shell-runtime-metadata.swift" \
+    "verifiesTerminalStatusSummaryPrioritizesExitAndRendererHealth" \
+    "shell runtime tests must prove sidebar status prioritizes exit and renderer health"
 
 require_pattern \
     "clients/apple/scripts/test-terminal-surface-controller.sh" \
