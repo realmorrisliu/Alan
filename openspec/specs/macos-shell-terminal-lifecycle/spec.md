@@ -4,9 +4,7 @@
 Define the native macOS shell terminal lifecycle contract for pane-owned
 terminal runtimes, truthful text delivery, stable runtime metadata, and
 user-safe fallback states.
-
 ## Requirements
-
 ### Requirement: Terminal runtimes survive view selection changes
 The macOS shell host SHALL keep a tab's terminal process, renderer surface,
 runtime metadata, and buffered control state owned by the shell model or a
@@ -95,3 +93,71 @@ rather than with transient host views.
 #### Scenario: Background pane exits readonly mode
 - **WHEN** a background pane changes readonly or input readiness state
 - **THEN** the pane metadata updates without selecting that tab
+
+### Requirement: Terminal lifecycle ownership is service backed
+The macOS shell host SHALL route terminal process, renderer surface, runtime
+metadata, pending delivery buffer, and teardown ownership through the terminal
+runtime service rather than through transient host views.
+
+#### Scenario: Runtime survives SwiftUI reconstruction
+- **WHEN** SwiftUI reconstructs the shell content view while a pane remains part of shell state
+- **THEN** the terminal runtime service keeps the pane surface alive and the new view attaches to the same runtime identity
+
+#### Scenario: Runtime no longer exists
+- **WHEN** shell state references a pane whose terminal runtime has irrecoverably failed or closed
+- **THEN** lifecycle metadata reports the non-ready state and the UI/control plane do not treat the pane as a ready terminal
+
+### Requirement: Pane close finalizes runtime identity
+The macOS shell host SHALL make pane, tab, and window close operations call the
+runtime service finalizer for each affected pane before the pane is removed from
+authoritative runtime state.
+
+#### Scenario: Closing a split pane
+- **WHEN** a user closes one pane in a split tab
+- **THEN** the runtime service finalizes only that pane's surface and the remaining panes keep their runtime identities
+
+#### Scenario: Closing a window
+- **WHEN** a shell window closes
+- **THEN** every pane runtime owned by that window transitions to closing or closed state before the window control identity is released
+
+### Requirement: Reattachment preserves terminal continuity
+Visible terminal views SHALL reattach to existing runtime handles and MUST NOT
+restart shell processes, clear scrollback, or reset pane metadata solely because
+selection, split layout, or window visibility changed.
+
+#### Scenario: Tab selection changes repeatedly
+- **WHEN** a user switches between terminal tabs several times
+- **THEN** each tab keeps its existing terminal process, scrollback, title, cwd, and runtime phase
+
+#### Scenario: Split layout changes
+- **WHEN** a pane is moved, resized, or temporarily hidden by split zoom
+- **THEN** its runtime handle remains continuous and reattaches when visible again
+
+### Requirement: Terminal-area events are owned by the terminal host
+The macOS shell host SHALL route mouse events that occur inside terminal pixels
+through the pane's AppKit terminal host rather than through SwiftUI tap gesture
+wrappers around the terminal view.
+
+#### Scenario: First click activates and reaches the terminal
+- **WHEN** a user clicks a visible terminal pane that is not currently selected
+- **THEN** the shell selects that pane, makes its terminal host first responder, and forwards the same mouse-down event to the terminal renderer
+
+#### Scenario: Terminal text selection starts on first drag
+- **WHEN** a user begins a drag inside a visible terminal pane
+- **THEN** the drag is handled by the terminal host and can start terminal text selection without requiring a prior selection-only click
+
+#### Scenario: Terminal host lifetime remains pane-keyed
+- **WHEN** SwiftUI recreates the terminal leaf view for an existing pane
+- **THEN** the registry reuses the pane-keyed terminal host and refreshes its weak activation boundary without transferring terminal event ownership to the SwiftUI view
+
+### Requirement: Terminal activation does not retain shell controllers
+Registry-owned terminal host views SHALL use a weak activation boundary when
+requesting pane selection from the shell controller.
+
+#### Scenario: Host requests activation
+- **WHEN** a terminal host receives a mouse-down event for a pane with a stable pane ID
+- **THEN** it calls the weak activation boundary for that pane before requesting terminal focus
+
+#### Scenario: Activation boundary is unavailable
+- **WHEN** a terminal host has no activation delegate available
+- **THEN** terminal input handling remains local to the host and the host does not keep a strong closure that can retain the shell controller

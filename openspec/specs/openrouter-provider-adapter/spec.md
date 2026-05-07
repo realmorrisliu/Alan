@@ -5,7 +5,6 @@ Define Alan's first-class OpenRouter provider contract, including connection
 profile identity, OpenRouter-specific settings, SDK-backed request dispatch,
 response normalization, streaming behavior, capability reporting, and
 verification expectations.
-
 ## Requirements
 ### Requirement: OpenRouter provider identity
 Alan SHALL expose OpenRouter as a first-class provider id named `openrouter` in
@@ -95,7 +94,8 @@ precedence and validation are owned by `provider-request-controls`; this
 capability covers the OpenRouter-specific wire projection. Normalized request
 controls, including effective reasoning effort, are supplied on
 `GenerationRequest` by `provider-request-controls`; the OpenRouter adapter only
-translates those controls to supported OpenRouter SDK fields.
+translates those controls to supported OpenRouter SDK fields and does not accept
+legacy `thinking_budget_tokens` fallback input.
 
 #### Scenario: Basic message projection
 - **WHEN** a request contains a system prompt and user, assistant, context, and tool messages
@@ -108,10 +108,6 @@ translates those controls to supported OpenRouter SDK fields.
 #### Scenario: Tool result projection
 - **WHEN** a request contains a tool-result message with a tool call id
 - **THEN** the OpenRouter adapter preserves the tool call id in the projected OpenRouter message
-
-#### Scenario: Reasoning budget projection
-- **WHEN** a request contains `thinking_budget_tokens`
-- **THEN** the OpenRouter adapter maps the budget to OpenRouter reasoning request fields supported by the SDK
 
 #### Scenario: Reasoning effort projection
 - **WHEN** a request contains normalized effective reasoning effort

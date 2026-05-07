@@ -3,9 +3,7 @@
 ## Purpose
 Define the Apple client build, dependency, and focused test contract for the
 macOS shell host.
-
 ## Requirements
-
 ### Requirement: Build requirements match documentation
 The Apple client SHALL keep documented system requirements, deployment targets,
 and project settings aligned.
@@ -84,3 +82,62 @@ not require a live Ghostty renderer.
 #### Scenario: Fake input events
 - **WHEN** adapter tests send keyboard, mouse, paste, and search commands through fake events
 - **THEN** the fake surface receives normalized terminal operations or command-routing decisions
+
+### Requirement: Runtime service ownership has focused tests
+The Apple client SHALL include focused tests for process bootstrap, window
+runtime service ownership, pane handle creation, reattachment, text delivery,
+and teardown using fake Ghostty adapters where possible.
+
+#### Scenario: Fake runtime reattaches view
+- **WHEN** a test creates a pane handle, detaches the host view, and attaches a replacement host view
+- **THEN** the test verifies that the pane handle identity and runtime metadata remain unchanged
+
+#### Scenario: Fake runtime tears down once
+- **WHEN** a test closes a pane, tab, or window through shell actions
+- **THEN** the fake runtime observes exactly one teardown call per affected pane
+
+### Requirement: Ghostty bootstrap is testable without launching the full app
+The Apple client SHALL expose a bootstrap seam that lets tests verify Ghostty
+dependency and initialization behavior without launching the full SwiftUI app or
+requiring real terminal rendering.
+
+#### Scenario: Bootstrap dependency missing
+- **WHEN** a fake bootstrap reports missing Ghostty resources
+- **THEN** tests verify that pane creation enters a non-ready state with an actionable error
+
+#### Scenario: Bootstrap reused
+- **WHEN** two window runtime services request terminal support in one test process
+- **THEN** tests verify that the process bootstrap is invoked once and both services receive the same bootstrap result
+
+### Requirement: Control-plane runtime tests use the service boundary
+Control-plane tests SHALL exercise runtime-dependent mutations through the same
+terminal runtime service boundary used by production code.
+
+#### Scenario: Service accepts text
+- **WHEN** a control-plane test sends text to a fake live pane runtime
+- **THEN** the command response reports accepted bytes from the fake service and shell diagnostics remain clean
+
+#### Scenario: Service reports runtime missing
+- **WHEN** a control-plane test sends text to a pane whose service handle is absent
+- **THEN** the command response reports a stable runtime-missing error
+
+### Requirement: Terminal event ownership is contract-checked
+The Apple client SHALL include focused shell contract checks that preserve the
+terminal event ownership boundary between SwiftUI layout, AppKit terminal host
+input, rendering canvases, and native window background dragging.
+
+#### Scenario: SwiftUI terminal tap wrapper is reintroduced
+- **WHEN** a code change wraps the terminal native view in a SwiftUI tap gesture for pane selection
+- **THEN** the shell contract check fails with an error explaining that terminal-area selection belongs to the terminal host
+
+#### Scenario: Activation delegate strongly retains controller state
+- **WHEN** a code change stores terminal activation as a strong registry-owned closure
+- **THEN** the shell contract check fails or the focused review checklist requires replacing it with the weak activation boundary
+
+#### Scenario: Rendering canvas becomes interactive owner
+- **WHEN** a code change lets Ghostty or fallback rendering canvas views receive terminal mouse-down hit tests as independent owners
+- **THEN** the shell contract check fails or the focused review checklist requires routing those events through the terminal host
+
+#### Scenario: Focused manual verification is performed
+- **WHEN** event ownership implementation is ready for review
+- **THEN** verification covers click-to-select, immediate typing, drag selection, right click, scrolling, and background window dragging in the running macOS app
