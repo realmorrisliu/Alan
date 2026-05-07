@@ -12,7 +12,7 @@ metadata.
   metadata permits relay forwarding
 
 #### Scenario: relay realtime event subscriptions allow only contract-approved endpoints
-- **WHEN** a remote workspace client attempts to subscribe to realtime session
+- **WHEN** an Alan Anywhere client attempts to subscribe to realtime session
   events through the relay path
 - **THEN** the relay layer allows the subscription only when the matched
   endpoint metadata permits relay realtime event delivery

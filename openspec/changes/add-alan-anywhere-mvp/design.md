@@ -7,11 +7,11 @@ remote-control checks. That foundation is intentionally technical: operators
 enable relay mode with environment variables, pass node IDs and tokens, and
 clients address relay nodes directly.
 
-Alan Remote Workspace changes the product boundary. The user should experience
-their Mac as an available Alan device that can continue work from iPhone. The
-system can still use an outbound relay under the hood, but the product must not
-ask the user to understand tunnels, daemon URLs, VPNs, public IPs, SSH, router
-configuration, or port forwarding.
+Alan Anywhere changes the product boundary. The user should experience Alan as
+available across their own devices: work started on Mac can continue from
+iPhone. The system can still use an outbound relay under the hood, but the
+product must not ask the user to understand tunnels, daemon URLs, VPNs, public
+IPs, SSH, router configuration, or port forwarding.
 
 ## Goals / Non-Goals
 
@@ -19,8 +19,8 @@ configuration, or port forwarding.
 
 - Make a signed-in Alan Desktop automatically become remotely reachable from
   the user's own iPhone without inbound network exposure.
-- Let the iPhone app discover the user's online Macs and connect to a selected
-  workspace/session using the same Alan account.
+- Let the iPhone app discover the user's online Macs and continue a selected
+  session or work context using the same Alan account.
 - Preserve Mac-authoritative runtime execution, tool execution, governance,
   session state, and event ordering.
 - Support realtime message submission, streamed output, interrupt, yield
@@ -82,12 +82,12 @@ configuration, or port forwarding.
    Those remain useful for development/operator modes but cannot be the MVP
    product path.
 
-4. Model the user-facing surface as devices, workspaces, and sessions.
+4. Model the user-facing surface as devices, current work, and sessions.
 
    The iPhone app should list the user's online Macs and connectable
-   workspaces/sessions. It should not display relay node IDs, daemon base URLs,
-   tunnel status, or raw routing headers unless a debug surface is explicitly
-   opened.
+   sessions or work contexts. It should not display relay node IDs, daemon base
+   URLs, tunnel status, or raw routing headers unless a debug surface is
+   explicitly opened.
 
    Alternative considered: reuse the existing relay node list directly in the
    mobile UI. That leaks implementation details and makes the product feel like
@@ -95,7 +95,7 @@ configuration, or port forwarding.
 
 5. Provide realtime relay subscriptions with cursor recovery.
 
-   Remote Workspace needs realtime streamed output while preserving
+   Alan Anywhere needs realtime streamed output while preserving
    reconnect-safe recovery. The transport should support a realtime event
    subscription through the relay path, and clients must still use node-authored
    `events/read` and `reconnect_snapshot` after reconnect or gap detection.
@@ -134,13 +134,13 @@ configuration, or port forwarding.
   status by default; avoid exposing full local paths unless the Mac authorizes
   that metadata for the signed-in user.
 - Existing environment-configured relay paths diverge from product-managed
-  remote workspace -> Keep environment configuration as development/operator
+  Alan Anywhere -> Keep environment configuration as development/operator
   compatibility but make the account/device path the default in Desktop and
   iPhone builds.
 
 ## Migration Plan
 
-1. Add the OpenSpec requirements and GitHub tracking issue for Remote Workspace
+1. Add the OpenSpec requirements and GitHub tracking issue for Alan Anywhere
    MVP; mark the old architecture issue as superseded by this product contract.
 2. Introduce account/device data models and local device identity storage
    without changing existing relay behavior.
@@ -150,7 +150,7 @@ configuration, or port forwarding.
    relay ticket issuance.
 5. Add realtime relay event subscription while preserving polling fallback and
    reconnect snapshot recovery.
-6. Update iPhone to use account device discovery and remote workspace/session
+6. Update iPhone to use account device discovery and session/work-context
    selection instead of manual daemon connection.
 7. Harden revocation, audit, and offline/reconnect behavior before making the
    feature default.
@@ -165,7 +165,7 @@ configuration, or port forwarding.
 - Should remote event payloads be end-to-end encrypted between iPhone and Mac
   in MVP, or is TLS plus node-authoritative execution acceptable for the first
   product slice?
-- What is the minimum workspace metadata that iPhone may display without
-  exposing sensitive local paths?
+- What is the minimum local context metadata that iPhone may display without
+  exposing sensitive workspace paths?
 - Should APNs pending-approval notifications be included in this MVP or tracked
-  as a follow-up after foreground realtime remote workspace works?
+  as a follow-up after foreground realtime Alan Anywhere works?
