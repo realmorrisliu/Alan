@@ -157,7 +157,7 @@ scoped short-lived authorization, and revocation.
 - **WHEN** iPhone connects to a Mac through Alan Remote Workspace
 - **THEN** the connection uses encrypted transport
 - **AND** access tokens are scoped to the signed-in account, client device,
-  target Mac device, and permitted operations
+  target Mac device, selected workspace/session, and permitted operations
 
 #### Scenario: Device is revoked
 - **WHEN** a user revokes a Mac or iPhone device
