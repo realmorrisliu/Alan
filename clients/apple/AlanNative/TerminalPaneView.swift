@@ -13,9 +13,6 @@ struct TerminalPaneView: View {
                 paneMetadataStrip
             }
 
-            if host.panesForSelectedTab.count > 1 {
-                paneSelectorStrip
-            }
         }
         .padding(.top, 8)
         .padding(.trailing, 8)
@@ -178,23 +175,6 @@ struct TerminalPaneView: View {
                 .padding(28)
             }
         }
-    }
-
-    private var paneSelectorStrip: some View {
-        HStack(spacing: 0) {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 10) {
-                    ForEach(Array(host.panesForSelectedTab.enumerated()), id: \.element.paneID) { _, pane in
-                        TerminalPaneSelectorButton(
-                            pane: pane,
-                            isFocused: host.selectedPane?.paneID == pane.paneID,
-                            onSelect: { host.focus(paneID: pane.paneID) }
-                        )
-                    }
-                }
-            }
-        }
-        .padding(.top, 2)
     }
 
     private var runtimeCard: some View {
@@ -614,100 +594,6 @@ private struct ShellTerminalLeafView: View {
         .id(pane.paneID)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(ShellPalette.terminal)
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(
-                    ShellPalette.accent.opacity(0.32),
-                    lineWidth: 1
-                )
-        }
-        .shadow(
-            color: Color.black.opacity(0.10),
-            radius: 18,
-            y: 8
-        )
-    }
-}
-
-private struct TerminalPaneSelectorButton: View {
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var isHovered = false
-    let pane: ShellPane
-    let isFocused: Bool
-    let onSelect: () -> Void
-
-    private var titleText: String {
-        shellDisplayTitle(
-            rawTitle: pane.viewport?.title,
-            workingDirectoryName: pane.context?.workingDirectoryName,
-            cwd: pane.cwd,
-            program: pane.process?.program,
-            launchTarget: pane.resolvedLaunchTarget,
-            fallback: pane.resolvedLaunchTarget == .alan ? "Alan" : "Shell"
-        )
-    }
-
-    private var summaryText: String? {
-        if let branch = pane.context?.gitBranch {
-            return branch
-        }
-
-        if let folder = shellVisibleLabel(pane.context?.workingDirectoryName) ?? shellPathLeaf(pane.cwd),
-           folder != titleText
-        {
-            return folder
-        }
-
-        if let summary = shellUserFacingSummary(pane.viewport?.summary),
-           summary != titleText
-        {
-            return summary
-        }
-
-        if let program = shellVisibleLabel(pane.process?.program),
-           program.localizedCaseInsensitiveCompare(titleText) != .orderedSame
-        {
-            return program
-        }
-
-        return nil
-    }
-
-    var body: some View {
-        Button(action: onSelect) {
-            HStack(spacing: 8) {
-                Circle()
-                    .fill(isFocused ? ShellPalette.accent : ShellPalette.line.opacity(0.9))
-                    .frame(width: 6, height: 6)
-
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(titleText)
-                        .font(.system(size: 12, weight: .semibold))
-                    if let summaryText {
-                        Text(summaryText)
-                            .font(.system(size: 11, weight: .medium))
-                            .lineLimit(1)
-                    }
-                }
-            }
-            .foregroundStyle(isFocused ? ShellPalette.ink : ShellPalette.mutedInk)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .frame(minWidth: 108, alignment: .leading)
-            .background(
-                Capsule(style: .continuous)
-                    .fill(isFocused ? Color.white.opacity(0.74) : (isHovered ? Color.white.opacity(0.36) : Color.white.opacity(0.24)))
-            )
-            .overlay {
-                Capsule(style: .continuous)
-                    .stroke(ShellPalette.line.opacity(isFocused ? 0.34 : (isHovered ? 0.2 : 0.12)), lineWidth: 1)
-            }
-        }
-        .buttonStyle(.plain)
-        .scaleEffect(isHovered && !isFocused ? 1.01 : 1)
-        .animation(reduceMotion ? nil : .easeOut(duration: 0.14), value: isHovered)
-        .onHover { isHovered = $0 }
     }
 }
 

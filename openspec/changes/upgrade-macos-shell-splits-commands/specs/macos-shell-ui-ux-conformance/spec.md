@@ -9,6 +9,10 @@ card grid or debug layout.
 - **WHEN** a tab contains multiple visible terminal panes
 - **THEN** dividers and focus treatment are compact and do not show raw pane IDs, runtime phases, or redundant labels by default
 
+#### Scenario: Split panes share one terminal surface
+- **WHEN** a tab contains adjacent visible terminal panes
+- **THEN** panes are rendered as one continuous terminal surface with no per-pane rounded cards, shadows, bottom pane tab strip, or fixed gaps; only the split divider separates neighboring panes
+
 #### Scenario: Divider hover
 - **WHEN** the user hovers or drags a split divider
 - **THEN** the divider provides a clear native resize affordance without resizing unrelated sidebar or toolbar elements

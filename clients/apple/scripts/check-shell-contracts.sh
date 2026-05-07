@@ -190,6 +190,16 @@ reject_pattern \
     "splitChildren" \
     "split panes must not leave a fixed gap between adjacent terminal panes"
 
+reject_pattern \
+    "clients/apple/AlanNative/TerminalPaneView.swift" \
+    "clipShape\\(RoundedRectangle\\(cornerRadius: 12" \
+    "terminal panes must not render as separate rounded cards inside a split surface"
+
+reject_pattern \
+    "clients/apple/AlanNative/TerminalPaneView.swift" \
+    "paneSelectorStrip" \
+    "split panes must not show a bottom pane tab strip by default"
+
 require_pattern \
     "clients/apple/AlanNative/TerminalHostView.swift" \
     "hasTornDownRuntime" \

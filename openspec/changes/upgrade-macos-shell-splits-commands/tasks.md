@@ -11,6 +11,7 @@
 - [x] 2.2 Add native divider resize affordances with stable minimum pane sizes.
 - [ ] 2.3 Add split zoom and unzoom UI that preserves sibling runtime handles.
 - [ ] 2.4 Add visual treatment for focused panes that stays lightweight and hides debug identifiers.
+- [x] 2.5 Keep adjacent split panes as one continuous terminal surface without per-pane rounded cards or a bottom pane tab strip.
 
 ## 3. Native Commands And Menus
 
