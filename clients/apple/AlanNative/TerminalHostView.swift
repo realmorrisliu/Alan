@@ -14,6 +14,7 @@ struct TerminalHostView: NSViewRepresentable {
     let isSelected: Bool
     let runtimeRegistry: TerminalRuntimeRegistry
     let activationDelegate: TerminalHostActivationDelegate?
+    let onWorkspaceCommand: ((ShellWorkspaceCommand) -> Void)?
     let onRuntimeUpdate: (TerminalHostRuntimeSnapshot) -> Void
     let onMetadataUpdate: (TerminalPaneMetadataSnapshot) -> Void
 
@@ -23,6 +24,7 @@ struct TerminalHostView: NSViewRepresentable {
             bootProfile: bootProfile,
             isSelected: isSelected,
             activationDelegate: activationDelegate,
+            onWorkspaceCommand: onWorkspaceCommand,
             onRuntimeUpdate: onRuntimeUpdate,
             onMetadataUpdate: onMetadataUpdate
         )
@@ -35,6 +37,7 @@ struct TerminalHostView: NSViewRepresentable {
             isSelected: isSelected,
             surfaceHandle: runtimeRegistry.surfaceHandle(for: pane, bootProfile: bootProfile),
             activationDelegate: activationDelegate,
+            onWorkspaceCommand: onWorkspaceCommand,
             onRuntimeUpdate: onRuntimeUpdate,
             onMetadataUpdate: onMetadataUpdate
         )
@@ -61,6 +64,7 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
     private var bootProfile: AlanShellBootProfile?
     private var isSelected = false
     private weak var activationDelegate: TerminalHostActivationDelegate?
+    private var workspaceCommandHandler: ((ShellWorkspaceCommand) -> Void)?
     private var runtimeObserver: ((TerminalHostRuntimeSnapshot) -> Void)?
     private var metadataObserver: ((TerminalPaneMetadataSnapshot) -> Void)?
     private var windowObservers: [NSObjectProtocol] = []
@@ -175,6 +179,7 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
         isSelected: Bool,
         surfaceHandle: AlanTerminalSurfaceHandle?,
         activationDelegate: TerminalHostActivationDelegate?,
+        onWorkspaceCommand: ((ShellWorkspaceCommand) -> Void)?,
         onRuntimeUpdate: @escaping (TerminalHostRuntimeSnapshot) -> Void,
         onMetadataUpdate: @escaping (TerminalPaneMetadataSnapshot) -> Void
     ) {
@@ -186,6 +191,7 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
         self.isSelected = isSelected
         surfaceController.bind(surfaceHandle: surfaceHandle, paneID: pane?.paneID)
         self.activationDelegate = activationDelegate
+        workspaceCommandHandler = onWorkspaceCommand
         runtimeObserver = onRuntimeUpdate
         metadataObserver = onMetadataUpdate
 
@@ -957,6 +963,9 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
 #endif
 
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if routeWorkspaceKeyCommandIfNeeded(event) {
+            return true
+        }
         if routeNativeKeyCommandIfNeeded(event) {
             return true
         }
@@ -982,6 +991,9 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
     }
 
     override func keyDown(with event: NSEvent) {
+        if routeWorkspaceKeyCommandIfNeeded(event) {
+            return
+        }
         if routeNativeKeyCommandIfNeeded(event) {
             return
         }
@@ -1214,6 +1226,16 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
         case .nativeCommand, .terminalText, .terminalKey, .ignored:
             return false
         }
+    }
+
+    private func routeWorkspaceKeyCommandIfNeeded(_ event: NSEvent) -> Bool {
+        guard let command = surfaceController.inputAdapter.routeWorkspaceCommand(
+            terminalKeyInput(for: event)
+        ) else {
+            return false
+        }
+        workspaceCommandHandler?(command)
+        return true
     }
 
     private func handleSearchKeyIfNeeded(_ event: NSEvent) -> Bool {

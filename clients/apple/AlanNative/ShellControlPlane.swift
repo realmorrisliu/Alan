@@ -819,6 +819,16 @@ private enum AlanShellLocalCommandExecutor {
                 errorCode: error.rawValue,
                 errorMessage: "The requested split does not exist."
             )
+        case .spatialFocusTargetNotFound:
+            return response(
+                for: command,
+                state: state,
+                applied: false,
+                tabID: command.tabID,
+                paneID: command.paneID,
+                errorCode: error.rawValue,
+                errorMessage: "There is no pane in that direction."
+            )
         case .lastTab:
             return response(
                 for: command,

@@ -474,6 +474,62 @@ enum AlanTerminalInputRoutingDecision: Equatable {
 
 @MainActor
 final class AlanTerminalInputAdapter {
+    func routeWorkspaceCommand(_ input: AlanTerminalKeyInput) -> ShellWorkspaceCommand? {
+        guard input.phase == .down, !input.isRepeat else { return nil }
+
+        let characters = input.characters?.lowercased()
+        switch input.modifiers {
+        case [.command]:
+            switch characters {
+            case "d":
+                return .splitRight
+            case "t":
+                return .newTerminalTab
+            case "w":
+                return .closeTab
+            default:
+                return nil
+            }
+        case [.command, .shift]:
+            switch characters {
+            case "d":
+                return .splitDown
+            case "w":
+                return .closePane
+            default:
+                return nil
+            }
+        case [.command, .option]:
+            switch characters {
+            case "d":
+                return .splitLeft
+            case "t":
+                return .newAlanTab
+            case "=" where input.keyCode == 0x18:
+                return .equalizeSplits
+            default:
+                return nil
+            }
+        case [.command, .option, .shift]:
+            return characters == "d" ? .splitUp : nil
+        case [.command, .control]:
+            switch input.keyCode {
+            case 0x7B:
+                return .focusLeft
+            case 0x7C:
+                return .focusRight
+            case 0x7E:
+                return .focusUp
+            case 0x7D:
+                return .focusDown
+            default:
+                return nil
+            }
+        default:
+            return nil
+        }
+    }
+
     func routeKey(_ input: AlanTerminalKeyInput) -> AlanTerminalInputRoutingDecision {
         if input.phase == .down,
            input.modifiers == .command,

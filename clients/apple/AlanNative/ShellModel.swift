@@ -23,6 +23,83 @@ enum ShellSplitDirection: String, Codable {
     case vertical
 }
 
+enum ShellPaneSplitDirection: String, Codable, CaseIterable {
+    case left
+    case right
+    case up
+    case down
+
+    var splitDirection: ShellSplitDirection {
+        switch self {
+        case .left, .right:
+            return .vertical
+        case .up, .down:
+            return .horizontal
+        }
+    }
+
+    var placesNewPaneBeforeTarget: Bool {
+        switch self {
+        case .left, .up:
+            return true
+        case .right, .down:
+            return false
+        }
+    }
+
+    static func defaultPlacement(for splitDirection: ShellSplitDirection) -> ShellPaneSplitDirection {
+        switch splitDirection {
+        case .horizontal:
+            return .down
+        case .vertical:
+            return .right
+        }
+    }
+}
+
+enum ShellSpatialFocusDirection: String, Codable, CaseIterable {
+    case left
+    case right
+    case up
+    case down
+
+    var splitDirection: ShellSplitDirection {
+        switch self {
+        case .left, .right:
+            return .vertical
+        case .up, .down:
+            return .horizontal
+        }
+    }
+
+    var movesForward: Bool {
+        switch self {
+        case .right, .down:
+            return true
+        case .left, .up:
+            return false
+        }
+    }
+}
+
+enum ShellWorkspaceCommand: String, CaseIterable, Identifiable {
+    case newTerminalTab
+    case newAlanTab
+    case splitLeft
+    case splitRight
+    case splitUp
+    case splitDown
+    case focusLeft
+    case focusRight
+    case focusUp
+    case focusDown
+    case equalizeSplits
+    case closePane
+    case closeTab
+
+    var id: String { rawValue }
+}
+
 enum ShellLaunchTarget: String, Codable, CaseIterable {
     case shell
     case alan
@@ -469,6 +546,22 @@ extension ShellPaneTreeNode {
         newLeafNodeID: String,
         newPaneID: String
     ) -> ShellPaneTreeNode {
+        splittingPane(
+            targetPaneID,
+            placement: .defaultPlacement(for: direction),
+            splitNodeID: splitNodeID,
+            newLeafNodeID: newLeafNodeID,
+            newPaneID: newPaneID
+        )
+    }
+
+    func splittingPane(
+        _ targetPaneID: String,
+        placement: ShellPaneSplitDirection,
+        splitNodeID: String,
+        newLeafNodeID: String,
+        newPaneID: String
+    ) -> ShellPaneTreeNode {
         switch kind {
         case .pane:
             guard paneID == targetPaneID else { return self }
@@ -489,10 +582,12 @@ extension ShellPaneTreeNode {
             return ShellPaneTreeNode(
                 nodeID: splitNodeID,
                 kind: .split,
-                direction: direction,
+                direction: placement.splitDirection,
                 ratio: 0.5,
                 paneID: nil,
-                children: [currentLeaf, newLeaf]
+                children: placement.placesNewPaneBeforeTarget
+                    ? [newLeaf, currentLeaf]
+                    : [currentLeaf, newLeaf]
             )
         case .split:
             return ShellPaneTreeNode(
@@ -504,7 +599,7 @@ extension ShellPaneTreeNode {
                 children: (children ?? []).map {
                     $0.splittingPane(
                         targetPaneID,
-                        direction: direction,
+                        placement: placement,
                         splitNodeID: splitNodeID,
                         newLeafNodeID: newLeafNodeID,
                         newPaneID: newPaneID
@@ -583,6 +678,229 @@ extension ShellPaneTreeNode {
             children: [self, newLeaf]
         )
     }
+
+    func adjacentPaneID(
+        from targetPaneID: String,
+        direction: ShellSpatialFocusDirection
+    ) -> String? {
+        let frames = leafFrames(in: .unit)
+        guard let targetFrame = frames.first(where: { $0.paneID == targetPaneID }) else {
+            return nil
+        }
+
+        return frames
+            .filter { $0.paneID != targetPaneID && targetFrame.isAdjacentCandidate($0, direction: direction) }
+            .min { lhs, rhs in
+                targetFrame.sortsBefore(lhs, rhs, direction: direction)
+            }?
+            .paneID
+    }
+
+    private struct PaneFrame {
+        static let unit = PaneFrame(
+            paneID: "",
+            minX: 0,
+            maxX: 1,
+            minY: 0,
+            maxY: 1
+        )
+
+        let paneID: String
+        let minX: Double
+        let maxX: Double
+        let minY: Double
+        let maxY: Double
+
+        var width: Double { max(maxX - minX, 0) }
+        var height: Double { max(maxY - minY, 0) }
+        var midX: Double { (minX + maxX) / 2 }
+        var midY: Double { (minY + maxY) / 2 }
+
+        func replacingPaneID(_ paneID: String) -> PaneFrame {
+            PaneFrame(
+                paneID: paneID,
+                minX: minX,
+                maxX: maxX,
+                minY: minY,
+                maxY: maxY
+            )
+        }
+
+        func isAdjacentCandidate(
+            _ candidate: PaneFrame,
+            direction: ShellSpatialFocusDirection
+        ) -> Bool {
+            let epsilon = 0.000_001
+            guard perpendicularOverlap(with: candidate, direction: direction) > epsilon else {
+                return false
+            }
+
+            switch direction {
+            case .left:
+                return candidate.maxX <= minX + epsilon
+            case .right:
+                return candidate.minX >= maxX - epsilon
+            case .up:
+                return candidate.maxY <= minY + epsilon
+            case .down:
+                return candidate.minY >= maxY - epsilon
+            }
+        }
+
+        func sortsBefore(
+            _ lhs: PaneFrame,
+            _ rhs: PaneFrame,
+            direction: ShellSpatialFocusDirection
+        ) -> Bool {
+            let epsilon = 0.000_001
+            let lhsDistance = primaryDistance(to: lhs, direction: direction)
+            let rhsDistance = primaryDistance(to: rhs, direction: direction)
+            if abs(lhsDistance - rhsDistance) > epsilon {
+                return lhsDistance < rhsDistance
+            }
+
+            let lhsOverlap = perpendicularOverlap(with: lhs, direction: direction)
+            let rhsOverlap = perpendicularOverlap(with: rhs, direction: direction)
+            if abs(lhsOverlap - rhsOverlap) > epsilon {
+                return lhsOverlap > rhsOverlap
+            }
+
+            let lhsCenterDistance = perpendicularCenterDistance(to: lhs, direction: direction)
+            let rhsCenterDistance = perpendicularCenterDistance(to: rhs, direction: direction)
+            if abs(lhsCenterDistance - rhsCenterDistance) > epsilon {
+                return lhsCenterDistance < rhsCenterDistance
+            }
+
+            return lhs.paneID < rhs.paneID
+        }
+
+        private func primaryDistance(
+            to candidate: PaneFrame,
+            direction: ShellSpatialFocusDirection
+        ) -> Double {
+            switch direction {
+            case .left:
+                return max(minX - candidate.maxX, 0)
+            case .right:
+                return max(candidate.minX - maxX, 0)
+            case .up:
+                return max(minY - candidate.maxY, 0)
+            case .down:
+                return max(candidate.minY - maxY, 0)
+            }
+        }
+
+        private func perpendicularOverlap(
+            with candidate: PaneFrame,
+            direction: ShellSpatialFocusDirection
+        ) -> Double {
+            switch direction {
+            case .left, .right:
+                return max(0, min(maxY, candidate.maxY) - max(minY, candidate.minY))
+            case .up, .down:
+                return max(0, min(maxX, candidate.maxX) - max(minX, candidate.minX))
+            }
+        }
+
+        private func perpendicularCenterDistance(
+            to candidate: PaneFrame,
+            direction: ShellSpatialFocusDirection
+        ) -> Double {
+            switch direction {
+            case .left, .right:
+                return abs(midY - candidate.midY)
+            case .up, .down:
+                return abs(midX - candidate.midX)
+            }
+        }
+    }
+
+    private func leafFrames(in frame: PaneFrame) -> [PaneFrame] {
+        switch kind {
+        case .pane:
+            guard let paneID else { return [] }
+            return [frame.replacingPaneID(paneID)]
+        case .split:
+            let childNodes = children ?? []
+            guard !childNodes.isEmpty else { return [] }
+
+            if childNodes.count == 2 {
+                let ratio = splitRatio
+                switch direction ?? .horizontal {
+                case .vertical:
+                    let splitX = frame.minX + frame.width * ratio
+                    return childNodes[0].leafFrames(
+                        in: PaneFrame(
+                            paneID: "",
+                            minX: frame.minX,
+                            maxX: splitX,
+                            minY: frame.minY,
+                            maxY: frame.maxY
+                        )
+                    ) + childNodes[1].leafFrames(
+                        in: PaneFrame(
+                            paneID: "",
+                            minX: splitX,
+                            maxX: frame.maxX,
+                            minY: frame.minY,
+                            maxY: frame.maxY
+                        )
+                    )
+                case .horizontal:
+                    let splitY = frame.minY + frame.height * ratio
+                    return childNodes[0].leafFrames(
+                        in: PaneFrame(
+                            paneID: "",
+                            minX: frame.minX,
+                            maxX: frame.maxX,
+                            minY: frame.minY,
+                            maxY: splitY
+                        )
+                    ) + childNodes[1].leafFrames(
+                        in: PaneFrame(
+                            paneID: "",
+                            minX: frame.minX,
+                            maxX: frame.maxX,
+                            minY: splitY,
+                            maxY: frame.maxY
+                        )
+                    )
+                }
+            }
+
+            let childCount = Double(childNodes.count)
+            return childNodes.enumerated().flatMap { index, child in
+                let start = Double(index) / childCount
+                let end = Double(index + 1) / childCount
+                switch direction ?? .horizontal {
+                case .vertical:
+                    let minX = frame.minX + frame.width * start
+                    let maxX = frame.minX + frame.width * end
+                    return child.leafFrames(
+                        in: PaneFrame(
+                            paneID: "",
+                            minX: minX,
+                            maxX: maxX,
+                            minY: frame.minY,
+                            maxY: frame.maxY
+                        )
+                    )
+                case .horizontal:
+                    let minY = frame.minY + frame.height * start
+                    let maxY = frame.minY + frame.height * end
+                    return child.leafFrames(
+                        in: PaneFrame(
+                            paneID: "",
+                            minX: frame.minX,
+                            maxX: frame.maxX,
+                            minY: minY,
+                            maxY: maxY
+                        )
+                    )
+                }
+            }
+        }
+    }
 }
 
 enum ShellStateMutationError: String, Error {
@@ -590,6 +908,7 @@ enum ShellStateMutationError: String, Error {
     case tabNotFound = "tab_not_found"
     case paneNotFound = "pane_not_found"
     case splitNotFound = "split_not_found"
+    case spatialFocusTargetNotFound = "spatial_focus_target_not_found"
     case lastTab = "last_tab"
     case lastPane = "last_pane"
     case invalidMoveTarget = "invalid_move_target"
@@ -860,6 +1179,24 @@ extension ShellStateSnapshot {
         )
     }
 
+    func focusingAdjacentPane(_ direction: ShellSpatialFocusDirection) throws -> ShellStateMutationResult {
+        guard let focusedPaneID,
+              let focusedPane = pane(paneID: focusedPaneID),
+              let focusedTab = tab(tabID: focusedPane.tabID)
+        else {
+            throw ShellStateMutationError.paneNotFound
+        }
+
+        guard let targetPaneID = focusedTab.paneTree.adjacentPaneID(
+            from: focusedPaneID,
+            direction: direction
+        ) else {
+            throw ShellStateMutationError.spatialFocusTargetNotFound
+        }
+
+        return try focusingPane(targetPaneID)
+    }
+
     func creatingSpace(
         launchTarget: ShellLaunchTarget,
         title: String?,
@@ -1044,6 +1381,20 @@ extension ShellStateSnapshot {
         defaultWorkingDirectory: String = defaultShellWorkingDirectory(),
         now: Date = .now
     ) throws -> ShellStateMutationResult {
+        try splittingPane(
+            paneID,
+            placement: .defaultPlacement(for: direction),
+            defaultWorkingDirectory: defaultWorkingDirectory,
+            now: now
+        )
+    }
+
+    func splittingPane(
+        _ paneID: String,
+        placement: ShellPaneSplitDirection,
+        defaultWorkingDirectory: String = defaultShellWorkingDirectory(),
+        now: Date = .now
+    ) throws -> ShellStateMutationResult {
         guard let pane = pane(paneID: paneID),
               let tab = tab(tabID: pane.tabID)
         else {
@@ -1070,7 +1421,7 @@ extension ShellStateSnapshot {
             title: tab.title,
             paneTree: tab.paneTree.splittingPane(
                 paneID,
-                direction: direction,
+                placement: placement,
                 splitNodeID: splitNodeID,
                 newLeafNodeID: "node_\(newPaneID)",
                 newPaneID: newPaneID

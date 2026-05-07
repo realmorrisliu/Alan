@@ -415,23 +415,77 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
 
     @discardableResult
     func splitFocusedPane(direction: ShellSplitDirection) -> String? {
+        splitFocusedPane(placement: .defaultPlacement(for: direction))
+    }
+
+    @discardableResult
+    func splitFocusedPane(placement: ShellPaneSplitDirection) -> String? {
         guard let focusedPaneID = shellState.focusedPaneID else { return nil }
-        return splitPane(paneID: focusedPaneID, direction: direction)
+        return splitPane(paneID: focusedPaneID, placement: placement)
     }
 
     @discardableResult
     func splitPane(paneID: String, direction: ShellSplitDirection) -> String? {
+        splitPane(paneID: paneID, placement: .defaultPlacement(for: direction))
+    }
+
+    @discardableResult
+    func splitPane(paneID: String, placement: ShellPaneSplitDirection) -> String? {
         let result: ShellStateMutationResult
         do {
             result = try shellState.splittingPane(
                 paneID,
-                direction: direction
+                placement: placement
             )
         } catch {
             return nil
         }
         applyMutationResult(result)
         return result.paneID
+    }
+
+    @discardableResult
+    func focusAdjacentPane(direction: ShellSpatialFocusDirection) -> Bool {
+        let result: ShellStateMutationResult
+        do {
+            result = try shellState.focusingAdjacentPane(direction)
+        } catch {
+            return false
+        }
+        applyMutationResult(result)
+        return true
+    }
+
+    @discardableResult
+    func performShellWorkspaceCommand(_ command: ShellWorkspaceCommand) -> Bool {
+        switch command {
+        case .newTerminalTab:
+            return openTerminalTab() != nil
+        case .newAlanTab:
+            return openAlanTab() != nil
+        case .splitLeft:
+            return splitFocusedPane(placement: .left) != nil
+        case .splitRight:
+            return splitFocusedPane(placement: .right) != nil
+        case .splitUp:
+            return splitFocusedPane(placement: .up) != nil
+        case .splitDown:
+            return splitFocusedPane(placement: .down) != nil
+        case .focusLeft:
+            return focusAdjacentPane(direction: .left)
+        case .focusRight:
+            return focusAdjacentPane(direction: .right)
+        case .focusUp:
+            return focusAdjacentPane(direction: .up)
+        case .focusDown:
+            return focusAdjacentPane(direction: .down)
+        case .equalizeSplits:
+            return equalizeSelectedTabSplits()
+        case .closePane:
+            return closeSelectedPane()
+        case .closeTab:
+            return closeSelectedTab()
+        }
     }
 
     @discardableResult

@@ -485,6 +485,9 @@ private struct ShellPaneTreeLayoutView: View {
                     isSelected: host.selectedPane?.paneID == pane.paneID,
                     runtimeRegistry: host.terminalRuntimeRegistry,
                     activationDelegate: host,
+                    onWorkspaceCommand: { command in
+                        host.performShellWorkspaceCommand(command)
+                    },
                     onRuntimeUpdate: host.updateTerminalRuntime,
                     onMetadataUpdate: { metadata in
                         host.updateTerminalMetadata(metadata, for: pane.paneID)
@@ -639,6 +642,7 @@ private struct ShellTerminalLeafView: View {
     let isSelected: Bool
     let runtimeRegistry: TerminalRuntimeRegistry
     let activationDelegate: TerminalHostActivationDelegate?
+    let onWorkspaceCommand: (ShellWorkspaceCommand) -> Void
     let onRuntimeUpdate: (TerminalHostRuntimeSnapshot) -> Void
     let onMetadataUpdate: (TerminalPaneMetadataSnapshot) -> Void
 
@@ -649,6 +653,7 @@ private struct ShellTerminalLeafView: View {
             isSelected: isSelected,
             runtimeRegistry: runtimeRegistry,
             activationDelegate: activationDelegate,
+            onWorkspaceCommand: onWorkspaceCommand,
             onRuntimeUpdate: onRuntimeUpdate,
             onMetadataUpdate: onMetadataUpdate
         )
