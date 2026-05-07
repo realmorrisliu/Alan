@@ -18,6 +18,7 @@ private enum TerminalSurfaceControllerTests {
         verifiesScrollbackMetricsAndTerminalModes()
         verifiesModeTrackerPreservesTerminalScrollRouting()
         verifiesNativeScrollViewForwardsWheelEvents()
+        verifiesNativeScrollViewForwardsMouseEvents()
         verifiesInputCommandRouting()
         verifiesPaneScopedSearchState()
         verifiesSearchActionsReachSurfaceEngine()
@@ -113,6 +114,24 @@ private enum TerminalSurfaceControllerTests {
         let event = RecordingTerminalScrollWheelEvent(deltaX: 0, deltaY: -7)
         adapter.scrollView.scrollWheel(with: event)
         expect(routedDeltaY == -7, "native scroll view must forward wheel events to terminal routing")
+    }
+
+    private static func verifiesNativeScrollViewForwardsMouseEvents() {
+        let adapter = AlanTerminalNativeScrollViewAdapter()
+        var routedEvents: [AlanTerminalRoutedMouseEvent] = []
+        adapter.onMouseEvent = { routedEvent, _ in
+            routedEvents.append(routedEvent)
+            return true
+        }
+
+        let event = RecordingTerminalMouseEvent()
+        adapter.scrollView.mouseDown(with: event)
+        adapter.scrollView.mouseDragged(with: event)
+        adapter.scrollView.mouseUp(with: event)
+        expect(
+            routedEvents == [.mouseDown, .mouseDragged, .mouseUp],
+            "native scroll view must forward mouse events to terminal routing"
+        )
     }
 
     private static func verifiesInputCommandRouting() {
@@ -240,15 +259,35 @@ private enum TerminalSurfaceControllerTests {
         expect(stateChangeCount == 1, "scrollbar updates must notify host UI/runtime refresh")
 
         let normalRoute = controller.routeScroll(
-            AlanTerminalScrollInput(deltaX: 0, deltaY: -8, precise: true)
+            AlanTerminalScrollInput(deltaX: 0, deltaY: -8, precise: false)
         )
         expect(
             normalRoute == .nativeScroll(row: 128),
-            "normal-buffer scroll input must become a native row scroll"
+            "normal-buffer non-precise scroll input must become a native row scroll"
         )
         expect(
             handle.scrollActions == ["scroll_to_row:128"],
             "native row scroll must reach the terminal surface"
+        )
+
+        controller.syncNativeScrollView(viewportSize: CGSize(width: 800, height: 640))
+        let firstPreciseRoute = controller.routeScroll(
+            AlanTerminalScrollInput(deltaX: 0, deltaY: -8, precise: true)
+        )
+        expect(
+            firstPreciseRoute == .ignored,
+            "sub-row precise scroll input must be consumed while accumulating native row movement"
+        )
+        let secondPreciseRoute = controller.routeScroll(
+            AlanTerminalScrollInput(deltaX: 0, deltaY: -8, precise: true)
+        )
+        expect(
+            secondPreciseRoute == .nativeScroll(row: 129),
+            "precise scroll input must scale point deltas by row height before native row scroll"
+        )
+        expect(
+            handle.scrollActions.suffix(1) == ["scroll_to_row:129"],
+            "accumulated precise scroll must move by one row at a 16-point row height"
         )
 
         handle.emitScrollbackUpdate(
@@ -419,5 +458,15 @@ private final class RecordingTerminalScrollWheelEvent: NSEvent {
     override var scrollingDeltaY: CGFloat { recordedDeltaY }
     override var hasPreciseScrollingDeltas: Bool { true }
     override var momentumPhase: NSEvent.Phase { [] }
+}
+
+private final class RecordingTerminalMouseEvent: NSEvent {
+    override init() {
+        super.init()
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) is not supported")
+    }
 }
 #endif
