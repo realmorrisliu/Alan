@@ -33,5 +33,5 @@
 ## 5. PR And Archive Readiness
 
 - [x] 5.1 Review the diff for accidental iOS behavior changes or duplicate shell owner creation.
-- [ ] 5.2 Before archive, sync accepted delta requirements into `openspec/specs/`.
-- [ ] 5.3 Archive the OpenSpec change after implementation is merged.
+- [x] 5.2 Before archive, sync accepted delta requirements into `openspec/specs/`.
+- [x] 5.3 Archive the OpenSpec change after implementation is merged.
