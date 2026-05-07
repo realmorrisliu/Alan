@@ -16,10 +16,14 @@ struct TerminalSurfaceControllerTestRunner {
 private enum TerminalSurfaceControllerTests {
     static func run() {
         verifiesScrollbackMetricsAndTerminalModes()
+        verifiesModeTrackerPreservesTerminalScrollRouting()
+        verifiesNativeScrollViewForwardsWheelEvents()
+        verifiesNativeScrollViewForwardsMouseEvents()
         verifiesInputCommandRouting()
         verifiesPaneScopedSearchState()
         verifiesSearchActionsReachSurfaceEngine()
         verifiesScrollbackActionsReachSurfaceEngine()
+        verifiesBindClearsStaleScrollbackState()
         verifiesSurfaceSnapshotEqualityIgnoresTimestamp()
         verifiesClipboardDeliveryStates()
         verifiesSelectionCopyAndPasteUseController()
@@ -51,7 +55,84 @@ private enum TerminalSurfaceControllerTests {
             )
         )
 
-        expect(alternate.nativeScrollbarVisible == false, "alternate-screen scrollback must not expose stale normal-buffer scrollbar")
+        expect(
+            alternate.nativeScrollbarVisible == false,
+            "alternate-screen scrollback must not expose stale normal-buffer scrollbar"
+        )
+    }
+
+    private static func verifiesModeTrackerPreservesTerminalScrollRouting() {
+        let tracker = AlanTerminalModeTracker()
+
+        let initialMode = tracker.resolveMode(
+            totalRows: 40,
+            visibleRows: 40,
+            mouseCaptured: false
+        )
+        expect(initialMode == .normalBuffer, "initial unscrollable terminal state must stay normal")
+
+        let scrollbackMode = tracker.resolveMode(
+            totalRows: 220,
+            visibleRows: 40,
+            mouseCaptured: false
+        )
+        expect(scrollbackMode == .normalBuffer, "scrollable primary screen must use normal mode")
+
+        let alternateMode = tracker.resolveMode(
+            totalRows: 40,
+            visibleRows: 40,
+            mouseCaptured: false
+        )
+        expect(
+            alternateMode == .alternateScreen,
+            "collapsed scrollbar after scrollback must preserve alternate-screen terminal routing"
+        )
+
+        let mouseMode = tracker.resolveMode(
+            totalRows: 220,
+            visibleRows: 40,
+            mouseCaptured: true
+        )
+        expect(mouseMode == .mouseReporting, "mouse-captured surfaces must route scroll to terminal")
+
+        tracker.reset()
+        let resetMode = tracker.resolveMode(
+            totalRows: 40,
+            visibleRows: 40,
+            mouseCaptured: false
+        )
+        expect(resetMode == .normalBuffer, "new surfaces must not inherit prior alternate-screen state")
+    }
+
+    private static func verifiesNativeScrollViewForwardsWheelEvents() {
+        let adapter = AlanTerminalNativeScrollViewAdapter()
+        var routedDeltaY: Double?
+        adapter.onScrollWheel = { event in
+            routedDeltaY = event.scrollingDeltaY
+            return true
+        }
+
+        let event = RecordingTerminalScrollWheelEvent(deltaX: 0, deltaY: -7)
+        adapter.scrollView.scrollWheel(with: event)
+        expect(routedDeltaY == -7, "native scroll view must forward wheel events to terminal routing")
+    }
+
+    private static func verifiesNativeScrollViewForwardsMouseEvents() {
+        let adapter = AlanTerminalNativeScrollViewAdapter()
+        var routedEvents: [AlanTerminalRoutedMouseEvent] = []
+        adapter.onMouseEvent = { routedEvent, _ in
+            routedEvents.append(routedEvent)
+            return true
+        }
+
+        let event = RecordingTerminalMouseEvent()
+        adapter.scrollView.mouseDown(with: event)
+        adapter.scrollView.mouseDragged(with: event)
+        adapter.scrollView.mouseUp(with: event)
+        expect(
+            routedEvents == [.mouseDown, .mouseDragged, .mouseUp],
+            "native scroll view must forward mouse events to terminal routing"
+        )
     }
 
     private static func verifiesInputCommandRouting() {
@@ -179,15 +260,35 @@ private enum TerminalSurfaceControllerTests {
         expect(stateChangeCount == 1, "scrollbar updates must notify host UI/runtime refresh")
 
         let normalRoute = controller.routeScroll(
-            AlanTerminalScrollInput(deltaX: 0, deltaY: -8, precise: true)
+            AlanTerminalScrollInput(deltaX: 0, deltaY: -8, precise: false)
         )
         expect(
             normalRoute == .nativeScroll(row: 128),
-            "normal-buffer scroll input must become a native row scroll"
+            "normal-buffer non-precise scroll input must become a native row scroll"
         )
         expect(
             handle.scrollActions == ["scroll_to_row:128"],
             "native row scroll must reach the terminal surface"
+        )
+
+        controller.syncNativeScrollView(viewportSize: CGSize(width: 800, height: 640))
+        let firstPreciseRoute = controller.routeScroll(
+            AlanTerminalScrollInput(deltaX: 0, deltaY: -8, precise: true)
+        )
+        expect(
+            firstPreciseRoute == .ignored,
+            "sub-row precise scroll input must be consumed while accumulating native row movement"
+        )
+        let secondPreciseRoute = controller.routeScroll(
+            AlanTerminalScrollInput(deltaX: 0, deltaY: -8, precise: true)
+        )
+        expect(
+            secondPreciseRoute == .nativeScroll(row: 129),
+            "precise scroll input must scale point deltas by row height before native row scroll"
+        )
+        expect(
+            handle.scrollActions.suffix(1) == ["scroll_to_row:129"],
+            "accumulated precise scroll must move by one row at a 16-point row height"
         )
 
         handle.emitScrollbackUpdate(
@@ -204,6 +305,102 @@ private enum TerminalSurfaceControllerTests {
         expect(
             alternateRoute == .terminalScroll,
             "alternate-screen scroll input must stay routed to the terminal app"
+        )
+
+        handle.emitScrollbackUpdate(
+            AlanTerminalScrollbackMetrics(
+                totalRows: 220,
+                visibleRows: 40,
+                firstVisibleRow: 120,
+                mode: .mouseReporting
+            )
+        )
+        let mouseReportingRoute = controller.routeScroll(
+            AlanTerminalScrollInput(deltaX: 0, deltaY: -8, precise: true)
+        )
+        expect(
+            mouseReportingRoute == .terminalScroll,
+            "terminal mouse-reporting scroll input must stay routed to the terminal app"
+        )
+    }
+
+    private static func verifiesBindClearsStaleScrollbackState() {
+        let firstHandle = FakeAlanTerminalSurfaceHandle(paneID: "pane_1")
+        let secondHandle = FakeAlanTerminalSurfaceHandle(paneID: "pane_2")
+        let controller = AlanTerminalSurfaceController()
+        var stateChangeCount = 0
+        controller.onSurfaceStateChange = {
+            stateChangeCount += 1
+        }
+        controller.bind(surfaceHandle: firstHandle, paneID: "pane_1")
+        firstHandle.emitScrollbackUpdate(
+            AlanTerminalScrollbackMetrics(
+                totalRows: 220,
+                visibleRows: 40,
+                firstVisibleRow: 120,
+                mode: .normalBuffer
+            )
+        )
+
+        expect(controller.scrollbackAdapter.state.nativeScrollbarVisible, "first surface must expose scrollback")
+        expect(stateChangeCount == 1, "first surface scrollback update must notify once")
+        controller.updateMetadata(
+            TerminalPaneMetadataSnapshot(
+                title: "old pane",
+                workingDirectory: "/tmp/old",
+                summary: "exited",
+                attention: .idle,
+                processExited: true,
+                lastCommandExitCode: 1,
+                lastUpdatedAt: .now
+            )
+        )
+        controller.updateRenderer(
+            TerminalRendererSnapshot(
+                kind: .ghosttyLive,
+                phase: .failed,
+                summary: "old renderer failed",
+                detail: nil,
+                failureReason: "old surface failed",
+                recentEvents: []
+            )
+        )
+
+        controller.bind(surfaceHandle: secondHandle, paneID: "pane_2")
+        expect(
+            controller.scrollbackAdapter.state == .empty,
+            "rebinding to a new surface must clear stale scrollback"
+        )
+        expect(stateChangeCount == 2, "clearing stale scrollback must notify host UI refresh")
+
+        let staleRoute = controller.routeScroll(
+            AlanTerminalScrollInput(deltaX: 0, deltaY: -8, precise: false)
+        )
+        expect(
+            staleRoute == .terminalScroll,
+            "new surfaces without scrollback metrics must not issue stale native row scrolls"
+        )
+        expect(secondHandle.scrollActions.isEmpty, "stale scrollback must not reach the new surface")
+
+        firstHandle.emitScrollbackUpdate(
+            AlanTerminalScrollbackMetrics(
+                totalRows: 400,
+                visibleRows: 50,
+                firstVisibleRow: 200,
+                mode: .normalBuffer
+            )
+        )
+        expect(
+            controller.scrollbackAdapter.state == .empty,
+            "old surface scrollback callbacks must be detached after rebind"
+        )
+        expect(
+            controller.surfaceStateSnapshot.childExited == false,
+            "rebinding to a new surface must clear stale child-exit metadata"
+        )
+        expect(
+            controller.surfaceStateSnapshot.rendererHealth != "failed",
+            "rebinding to a new surface must clear stale renderer failure state"
         )
     }
 
@@ -321,6 +518,36 @@ private final class RecordingTerminalPasteboardWriter: AlanTerminalPasteboardWri
     func writeString(_ text: String) -> Bool {
         string = text
         return true
+    }
+}
+
+private final class RecordingTerminalScrollWheelEvent: NSEvent {
+    private let recordedDeltaX: CGFloat
+    private let recordedDeltaY: CGFloat
+
+    init(deltaX: CGFloat, deltaY: CGFloat) {
+        recordedDeltaX = deltaX
+        recordedDeltaY = deltaY
+        super.init()
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) is not supported")
+    }
+
+    override var scrollingDeltaX: CGFloat { recordedDeltaX }
+    override var scrollingDeltaY: CGFloat { recordedDeltaY }
+    override var hasPreciseScrollingDeltas: Bool { true }
+    override var momentumPhase: NSEvent.Phase { [] }
+}
+
+private final class RecordingTerminalMouseEvent: NSEvent {
+    override init() {
+        super.init()
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) is not supported")
     }
 }
 #endif
