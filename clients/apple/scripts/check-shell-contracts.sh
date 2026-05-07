@@ -181,6 +181,16 @@ require_pattern \
     "terminal host views must be keyed by stable pane identity"
 
 require_pattern \
+    "clients/apple/AlanNative/TerminalPaneView.swift" \
+    "ShellSplitDividerView" \
+    "split panes must use an explicit divider instead of visual spacing gaps"
+
+reject_pattern \
+    "clients/apple/AlanNative/TerminalPaneView.swift" \
+    "splitChildren" \
+    "split panes must not leave a fixed gap between adjacent terminal panes"
+
+require_pattern \
     "clients/apple/AlanNative/TerminalHostView.swift" \
     "hasTornDownRuntime" \
     "terminal teardown must be idempotent"

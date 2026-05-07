@@ -435,6 +435,30 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     }
 
     @discardableResult
+    func resizeSplit(splitNodeID: String, ratio: Double) -> Bool {
+        let result: ShellStateMutationResult
+        do {
+            result = try shellState.resizingSplit(splitNodeID, ratio: ratio)
+        } catch {
+            return false
+        }
+        applyMutationResult(result)
+        return true
+    }
+
+    @discardableResult
+    func equalizeSelectedTabSplits() -> Bool {
+        let result: ShellStateMutationResult
+        do {
+            result = try shellState.equalizingSplits(in: selectedTabID)
+        } catch {
+            return false
+        }
+        applyMutationResult(result)
+        return true
+    }
+
+    @discardableResult
     func closeSelectedTab() -> Bool {
         guard let selectedTabID else { return false }
         return closeTab(tabID: selectedTabID) == .closed

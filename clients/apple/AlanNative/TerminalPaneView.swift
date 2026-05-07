@@ -490,23 +490,105 @@ private struct ShellPaneTreeLayoutView: View {
                 )
             }
         case .split:
-            if node.direction == .vertical {
-                HStack(spacing: 10) {
-                    splitChildren
+            ShellSplitLayoutView(node: node, host: host)
+        }
+    }
+}
+
+private struct ShellSplitLayoutView: View {
+    let node: ShellPaneTreeNode
+    @ObservedObject var host: ShellHostController
+    @State private var dragStartRatio: Double?
+
+    private var children: [ShellPaneTreeNode] {
+        node.children ?? []
+    }
+
+    var body: some View {
+        if children.count == 2 {
+            GeometryReader { proxy in
+                if node.direction == .vertical {
+                    HStack(spacing: 0) {
+                        ShellPaneTreeLayoutView(node: children[0], host: host)
+                            .frame(width: primaryLength(total: proxy.size.width))
+                        ShellSplitDividerView(direction: .vertical)
+                            .gesture(resizeGesture(totalLength: proxy.size.width))
+                        ShellPaneTreeLayoutView(node: children[1], host: host)
+                            .frame(width: secondaryLength(total: proxy.size.width))
+                    }
+                } else {
+                    VStack(spacing: 0) {
+                        ShellPaneTreeLayoutView(node: children[0], host: host)
+                            .frame(height: primaryLength(total: proxy.size.height))
+                        ShellSplitDividerView(direction: .horizontal)
+                            .gesture(resizeGesture(totalLength: proxy.size.height))
+                        ShellPaneTreeLayoutView(node: children[1], host: host)
+                            .frame(height: secondaryLength(total: proxy.size.height))
+                    }
                 }
-            } else {
-                VStack(spacing: 10) {
-                    splitChildren
-                }
+            }
+        } else if node.direction == .vertical {
+            HStack(spacing: 0) {
+                indexedChildrenWithDividers
+            }
+        } else {
+            VStack(spacing: 0) {
+                indexedChildrenWithDividers
             }
         }
     }
 
     @ViewBuilder
-    private var splitChildren: some View {
-        ForEach(node.children ?? []) { child in
+    private var indexedChildrenWithDividers: some View {
+        ForEach(Array(children.enumerated()), id: \.element.id) { index, child in
+            if index > 0 {
+                ShellSplitDividerView(direction: node.direction ?? .vertical)
+            }
             ShellPaneTreeLayoutView(node: child, host: host)
         }
+    }
+
+    private var dividerThickness: CGFloat { 1 }
+
+    private func primaryLength(total: CGFloat) -> CGFloat {
+        max((total - dividerThickness) * node.splitRatio, 0)
+    }
+
+    private func secondaryLength(total: CGFloat) -> CGFloat {
+        max(total - dividerThickness - primaryLength(total: total), 0)
+    }
+
+    private func resizeGesture(totalLength: CGFloat) -> some Gesture {
+        DragGesture(minimumDistance: 0)
+            .onChanged { value in
+                if dragStartRatio == nil {
+                    dragStartRatio = node.splitRatio
+                }
+                let delta = node.direction == .vertical
+                    ? value.translation.width
+                    : value.translation.height
+                let usableLength = max(totalLength - dividerThickness, 1)
+                let nextRatio = (dragStartRatio ?? node.splitRatio) + Double(delta / usableLength)
+                _ = host.resizeSplit(splitNodeID: node.nodeID, ratio: nextRatio)
+            }
+            .onEnded { _ in
+                dragStartRatio = nil
+            }
+    }
+}
+
+private struct ShellSplitDividerView: View {
+    let direction: ShellSplitDirection
+
+    var body: some View {
+        Rectangle()
+            .fill(Color.primary.opacity(0.16))
+            .frame(
+                width: direction == .vertical ? 1 : nil,
+                height: direction == .horizontal ? 1 : nil
+            )
+            .contentShape(Rectangle())
+            .help("Resize split")
     }
 }
 
