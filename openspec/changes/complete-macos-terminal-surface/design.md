@@ -144,6 +144,20 @@ surface adapter after runtime ownership is moved behind a stable service.
   scroll action dispatch, alternate-screen scroll routing, selection copy, and
   paste non-delivery.
 
+### 2026-05-06 Terminal Status Metadata Pass
+
+- Extended pane context metadata with renderer health, surface readiness, input
+  readiness, readonly state, and terminal mode so runtime state survives view
+  refreshes and can be consumed outside the debug inspector.
+- Updated runtime projection so terminal title, cwd, bell/attention, process
+  exit, and renderer failure update `ShellPane` viewport/context/attention
+  state, which drives sidebar rows and the compact pane status strip.
+- Added user-facing terminal status summaries that prioritize process exit and
+  renderer failure over generic cwd or activity text while keeping raw renderer
+  details in the existing debug surface.
+- Added focused shell runtime metadata tests for context projection, sidebar
+  status priority, and space attention propagation.
+
 Remaining unsupported Ghostty parity after this pass:
 
 - Alternate-screen and application mouse-mode detection are not yet sourced from

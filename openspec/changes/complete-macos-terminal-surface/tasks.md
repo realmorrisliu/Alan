@@ -9,7 +9,7 @@
 
 - [x] 2.1 Add an AppKit scroll view adapter for terminal scrollback and native scrollbar synchronization.
 - [x] 2.2 Handle alternate-screen and terminal mouse-mode interactions with scroll input.
-- [ ] 2.3 Project renderer health, input readiness, readonly state, and child-exit state into pane metadata.
+- [x] 2.3 Project renderer health, input readiness, readonly state, and child-exit state into pane metadata.
 - [x] 2.4 Add truthful fallback UI for renderer failure, missing surface, input-not-ready, and child-exit states.
 
 ## 3. Input, Selection, Clipboard, And Search
@@ -23,7 +23,7 @@
 ## 4. Shell Integration
 
 - [x] 4.1 Update `TerminalPaneView` and host wrappers to compose the surface controller without adding decorative terminal chrome.
-- [ ] 4.2 Update sidebar/status metadata for title, cwd, bell, attention, process exit, and renderer health.
+- [x] 4.2 Update sidebar/status metadata for title, cwd, bell, attention, process exit, and renderer health.
 - [x] 4.3 Update control-plane text delivery and pane summaries to account for input readiness, child exit, readonly state, and renderer failure.
 - [x] 4.4 Document any Ghostty surface behavior that remains unsupported after this pass.
 

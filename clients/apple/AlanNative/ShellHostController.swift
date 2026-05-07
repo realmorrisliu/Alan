@@ -508,6 +508,10 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
            let pane = pane(paneID: paneID)
         {
             let bootProfile = AlanShellBootProfile.forPane(pane, shellState: shellState)
+            let runtimeProcessExited = projectedProcessExited(
+                metadataProcessExited: runtime.paneMetadata.processExited,
+                surfaceState: runtime.surfaceState
+            ) ?? runtime.paneMetadata.processExited
             let projectedContext = projectedContext(
                 for: pane,
                 bootProfile: bootProfile,
@@ -523,7 +527,12 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
                 let projectedBinding = projectedAlanBinding(
                     for: current,
                     binding: current.alanBinding,
-                    processExited: runtime.paneMetadata.processExited
+                    processExited: runtimeProcessExited
+                )
+                let viewport = projectedViewport(
+                    current: current,
+                    metadata: runtime.paneMetadata,
+                    runtime: runtime
                 )
                 return ShellPane(
                     paneID: current.paneID,
@@ -532,9 +541,14 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
                     launchTarget: current.launchTarget,
                     cwd: current.cwd ?? bootProfile.workingDirectory,
                     process: current.process,
-                    attention: current.attention,
+                    attention: projectedAttention(
+                        metadataAttention: runtime.paneMetadata.attention,
+                        processExited: runtimeProcessExited,
+                        binding: projectedBinding,
+                        surfaceState: runtime.surfaceState
+                    ),
                     context: projectedContext,
-                    viewport: current.viewport,
+                    viewport: viewport,
                     alanBinding: projectedBinding
                 )
             }
@@ -544,6 +558,11 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     func updateTerminalMetadata(_ metadata: TerminalPaneMetadataSnapshot, for paneID: String) {
         guard let pane = pane(paneID: paneID) else { return }
         let bootProfile = AlanShellBootProfile.forPane(pane, shellState: shellState)
+        let runtime = runtime(for: pane.paneID)
+        let metadataProcessExited = projectedProcessExited(
+            metadataProcessExited: metadata.processExited,
+            surfaceState: runtime.surfaceState
+        ) ?? metadata.processExited
         let projectedContext = projectedContext(
             for: pane,
             bootProfile: bootProfile,
@@ -552,7 +571,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
             lastCommandExitCode: metadata.lastCommandExitCode,
             lastMetadataAt: metadata.lastUpdatedAt,
             existing: pane.context,
-            runtime: runtime(for: pane.paneID)
+            runtime: runtime
         )
 
         updatePaneState(
@@ -562,14 +581,12 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
             let projectedBinding = projectedAlanBinding(
                 for: current,
                 binding: current.alanBinding,
-                processExited: metadata.processExited
+                processExited: metadataProcessExited
             )
-            let viewport = ShellViewportSnapshot(
-                title: metadata.title ?? current.viewport?.title,
-                summary: metadata.summary ?? current.viewport?.summary,
-                visibleExcerpt: current.viewport?.visibleExcerpt,
-                lastActivityAt: metadata.lastUpdatedAt.map(Self.iso8601Formatter.string)
-                    ?? current.viewport?.lastActivityAt
+            let viewport = projectedViewport(
+                current: current,
+                metadata: metadata,
+                runtime: runtime
             )
 
             return ShellPane(
@@ -581,8 +598,9 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
                 process: current.process,
                 attention: projectedAttention(
                     metadataAttention: metadata.attention,
-                    processExited: metadata.processExited,
-                    binding: projectedBinding
+                    processExited: metadataProcessExited,
+                    binding: projectedBinding,
+                    surfaceState: runtime.surfaceState
                 ),
                 context: projectedContext,
                 viewport: viewport,
@@ -594,10 +612,15 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     private func applyAlanBinding(_ binding: ShellAlanBinding?, for paneID: String) {
         guard let pane = pane(paneID: paneID) else { return }
         let bootProfile = AlanShellBootProfile.forPane(pane, shellState: shellState)
+        let runtime = runtime(for: pane.paneID)
+        let runtimeProcessExited = projectedProcessExited(
+            metadataProcessExited: runtime.paneMetadata.processExited,
+            surfaceState: runtime.surfaceState
+        ) ?? runtime.paneMetadata.processExited
         let projectedBinding = projectedAlanBinding(
             for: pane,
             binding: binding,
-            processExited: runtime(for: pane.paneID).paneMetadata.processExited
+            processExited: runtimeProcessExited
         )
         let projectedContext = projectedContext(
             for: pane,
@@ -607,7 +630,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
             lastCommandExitCode: pane.context?.lastCommandExitCode,
             lastMetadataAt: nil,
             existing: pane.context,
-            runtime: runtime(for: pane.paneID)
+            runtime: runtime
         )
 
         updatePaneState(paneID: paneID) { current in
@@ -645,6 +668,11 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     private func primeBootContext(for paneID: String) {
         guard let pane = pane(paneID: paneID) else { return }
         let bootProfile = AlanShellBootProfile.forPane(pane, shellState: shellState)
+        let runtime = runtime(for: pane.paneID)
+        let runtimeProcessExited = projectedProcessExited(
+            metadataProcessExited: nil,
+            surfaceState: runtime.surfaceState
+        ) ?? false
         let projectedContext = projectedContext(
             for: pane,
             bootProfile: bootProfile,
@@ -653,14 +681,14 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
             lastCommandExitCode: pane.context?.lastCommandExitCode,
             lastMetadataAt: nil,
             existing: pane.context,
-            runtime: runtime(for: pane.paneID)
+            runtime: runtime
         )
 
         updatePaneState(paneID: paneID) { current in
             let projectedBinding = projectedAlanBinding(
                 for: current,
                 binding: current.alanBinding,
-                processExited: false
+                processExited: runtimeProcessExited
             )
             return ShellPane(
                 paneID: current.paneID,
@@ -1086,13 +1114,91 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     private func projectedAttention(
         metadataAttention: ShellAttentionState,
         processExited: Bool,
-        binding: ShellAlanBinding?
+        binding: ShellAlanBinding?,
+        surfaceState: AlanTerminalSurfaceStateSnapshot? = nil
     ) -> ShellAttentionState {
-        if binding?.pendingYield == true || processExited {
+        if binding?.pendingYield == true || processExited || surfaceState?.childExited == true {
             return .awaitingUser
         }
 
+        if surfaceState?.rendererHealth == "failed"
+            || surfaceState?.readiness == .unready(reason: .rendererFailed)
+        {
+            return .notable
+        }
+
         return metadataAttention
+    }
+
+    private func projectedViewport(
+        current: ShellPane,
+        metadata: TerminalPaneMetadataSnapshot,
+        runtime: TerminalHostRuntimeSnapshot
+    ) -> ShellViewportSnapshot {
+        ShellViewportSnapshot(
+            title: metadata.title ?? current.viewport?.title,
+            summary: projectedViewportSummary(
+                metadata: metadata,
+                runtime: runtime,
+                fallback: current.viewport?.summary
+            ),
+            visibleExcerpt: current.viewport?.visibleExcerpt,
+            lastActivityAt: metadata.lastUpdatedAt.map(Self.iso8601Formatter.string)
+                ?? current.viewport?.lastActivityAt
+                ?? Self.iso8601Formatter.string(from: runtime.lastUpdatedAt)
+        )
+    }
+
+    private func projectedViewportSummary(
+        metadata: TerminalPaneMetadataSnapshot,
+        runtime: TerminalHostRuntimeSnapshot,
+        fallback: String?
+    ) -> String? {
+        if metadata.processExited || runtime.surfaceState.childExited {
+            if let exitCode = metadata.lastCommandExitCode {
+                return "Exited \(exitCode)"
+            }
+            return "Exited"
+        }
+
+        if runtime.surfaceState.rendererHealth == "failed"
+            || runtime.renderer.phase == .failed
+            || runtime.surfaceState.readiness == .unready(reason: .rendererFailed)
+        {
+            return "Renderer failed"
+        }
+
+        if runtime.surfaceState.readonly {
+            return "Read-only"
+        }
+
+        if runtime.surfaceState.inputReady == false,
+           runtime.surfaceState.readiness == .unready(reason: .inputNotReady)
+        {
+            return "Starting"
+        }
+
+        return metadata.summary ?? fallback
+    }
+
+    private func surfaceReadinessValue(_ readiness: AlanTerminalSurfaceReadiness) -> String {
+        switch readiness {
+        case .ready:
+            return "ready"
+        case .unready(let reason):
+            return reason.rawValue
+        }
+    }
+
+    private func projectedProcessExited(
+        metadataProcessExited: Bool?,
+        surfaceState: AlanTerminalSurfaceStateSnapshot?
+    ) -> Bool? {
+        if metadataProcessExited == true || surfaceState?.childExited == true {
+            return true
+        }
+
+        return metadataProcessExited ?? surfaceState?.childExited
     }
 
     private func projectedContext(
@@ -1107,6 +1213,10 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     ) -> ShellContextSnapshot {
         let resolvedWorkingDirectory = workingDirectory ?? pane.cwd ?? bootProfile.workingDirectory
         let repositoryContext = repositoryContext(for: resolvedWorkingDirectory)
+        let projectedProcessExited = projectedProcessExited(
+            metadataProcessExited: processExited,
+            surfaceState: runtime?.surfaceState
+        )
 
         return ShellContextSnapshot(
             workingDirectoryName: workingDirectoryName(for: resolvedWorkingDirectory)
@@ -1120,8 +1230,17 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
             launchCommand: bootProfile.launchCommandString,
             launchStrategy: bootProfile.command.strategy.rawValue,
             shellIntegrationSource: "ghostty_shell_integration",
-            processState: processExited.map { $0 ? "exited" : "running" } ?? existing?.processState,
+            processState: projectedProcessExited.map { $0 ? "exited" : "running" }
+                ?? existing?.processState,
             rendererPhase: runtime?.renderer.phase.rawValue ?? existing?.rendererPhase,
+            rendererHealth: runtime?.surfaceState.rendererHealth
+                ?? runtime?.renderer.phase.rawValue
+                ?? existing?.rendererHealth,
+            surfaceReadiness: runtime.map { surfaceReadinessValue($0.surfaceState.readiness) }
+                ?? existing?.surfaceReadiness,
+            inputReady: runtime?.surfaceState.inputReady ?? existing?.inputReady,
+            readonly: runtime?.surfaceState.readonly ?? existing?.readonly,
+            terminalMode: runtime?.surfaceState.terminalMode.rawValue ?? existing?.terminalMode,
             displayName: runtime?.displayName ?? existing?.displayName,
             displayID: runtime?.displayID ?? existing?.displayID,
             windowTitle: runtime?.attachedWindowTitle ?? existing?.windowTitle,

@@ -121,6 +121,16 @@ require_pattern \
     "surface controller tests must prove copy and paste use controller-owned clipboard paths"
 
 require_pattern \
+    "clients/apple/scripts/test-shell-runtime-metadata.swift" \
+    "verifiesRuntimeProjectsTerminalStatusIntoPaneMetadata" \
+    "shell runtime tests must prove terminal status projects into pane metadata"
+
+require_pattern \
+    "clients/apple/scripts/test-shell-runtime-metadata.swift" \
+    "verifiesTerminalStatusSummaryPrioritizesExitAndRendererHealth" \
+    "shell runtime tests must prove sidebar status prioritizes exit and renderer health"
+
+require_pattern \
     "clients/apple/scripts/test-terminal-surface-controller.sh" \
     "TerminalSurfaceController.swift" \
     "surface controller behavior tests must compile the controller boundary"
