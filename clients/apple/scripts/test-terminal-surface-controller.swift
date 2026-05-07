@@ -23,6 +23,7 @@ private enum TerminalSurfaceControllerTests {
         verifiesPaneScopedSearchState()
         verifiesSearchActionsReachSurfaceEngine()
         verifiesScrollbackActionsReachSurfaceEngine()
+        verifiesBindClearsStaleScrollbackState()
         verifiesSurfaceSnapshotEqualityIgnoresTimestamp()
         verifiesClipboardDeliveryStates()
         verifiesSelectionCopyAndPasteUseController()
@@ -320,6 +321,86 @@ private enum TerminalSurfaceControllerTests {
         expect(
             mouseReportingRoute == .terminalScroll,
             "terminal mouse-reporting scroll input must stay routed to the terminal app"
+        )
+    }
+
+    private static func verifiesBindClearsStaleScrollbackState() {
+        let firstHandle = FakeAlanTerminalSurfaceHandle(paneID: "pane_1")
+        let secondHandle = FakeAlanTerminalSurfaceHandle(paneID: "pane_2")
+        let controller = AlanTerminalSurfaceController()
+        var stateChangeCount = 0
+        controller.onSurfaceStateChange = {
+            stateChangeCount += 1
+        }
+        controller.bind(surfaceHandle: firstHandle, paneID: "pane_1")
+        firstHandle.emitScrollbackUpdate(
+            AlanTerminalScrollbackMetrics(
+                totalRows: 220,
+                visibleRows: 40,
+                firstVisibleRow: 120,
+                mode: .normalBuffer
+            )
+        )
+
+        expect(controller.scrollbackAdapter.state.nativeScrollbarVisible, "first surface must expose scrollback")
+        expect(stateChangeCount == 1, "first surface scrollback update must notify once")
+        controller.updateMetadata(
+            TerminalPaneMetadataSnapshot(
+                title: "old pane",
+                workingDirectory: "/tmp/old",
+                summary: "exited",
+                attention: .idle,
+                processExited: true,
+                lastCommandExitCode: 1,
+                lastUpdatedAt: .now
+            )
+        )
+        controller.updateRenderer(
+            TerminalRendererSnapshot(
+                kind: .ghosttyLive,
+                phase: .failed,
+                summary: "old renderer failed",
+                detail: nil,
+                failureReason: "old surface failed",
+                recentEvents: []
+            )
+        )
+
+        controller.bind(surfaceHandle: secondHandle, paneID: "pane_2")
+        expect(
+            controller.scrollbackAdapter.state == .empty,
+            "rebinding to a new surface must clear stale scrollback"
+        )
+        expect(stateChangeCount == 2, "clearing stale scrollback must notify host UI refresh")
+
+        let staleRoute = controller.routeScroll(
+            AlanTerminalScrollInput(deltaX: 0, deltaY: -8, precise: false)
+        )
+        expect(
+            staleRoute == .terminalScroll,
+            "new surfaces without scrollback metrics must not issue stale native row scrolls"
+        )
+        expect(secondHandle.scrollActions.isEmpty, "stale scrollback must not reach the new surface")
+
+        firstHandle.emitScrollbackUpdate(
+            AlanTerminalScrollbackMetrics(
+                totalRows: 400,
+                visibleRows: 50,
+                firstVisibleRow: 200,
+                mode: .normalBuffer
+            )
+        )
+        expect(
+            controller.scrollbackAdapter.state == .empty,
+            "old surface scrollback callbacks must be detached after rebind"
+        )
+        expect(
+            controller.surfaceStateSnapshot.childExited == false,
+            "rebinding to a new surface must clear stale child-exit metadata"
+        )
+        expect(
+            controller.surfaceStateSnapshot.rendererHealth != "failed",
+            "rebinding to a new surface must clear stale renderer failure state"
         )
     }
 
