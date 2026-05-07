@@ -15,8 +15,11 @@ user-facing terminal state.
 - Complete keyboard, IME/preedit, key-equivalent, mouse, pressure, paste, copy,
   selection, and right-click behavior against Ghostty surface APIs.
 - Surface terminal title, cwd, bell, progress, child-exit, renderer health,
-  secure-input, cursor, URL hover, search, and readonly state into Alan's pane
+  cursor, search, readonly state, and supported input readiness into Alan's pane
   metadata and UI.
+- Document deferred Ghostty parity gaps for live secure-input callbacks, URL
+  hover callbacks, and a dedicated bracketed-paste API instead of treating them
+  as accepted requirements.
 - Keep implementation details hidden from the default UI while exposing
   diagnostics in the inspector debug layer.
 - Define failure and fallback states so Alan never presents a fake usable
@@ -50,5 +53,6 @@ user-facing terminal state.
   opening debug views.
 - Runtime metadata: pane/title/cwd/attention/process fields become driven by
   richer terminal surface events.
-- Verification: requires app-level manual tests for IME, selection, scrollback,
-  right-click, search, process exit, and renderer failure/fallback states.
+- Verification: requires app-level manual tests plus focused fake-surface tests
+  for IME, selection, scrollback, right-click, search, process exit, and
+  renderer failure/fallback states.

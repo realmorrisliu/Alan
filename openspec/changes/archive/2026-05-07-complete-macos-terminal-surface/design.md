@@ -20,7 +20,10 @@ surface adapter after runtime ownership is moved behind a stable service.
 - Complete keyboard, key-equivalent, modifier, IME/preedit, mouse, scroll,
   pressure, paste, copy, selection, and context-menu behavior.
 - Project terminal title, cwd, bell, progress, child exit, renderer health,
-  secure-input, URL hover, search, readonly, and input readiness into pane state.
+  search, readonly, and input readiness into pane state where Ghostty exposes
+  the needed surface callbacks.
+- Document unsupported live secure-input callbacks, URL hover callbacks, and
+  dedicated bracketed-paste delivery as deferred parity gaps.
 - Present terminal failures and overlays as user-facing terminal state, with raw
   diagnostics only in the inspector debug layer.
 
@@ -67,8 +70,8 @@ surface adapter after runtime ownership is moved behind a stable service.
 4. Treat terminal overlays as terminal state, not debug UI.
 
    Search, copy/selection feedback, child-exit, renderer failure, readonly, and
-   secure-input states are visible when they affect terminal use. Raw pane IDs,
-   callback names, runtime phases, and Ghostty internals stay in Debug.
+   input-readiness states are visible when they affect terminal use. Raw pane
+   IDs, callback names, runtime phases, and Ghostty internals stay in Debug.
 
    Alternative considered: put all terminal state in the inspector. That keeps
    the canvas clean but leaves users without actionable feedback when terminal

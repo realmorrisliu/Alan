@@ -2,8 +2,8 @@
 
 ### Requirement: Surface readiness is lifecycle metadata
 The macOS shell host SHALL track surface readiness, input readiness, renderer
-health, child process status, readonly state, secure-input state, and terminal
-mode as runtime metadata associated with stable pane IDs.
+health, child process status, readonly state, and terminal mode as runtime
+metadata associated with stable pane IDs.
 
 #### Scenario: Surface becomes input ready
 - **WHEN** a pane surface finishes creation and can accept terminal input
