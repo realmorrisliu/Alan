@@ -1,26 +1,30 @@
 ## ADDED Requirements
 
-### Requirement: Split mutations preserve live runtimes
+### Requirement: Split workspace mutations preserve live runtimes
 The macOS shell host SHALL preserve pane runtime identity across split resize,
-equalize, zoom, focus, and move operations unless the operation explicitly
-closes the pane or tab.
+equalize, focus, pane lift, and cross-tab pane move operations unless the
+operation explicitly closes the pane or tab.
 
 #### Scenario: Resize split
 - **WHEN** the user resizes a split divider
 - **THEN** all panes in the tab keep their existing runtime handles and metadata
 
-#### Scenario: Zoom split
-- **WHEN** the user zooms and unzooms a pane
-- **THEN** sibling panes remain alive in the runtime service and reattach when visible
+#### Scenario: Equalize splits
+- **WHEN** the user equalizes splits in a tab
+- **THEN** all panes in the tab keep their existing runtime handles and metadata
 
-#### Scenario: Move pane
-- **WHEN** the user moves a pane to another position or tab within the same window
+#### Scenario: Lift pane
+- **WHEN** the user lifts a pane to its own tab
 - **THEN** the pane keeps its runtime handle, scrollback, title, cwd, and pending delivery state
 
-### Requirement: Close operations define runtime finalization
+#### Scenario: Move pane to another tab
+- **WHEN** the user moves a pane to another tab within the same window
+- **THEN** the pane keeps its runtime handle, scrollback, title, cwd, and pending delivery state
+
+### Requirement: Split close operations define runtime finalization
 The macOS shell host SHALL define explicit terminal runtime finalization
-semantics for close pane, close tab, close window, and move operations that
-empty containers.
+semantics for close pane, close tab, close window, pane lift, and pane move
+operations that empty containers.
 
 #### Scenario: Close focused pane
 - **WHEN** the user invokes close pane

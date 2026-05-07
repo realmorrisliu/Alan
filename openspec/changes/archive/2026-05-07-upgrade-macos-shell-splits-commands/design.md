@@ -2,15 +2,15 @@
 
 Alan already has a shell model for spaces, tabs, panes, and split trees. The UI
 direction is also clear: Arc-like spaces and tabs in a material sidebar with the
-terminal as the center of gravity. What is missing is mature native terminal
-workspace behavior: resizable split ratios, spatial focus, pane movement, split
-zoom, command routing, menu bar integration, and restrained toolbar/window
-behavior.
+terminal as the center of gravity. This change captures the first completed
+native workspace layer from #355: durable split ratios, resize dividers,
+directional splits, spatial focus, equalize and close commands, pane lift or
+cross-tab move, menu/keyboard routing, and a restrained command UI.
 
 Ghostty provides a strong reference for terminal window interactions, but Alan
 must preserve its own space/tab model and agent control plane. This change turns
-Alan's shell model into a real native terminal workspace rather than a static
-split renderer.
+Alan's shell model into an interactive split workspace rather than a static
+split renderer, while leaving zoom and drag/drop movement to later work.
 
 ## Goals / Non-Goals
 
@@ -18,14 +18,14 @@ split renderer.
 
 - Replace equal recursive split layout behavior with ratio-based split nodes and
   stable structural identity.
-- Add resize, equalize, zoom, spatial focus, and pane move operations that
-  preserve terminal runtime identity when panes remain alive.
-- Promote common terminal workspace actions into native menu and keyboard
-  command surfaces.
+- Add resize, equalize, spatial focus, close, pane lift, and cross-tab pane move
+  operations that preserve terminal runtime identity when panes remain alive.
+- Promote common terminal workspace actions into native menu, keyboard, and
+  command UI surfaces.
 - Keep the toolbar restrained and native, with the command entry point and
   frequent actions only.
-- Extend the control plane with authoritative results for split/focus/move/close
-  operations that agents need.
+- Extend the control plane with authoritative results and events for split,
+  focus, lift, move, and close operations that agents need.
 
 **Non-Goals:**
 
@@ -34,6 +34,9 @@ split renderer.
 - Add App Intents or Shortcuts integration. That belongs to
   `add-macos-shell-automation-tests`.
 - Change Alan's brand direction into Ghostty's exact UI.
+- Add split zoom/unzoom, drag/drop movement, arbitrary in-tab pane movement,
+  control-plane resize/equalize/zoom commands, or complete copy/paste/search
+  command ownership.
 
 ## Decisions
 
@@ -47,31 +50,33 @@ split renderer.
    Alternative considered: derive ratios from view geometry only. That would
    make split state non-durable and impossible for the control plane to inspect.
 
-2. Add a split layout controller separate from the terminal runtime service.
+2. Route split layout mutations through the shell controller while keeping
+   runtime ownership separate.
 
-   The split controller mutates the shell model, validates geometry constraints,
-   and coordinates focus/zoom/move actions. The runtime service owns pane
-   lifetimes; the split controller only tells it when panes are closed or moved.
+   The shell controller mutates the shell model, validates geometry constraints,
+   and coordinates split, resize, equalize, focus, lift, move, and close actions.
+   The runtime service owns pane lifetimes; controller actions only finalize
+   runtimes when panes or tabs are actually closed.
 
    Alternative considered: let each split view mutate local state. That makes
    keyboard commands, menu commands, and control-plane operations diverge.
 
 3. Route workspace commands through the responder chain and shell controller.
 
-   Native menu items, command palette actions, toolbar buttons, context menus,
-   and keyboard shortcuts all call the same command functions. The focused pane
-   and selected tab determine the target.
+   Native menu items, command palette actions, toolbar buttons, and keyboard
+   shortcuts all call the same command functions. The focused pane and selected
+   tab determine the target.
 
    Alternative considered: keep hidden SwiftUI buttons for shortcuts. That is
    quick but not robust enough for a Mac terminal-grade app.
 
-4. Preserve pane runtime identity across movement and zoom.
+4. Preserve pane runtime identity across resize, focus, lift, and cross-tab move.
 
-   Moving a pane changes its position in the split tree, not its pane ID or
-   runtime handle. Zoom hides sibling layout temporarily without closing their
-   terminal surfaces.
+   Lifting a pane to a tab or moving it across tabs changes model placement, not
+   its pane ID or runtime handle. Resize, equalize, and focus are layout/focus
+   mutations only and do not restart terminal runtimes.
 
-   Alternative considered: rebuild panes during moves or zoom. That would lose
+   Alternative considered: rebuild panes during moves. That would lose
    scrollback/process continuity and violate the terminal lifecycle contract.
 
 5. Keep window chrome quiet.
@@ -87,10 +92,11 @@ split renderer.
 - Keyboard shortcuts can conflict with terminal apps -> Route command-key
   shortcuts through native command handling and leave non-command terminal keys
   to the terminal surface adapter.
-- Split zoom can confuse control-plane focus -> Treat zoom as view state tied to
-  the tab and keep pane runtime state unchanged.
-- Drag/drop pane movement may be hard to perfect -> Support explicit move
-  commands first if drag/drop quality is not ready.
+- Split seams can be either too visually loud or too subtle -> Use a subtle
+  two-pixel seam plus preference-backed inactive-pane dimming instead of
+  per-pane cards or fixed gaps.
+- Drag/drop and arbitrary in-tab movement are larger interaction surfaces ->
+  Keep this archive to pane lift and cross-tab move semantics already merged.
 - Native app tabbing can conflict with Alan tabs -> Disable or scope native
   tabbing where Alan's custom tabs own organization.
 
@@ -103,7 +109,7 @@ split renderer.
 3. Replace recursive equal layout rendering with a ratio-aware split view and
    native dividers.
 4. Add command/menu/keyboard routing for the same controller actions.
-5. Add pane movement, zoom, equalize, and control-plane results.
+5. Add pane lift, cross-tab move, equalize, and control-plane results/events.
 6. Verify single-pane, multi-pane, command UI, menu shortcuts, and inspector-off
    screenshots.
 
@@ -113,5 +119,5 @@ split renderer.
   apps beyond standard command-key commands?
 - Should split zoom persist per tab across app restart or remain a transient
   window interaction?
-- How much pane drag/drop is necessary for the first version if explicit move
-  commands are reliable?
+- How much pane drag/drop or arbitrary in-tab pane movement is necessary beyond
+  pane lift and cross-tab move?

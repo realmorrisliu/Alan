@@ -21,26 +21,27 @@ card grid or debug layout.
 - **WHEN** a split pane is not the active terminal pane
 - **THEN** Alan may apply a preference-backed lightweight dim treatment that preserves terminal readability and pointer input while making the active pane and split boundary easier to scan
 
-### Requirement: Command UI owns navigation and actions
-The default command entry SHALL present tabs, panes, spaces, and workspace
-actions through `Go to or Command...` using user-facing labels and compact rows.
+### Requirement: Command UI owns navigation and shell actions
+The default command entry SHALL present tabs, panes, spaces, routing candidates,
+attention items, and common shell workspace actions through `Go to or Command...`
+using user-facing labels and compact rows.
 
 #### Scenario: Command results include panes
 - **WHEN** command search lists pane targets
-- **THEN** results use tab title, pane title, cwd, or process context as the primary label rather than raw pane IDs
+- **THEN** results use tab title, pane title, cwd, process context, or routing context as the primary label rather than raw pane IDs
 
 #### Scenario: Command result invokes split action
-- **WHEN** the user selects a split, focus, zoom, or move action from command UI
-- **THEN** Alan runs the same shell controller mutation used by menu and keyboard paths
+- **WHEN** the user selects a split, focus, equalize, close, or pane lift action from command UI
+- **THEN** Alan runs the same shell controller mutation used by menu and keyboard paths where that action is shared
 
-### Requirement: Toolbar stays restrained during advanced interactions
-Advanced split, focus, resize, move, and zoom affordances SHALL not turn the
-toolbar into a dense control strip.
+### Requirement: Toolbar stays restrained during split interactions
+Advanced split, focus, resize, equalize, close, and pane lift affordances SHALL
+not turn the toolbar into a dense control strip.
 
-#### Scenario: Pane zoomed
-- **WHEN** a pane is zoomed
-- **THEN** the UI provides a compact way to exit zoom while preserving the native toolbar contract
-
-#### Scenario: Pane movement available
-- **WHEN** pane movement commands are available
+#### Scenario: Multiple panes visible
+- **WHEN** a tab contains multiple panes
 - **THEN** the default toolbar remains focused on current tab context, command entry, frequent actions, and inspector toggle
+
+#### Scenario: Pane lift available
+- **WHEN** pane lift is available through command UI or another explicit non-terminal affordance
+- **THEN** the default toolbar does not add a persistent pane-management strip
