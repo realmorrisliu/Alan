@@ -2,7 +2,7 @@
 
 ### Requirement: Account-bound device enrollment
 Alan SHALL bind each remote-capable Mac and iPhone app installation to an Alan
-account and a stable device identity before allowing Remote Workspace access.
+account and a stable device identity before allowing Alan Anywhere access.
 
 #### Scenario: Mac enrolls after account login
 - **WHEN** a user signs in to Alan Desktop on macOS
@@ -20,7 +20,7 @@ account and a stable device identity before allowing Remote Workspace access.
 
 ### Requirement: Automatic Mac remote availability
 Alan Desktop SHALL automatically keep the signed-in Mac remotely connectable
-while the app is running and the user has not disabled Remote Workspace.
+while the app is running and the user has not disabled Alan Anywhere.
 
 #### Scenario: Desktop starts while signed in
 - **WHEN** Alan Desktop starts with a valid signed-in account and device binding
@@ -41,7 +41,7 @@ Alan SHALL let a signed-in iPhone discover the user's own online Alan Desktop
 devices without exposing relay or tunnel implementation details.
 
 #### Scenario: iPhone lists available Macs
-- **WHEN** the iPhone app requests Remote Workspace devices for the signed-in
+- **WHEN** the iPhone app requests Alan Anywhere devices for the signed-in
   account
 - **THEN** the response includes only devices owned by that account
 - **AND** each device includes product-facing status such as online/offline,
@@ -55,31 +55,32 @@ devices without exposing relay or tunnel implementation details.
 - **AND** the iPhone MUST NOT offer state-advancing actions against that Mac
   until it reconnects
 
-### Requirement: Workspace and agent status discovery
-Alan SHALL expose enough Mac-authored workspace and session status for iPhone
-users to choose what to continue remotely.
+### Requirement: Session and work-context status discovery
+Alan SHALL expose enough Mac-authored session and work-context status for
+iPhone users to choose what to continue remotely.
 
-#### Scenario: Mac publishes connectable workspace status
+#### Scenario: Mac publishes connectable work status
 - **WHEN** Alan Desktop is online
-- **THEN** it publishes connectable workspace status for the signed-in user
-- **AND** status includes whether a workspace is connectable and whether an
+- **THEN** it publishes connectable work status for the signed-in user
+- **AND** status includes whether a local context is connectable and whether an
   agent/session is currently active
-- **AND** the Mac remains the authority for workspace identity and session
+- **AND** the Mac remains the authority for local context identity and session
   liveness
 
-#### Scenario: iPhone chooses a workspace
+#### Scenario: iPhone chooses what to continue
 - **WHEN** the iPhone user selects an online Mac
-- **THEN** the iPhone can list or select the Mac-authored connectable
-  workspaces/sessions
+- **THEN** the iPhone can list or select the Mac-authored connectable sessions
+  or work contexts
 - **AND** the UI presents the action as continuing work on another Alan device
   rather than connecting to infrastructure
 
 ### Requirement: Remote session control
-Alan SHALL allow iPhone to continue a Mac workspace/session by sending normal
-Alan control operations to the Mac through the remote service.
+Alan SHALL allow iPhone to continue a Mac session or work context by sending
+normal Alan control operations to the Mac through the remote service.
 
 #### Scenario: iPhone sends a message
-- **WHEN** the iPhone user sends a message to a remote workspace/session
+- **WHEN** the iPhone user sends a message to a Mac session or work context through
+  Alan Anywhere
 - **THEN** the request is routed to the selected Mac
 - **AND** the Mac validates authorization and applies the operation through the
   same session/runtime path used by local clients
@@ -132,7 +133,7 @@ changes, and relay reconnects without duplicating execution.
   before continuing event consumption
 
 ### Requirement: Node-authoritative execution boundary
-Alan SHALL keep remote workspace execution, tool access, governance, and local
+Alan SHALL keep Alan Anywhere execution, tool access, governance, and local
 workspace reads authoritative on the user's Mac.
 
 #### Scenario: Cloud receives a state-changing remote request
@@ -150,11 +151,11 @@ workspace reads authoritative on the user's Mac.
 - **AND** no runtime state is advanced
 
 ### Requirement: Remote access security and revocation
-Alan SHALL protect Remote Workspace with encrypted transport, device binding,
+Alan SHALL protect Alan Anywhere with encrypted transport, device binding,
 scoped short-lived authorization, and revocation.
 
 #### Scenario: Remote connection is established
-- **WHEN** iPhone connects to a Mac through Alan Remote Workspace
+- **WHEN** iPhone connects to a Mac through Alan Anywhere
 - **THEN** the connection uses encrypted transport
 - **AND** access tokens are scoped to the signed-in account, client device,
   target Mac device, selected workspace/session, and permitted operations
@@ -166,12 +167,12 @@ scoped short-lived authorization, and revocation.
   rejected before additional state-changing operations are accepted
 
 ### Requirement: Zero-configuration product language
-Alan SHALL present Remote Workspace as device-to-device workspace continuation,
-not as remote desktop or user-managed networking.
+Alan SHALL present Alan Anywhere as device-to-device Alan continuation, not as
+remote desktop or user-managed networking.
 
-#### Scenario: User opens Remote Workspace on iPhone
-- **WHEN** the iPhone user opens the remote workspace surface
-- **THEN** the primary UI language describes online Alan devices, workspaces,
+#### Scenario: User opens Alan Anywhere on iPhone
+- **WHEN** the iPhone user opens the Alan Anywhere surface
+- **THEN** the primary UI language describes online Alan devices, current work,
   sessions, runs, messages, and approvals
 - **AND** it does not require or foreground VPN, tunnel, Cloudflare, SSH, port
   mapping, router configuration, public IP, or daemon URL concepts

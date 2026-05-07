@@ -1,26 +1,26 @@
 ## OpenSpec
 
 - Tracking issue: `#349`
-- Change: `add-remote-workspace-mvp`
-- Proposal: `openspec/changes/add-remote-workspace-mvp/proposal.md`
-- Design: `openspec/changes/add-remote-workspace-mvp/design.md`
+- Change: `add-alan-anywhere-mvp`
+- Proposal: `openspec/changes/add-alan-anywhere-mvp/proposal.md`
+- Design: `openspec/changes/add-alan-anywhere-mvp/design.md`
 - Requirements:
-  - `openspec/changes/add-remote-workspace-mvp/specs/remote-workspace-access/spec.md`
-  - `openspec/changes/add-remote-workspace-mvp/specs/daemon-api-contract/spec.md`
-- Tasks: `openspec/changes/add-remote-workspace-mvp/tasks.md`
+  - `openspec/changes/add-alan-anywhere-mvp/specs/alan-anywhere/spec.md`
+  - `openspec/changes/add-alan-anywhere-mvp/specs/daemon-api-contract/spec.md`
+- Tasks: `openspec/changes/add-alan-anywhere-mvp/tasks.md`
 
 ## Summary
 
-Define and implement Alan Remote Workspace MVP: a signed-in Mac automatically
+Define and implement Alan Anywhere MVP: a signed-in Mac automatically
 becomes remotely connectable, and a signed-in iPhone using the same account can
-discover that Mac, choose a workspace/session, stream events, send messages,
+discover that Mac, choose a session or work context, stream events, send messages,
 interrupt execution, resume pending yields, and recover after reconnect without
 requiring public IPs, router setup, VPNs, tunnels, SSH, daemon URLs, or port
 forwarding.
 
 The user-facing product framing is:
 
-> Your Alan is continuing work on another device.
+> Alan, anywhere you need to continue.
 
 Not:
 
@@ -30,7 +30,7 @@ Not:
 
 - Account-bound Mac/iPhone device enrollment.
 - Automatic Desktop remote availability over outbound encrypted relay.
-- iPhone device/workspace/session discovery.
+- iPhone device/session/work-context discovery.
 - Realtime remote event streaming plus `events/read` and reconnect snapshot
   recovery.
 - Remote message submit, interrupt, and yield resume.
@@ -49,7 +49,7 @@ Not:
 
 ## Issue Cleanup
 
-- Close `#9` as superseded by `#349`, this OpenSpec-backed Remote Workspace MVP issue.
+- Close `#9` as superseded by `#349`, this OpenSpec-backed Alan Anywhere MVP issue.
   The lower-level Agent Node / Relay / Client architecture remains the
   transport foundation, but this issue becomes the product contract.
 - Keep `#75` open as the iOS task-manager/product IA follow-up. It should
@@ -60,6 +60,6 @@ Not:
 
 ## Verification
 
-- `openspec validate add-remote-workspace-mvp --type change --strict --json`
+- `openspec validate add-alan-anywhere-mvp --type change --strict --json`
 - `openspec validate --all --strict --json`
 - `git diff --check`
