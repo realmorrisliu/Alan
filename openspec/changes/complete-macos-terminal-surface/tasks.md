@@ -33,11 +33,11 @@
 - [x] 5.2 Run `git diff --check`.
 - [x] 5.3 Run `bash clients/apple/scripts/check-shell-contracts.sh`.
 - [x] 5.4 Build the macOS app with the documented `AlanNative` command.
-- [ ] 5.5 Manually verify shell scrollback, alternate-screen scrolling, selection/copy, paste, right-click, IME composition, terminal mouse apps, search, child exit, and renderer/fallback state.
+- [ ] 5.5 Manually verify shell scrollback, alternate-screen scrolling, selection/copy, paste, right-click, IME composition, terminal mouse apps, search, child exit, and renderer/fallback state. Remaining live-app evidence is needed for selection/copy, paste, IME composition, child exit, and renderer/fallback state.
 
 ## 6. PR And Archive Readiness
 
 - [x] 6.1 Attach screenshot or manual verification notes for terminal overlays and inspector debug separation.
 - [x] 6.2 Review the diff for duplicate event forwarding or conflicting responder-chain ownership.
-- [ ] 6.3 Before archive, sync accepted delta requirements into `openspec/specs/`.
+- [ ] 6.3 Before archive, remove or split deferred delta requirements for live secure-input callbacks, URL hover, and dedicated bracketed paste, then sync accepted delta requirements into `openspec/specs/`.
 - [ ] 6.4 Archive the OpenSpec change after implementation is merged.

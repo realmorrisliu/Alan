@@ -188,6 +188,8 @@ Remaining unsupported Ghostty parity after this pass:
 
 Manual verification notes:
 
+- Full notes are captured in
+  `openspec/changes/complete-macos-terminal-surface/manual-verification.md`.
 - Built and launched the Debug `Alan.app`.
 - Verified a real shell prompt accepts input and prints command output.
 - Verified `Command-F` opens the terminal search overlay.
