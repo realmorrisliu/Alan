@@ -15,6 +15,7 @@ struct ShellRuntimeMetadataTestRunner {
 private enum ShellRuntimeMetadataTests {
     static func run() {
         verifiesRuntimeProjectsTerminalStatusIntoPaneMetadata()
+        verifiesSurfaceExitOverridesRunningMetadata()
         verifiesTerminalStatusSummaryPrioritizesExitAndRendererHealth()
         print("Shell runtime metadata tests passed.")
     }
@@ -78,6 +79,65 @@ private enum ShellRuntimeMetadataTests {
         expect(updated?.viewport?.summary == "Renderer failed", "pane viewport must expose renderer status")
         expect(updated?.attention == .notable, "pane attention must reflect terminal attention")
         expect(controller.shellState.spaces.first?.attention == .notable, "space attention must track pane attention")
+    }
+
+    private static func verifiesSurfaceExitOverridesRunningMetadata() {
+        let controller = makeController()
+        guard let pane = controller.selectedPane else {
+            fail("bootstrap shell must expose a selected pane")
+        }
+
+        controller.updateTerminalRuntime(
+            TerminalHostRuntimeSnapshot(
+                stage: .windowAttached,
+                paneID: pane.paneID,
+                tabID: pane.tabID,
+                logicalSize: .zero,
+                backingSize: .zero,
+                displayName: "Studio Display",
+                displayID: "display_1",
+                attachedWindowTitle: "Alan",
+                isFocused: false,
+                renderer: TerminalRendererSnapshot(
+                    kind: .ghosttyLive,
+                    phase: .surfaceReady,
+                    summary: "surface ready",
+                    detail: nil,
+                    failureReason: nil,
+                    recentEvents: []
+                ),
+                paneMetadata: TerminalPaneMetadataSnapshot(
+                    title: "fish",
+                    workingDirectory: "/Users/morris/Developer/Alan",
+                    summary: "terminal rendering",
+                    attention: .idle,
+                    processExited: false,
+                    lastCommandExitCode: 7,
+                    lastUpdatedAt: Date(timeIntervalSince1970: 2_000)
+                ),
+                surfaceState: AlanTerminalSurfaceStateSnapshot(
+                    readiness: .unready(reason: .childExited),
+                    terminalMode: .normalBuffer,
+                    scrollback: .empty,
+                    search: nil,
+                    readonly: false,
+                    secureInput: false,
+                    inputReady: false,
+                    rendererHealth: "surface_ready",
+                    childExited: true,
+                    lastUpdatedAt: Date(timeIntervalSince1970: 2_001)
+                ),
+                lastUpdatedAt: Date(timeIntervalSince1970: 2_002)
+            )
+        )
+
+        let updated = controller.shellState.panes.first { $0.paneID == pane.paneID }
+        expect(
+            updated?.context?.processState == "exited",
+            "surface child exit must override running metadata in pane context"
+        )
+        expect(updated?.viewport?.summary == "Exited 7", "surface child exit must drive viewport status")
+        expect(updated?.attention == .awaitingUser, "surface child exit must drive pane attention")
     }
 
     private static func verifiesTerminalStatusSummaryPrioritizesExitAndRendererHealth() {
