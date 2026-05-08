@@ -34,6 +34,8 @@ reject_active_shell_radius_drift() {
 
     for file in \
         "clients/apple/AlanNative/MacShellRootView.swift" \
+        "clients/apple/AlanNative/Views/Shell/ShellSidebarView.swift" \
+        "clients/apple/AlanNative/Views/Shell/ShellCommandTabView.swift" \
         "clients/apple/AlanNative/TerminalPaneView.swift" \
         "clients/apple/AlanNative/TerminalHostView.swift"
     do
@@ -147,12 +149,12 @@ require_pattern \
     "pane-scoped Find must render as a real SwiftUI find bar"
 
 reject_pattern \
-    "clients/apple/AlanNative/MacShellRootView.swift" \
+    "clients/apple/AlanNative/Views/Shell" \
     "alanShellShowsInspector|showsInspector|ShellInspectorView|ShellInspectorSection|InspectorCard|toggleInspector|Show Inspector|Hide Inspector|right-side shell inspector" \
     "default macOS shell must not expose the removed inspector product surface"
 
 reject_pattern \
-    "clients/apple/AlanNative/MacShellRootView.swift" \
+    "clients/apple/AlanNative/Views/Shell" \
     "show inspector|hide inspector|open inspector|close inspector|toggle inspector" \
     "legacy shell voice commands must not expose inspector commands"
 
@@ -312,12 +314,12 @@ require_pattern \
     "split down must have a native command-shift shortcut"
 
 require_pattern \
-    "clients/apple/AlanNative/MacShellRootView.swift" \
+    "clients/apple/AlanNative/Views/Shell/ShellCommandTabView.swift" \
     "ShellWorkspaceCommand\\.splitRight" \
     "command UI split actions must call the same shell command router as native menus"
 
 require_pattern \
-    "clients/apple/AlanNative/MacShellRootView.swift" \
+    "clients/apple/AlanNative/Views/Shell/ShellSidebarView.swift" \
     "Go to or Command\\.\\.\\." \
     "command entry copy must match the accepted shell command UI label"
 
@@ -482,7 +484,7 @@ require_pattern \
     "Ghostty canvas views must be transparent to AppKit hit-testing"
 
 reject_pattern \
-    "clients/apple/AlanNative/MacShellRootView.swift" \
+    "clients/apple/AlanNative" \
     "WindowDragGesture\\(\\)" \
     "shell window dragging should rely on movable background regions, not transparent SwiftUI drag overlays"
 

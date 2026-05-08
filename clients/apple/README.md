@@ -21,8 +21,10 @@ recorded in [`ARCHITECTURE.md`](./ARCHITECTURE.md).
 - `App/`: macOS app delegate, duplicate-instance startup, primary shell owner,
   shell commands, and primary window presentation helpers
 - `Support/`: shared design tokens, native material wrappers, and window
-  placement support
-- `MacShellRootView.swift`: current primary macOS shell root
+  placement support, plus small AppKit-backed shell support adapters
+- `MacShellRootView.swift`: thin primary macOS shell composition root
+- `Views/Shell/`: shell sidebar, workspace composition, command palette, and
+  other primary macOS shell SwiftUI components
 - `TerminalPaneView.swift` / `TerminalHostView.swift`: current terminal pane and host surfaces
 - `ShellModel.swift` / `ShellHostController.swift`: current shell state and controller
 - `ShellControlPlane.swift`: current file/socket shell control plane

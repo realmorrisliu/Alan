@@ -14,10 +14,10 @@
 
 ## 3. SwiftUI Shell View Structure
 
-- [ ] 3.1 Split `MacShellRootView.swift` into focused shell root, sidebar, workspace, command palette, material/theme, and support files without changing behavior.
-- [ ] 3.2 Ensure the shell root reads as stable composition and no longer owns feature-specific sidebar rows, command search internals, inspector/debug panels, or voice command implementation.
+- [x] 3.1 Split `MacShellRootView.swift` into focused shell root, sidebar, workspace, command palette, material/theme, and support files without changing behavior.
+- [x] 3.2 Ensure the shell root reads as stable composition and no longer owns feature-specific sidebar rows, command search internals, inspector/debug panels, or voice command implementation.
 - [x] 3.3 Move shell visual tokens and material wrappers into support/design-token files that can be reused without importing unrelated shell layout.
-- [ ] 3.4 Coordinate with `polish-macos-search-remove-inspector` so inspector removal and Find bar work are not buried inside the architecture split.
+- [x] 3.4 Coordinate with `polish-macos-search-remove-inspector` so inspector removal and Find bar work are not buried inside the architecture split.
 
 ## 4. Console, API, And Event Reduction Boundaries
 
@@ -49,16 +49,16 @@
 
 ## 8. Documentation And Project Organization
 
-- [ ] 8.1 Update `clients/apple/README.md` so documented source layout matches the actual folders and current macOS/iOS entry paths.
-- [ ] 8.2 Update the Xcode project file to keep groups, file references, and target membership aligned with the new source layout.
-- [ ] 8.3 Document which active macOS OpenSpec changes may conflict with architecture slices and how implementation should sequence or rebase around them.
-- [ ] 8.4 Confirm no behavior-only OpenSpec requirement is moved into this architecture-maintainability capability.
+- [x] 8.1 Update `clients/apple/README.md` so documented source layout matches the actual folders and current macOS/iOS entry paths.
+- [x] 8.2 Update the Xcode project file to keep groups, file references, and target membership aligned with the new source layout.
+- [x] 8.3 Document which active macOS OpenSpec changes may conflict with architecture slices and how implementation should sequence or rebase around them.
+- [x] 8.4 Confirm no behavior-only OpenSpec requirement is moved into this architecture-maintainability capability.
 
 ## 9. Verification
 
 - [x] 9.1 Run the new Apple architecture-maintainability check and document current remaining hotspots.
 - [x] 9.2 Run `bash clients/apple/scripts/check-shell-contracts.sh`.
-- [ ] 9.3 Run focused Apple shell scripts affected by moved model, runtime, terminal surface, or control-plane files.
+- [x] 9.3 Run focused Apple shell scripts affected by moved model, runtime, terminal surface, or control-plane files.
 - [x] 9.4 Run `git diff --check`.
 - [x] 9.5 Run `openspec validate improve-macos-app-architecture-maintainability --type change --strict --json`.
 - [x] 9.6 Run `openspec validate --all --strict --json`.
@@ -66,8 +66,8 @@
 
 ## 10. PR Review And Archive Readiness
 
-- [ ] 10.1 Keep mechanical file moves separate from behavior edits in commits or PR descriptions.
-- [ ] 10.2 Ask reviewers to evaluate whether source ownership, AppKit bridge boundaries, and validation gates make future work easier to maintain.
+- [x] 10.1 Keep mechanical file moves separate from behavior edits in commits or PR descriptions.
+- [x] 10.2 Ask reviewers to evaluate whether source ownership, AppKit bridge boundaries, and validation gates make future work easier to maintain.
 - [ ] 10.3 Before archive, sync the accepted `macos-app-architecture-maintainability` requirements into `openspec/specs/`.
 - [ ] 10.4 Before archive, sync the accepted build/test contract delta into `openspec/specs/macos-shell-build-test-contract/spec.md`.
 - [ ] 10.5 Record implementation verification evidence and remaining architecture debt before archiving the change.
