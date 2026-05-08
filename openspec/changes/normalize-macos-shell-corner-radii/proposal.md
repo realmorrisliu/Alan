@@ -8,8 +8,8 @@ Arc-like native shell.
 ## What Changes
 
 - Introduce a small Alan shell corner-radius scale for active macOS shell UI.
-- Reduce large rounded rectangles in sidebar, command UI, inspector, terminal
-  surrounds, and debug/info surfaces.
+- Reduce large rounded rectangles in sidebar, command UI, terminal surrounds,
+  pane title bars, and remaining default-shell fallback/debug surfaces.
 - Replace decorative `Capsule` usage in text controls and chips with modest
   rounded rectangles unless the shape is a true status dot or system-like
   circular control.
@@ -41,4 +41,4 @@ None.
 - Active OpenSpec UI polish: coordinate with
   `add-macos-pane-title-bars` so pane title bars use the same radius scale.
 - Visual QA: running-app screenshots for sidebar, terminal, command UI, and
-  inspector in light mode.
+  remaining default-shell overlays in light mode.

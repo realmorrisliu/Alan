@@ -56,6 +56,8 @@ None.
   `clients/apple/scripts/test-terminal-surface-controller.swift`,
   `clients/apple/scripts/check-shell-contracts.sh`, and visual/manual
   verification notes for the default light-mode shell and `Command-F` flow.
-- Active UI polish OpenSpec work may mention inspector screenshots or inspector
-  radii; those changes should be rebased or adjusted so inspector removal is the
-  source of truth.
+- Active UI polish OpenSpec work such as
+  `normalize-macos-shell-corner-radii` and `add-macos-pane-title-bars` must
+  treat inspector-specific screenshots, radii targets, and debug-surface wording
+  as removed or rerouted to explicit developer/debug-only surfaces so inspector
+  removal remains the source of truth.
