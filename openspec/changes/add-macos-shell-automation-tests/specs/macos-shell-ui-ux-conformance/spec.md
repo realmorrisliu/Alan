@@ -2,8 +2,8 @@
 
 ### Requirement: UI conformance has repeatable smoke evidence
 Mac shell UI conformance work SHALL include repeatable smoke or screenshot
-evidence for launch, space/tab switching, split creation, command UI, inspector
-overview, and inspector debug states.
+evidence for launch, space/tab switching, split creation, command UI, and
+pane-scoped Find behavior.
 
 #### Scenario: Default launch evidence
 - **WHEN** a UI conformance implementation is ready
@@ -13,9 +13,9 @@ overview, and inspector debug states.
 - **WHEN** command UI behavior changes
 - **THEN** maintainers can run or inspect evidence showing `Go to or Command...` results with user-facing labels
 
-#### Scenario: Inspector evidence
-- **WHEN** inspector behavior changes
-- **THEN** maintainers can run or inspect evidence confirming Overview stays user-facing and Debug contains raw diagnostics
+#### Scenario: Find evidence
+- **WHEN** pane-scoped Find behavior changes
+- **THEN** maintainers can run or inspect evidence confirming the active pane shows a native-feeling Find surface without restoring inspector chrome or debug-first panels
 
 ### Requirement: Automation surfaces do not add default chrome
 Adding App Intents and automation support SHALL not add visible default UI chrome

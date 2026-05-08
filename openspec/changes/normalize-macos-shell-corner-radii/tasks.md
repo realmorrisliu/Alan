@@ -25,7 +25,7 @@
 - [ ] 4.3 Run `openspec validate normalize-macos-shell-corner-radii --type change --strict --json`.
 - [ ] 4.4 Run `openspec validate --all --strict --json`.
 - [ ] 4.5 Build the macOS app with the documented `AlanNative` Debug command.
-- [ ] 4.6 Capture or document light-mode screenshots for sidebar, single/split terminal, command palette, and inspector after normalization.
+- [ ] 4.6 Capture or document light-mode screenshots for sidebar, single/split terminal, command palette, and remaining default-shell overlays after normalization.
 - [ ] 4.7 Manually verify the shell still feels native, readable, and not visually flat after reducing radii.
 
 ## 5. Archive Readiness

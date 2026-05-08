@@ -17,8 +17,8 @@ and UI smoke flows.
 - Add Apple-client unit tests for shell model mutations, runtime registry/service
   behavior, boot profile resolution, and local control-plane command execution.
 - Add UI smoke tests or scripted screenshot checks for launch, space/tab
-  switching, split creation, command UI, inspector disclosure, and basic terminal
-  input.
+  switching, split creation, command UI, pane-scoped Find behavior, and basic
+  terminal input.
 - Extend build/test documentation and `just`/script entry points so the focused
   Apple checks are discoverable and repeatable.
 - Keep tests layered so most run without real Ghostty artifacts, while a smaller

@@ -5,9 +5,11 @@ The active macOS shell surface uses `MacShellRootView.swift`,
 terminal-first app. A quick inventory shows the active shell uses hard-coded
 rounded rectangles at 8, 10, 11, 12, 13, 14, 16, 18, 20, 22, and 24 points,
 plus `Capsule` shapes for chips and keycap-like controls. The largest values
-show up in the command palette outer shell (`24`), inspector cards (`20`),
-command search field (`18`), tab rail cards (`18`), and terminal info cards
-(`22`).
+show up in the command palette outer shell (`24`), command search field (`18`),
+tab rail cards (`18`), and terminal info cards (`22`). The separate inspector
+surfaces that previously used `20`-point cards are being removed by
+`polish-macos-search-remove-inspector`, so this normalization pass should not
+keep them alive as a target surface.
 
 This conflicts with the current product direction: Arc-like native material,
 compact rows, terminal-first focus, and calm precision. The UI should feel
@@ -22,7 +24,7 @@ component roles.
 - Define a small radius scale for the active Alan macOS shell.
 - Reduce large rounded rectangles and pill/capsule shapes in the default shell
   UI.
-- Make future pane title bars, command rows, sidebar rows, inspector cards, and
+- Make future pane title bars, command rows, sidebar rows, command overlays, and
   terminal surrounds use the same scale.
 - Keep true circular elements only where the shape is semantic: status dots,
   traffic-light-like indicators, or icon-only circular affordances that are
@@ -48,12 +50,12 @@ component roles.
      and background bands.
    - `control = 6`: icon buttons, compact keycaps, small title-bar controls,
      small inline controls.
-   - `row = 8`: sidebar rows, command rows, attention rows, chips, inspector
-     sub-rows, and pane title bars.
+   - `row = 8`: sidebar rows, command rows, attention rows, chips, and pane
+     title bars.
    - `surface = 10`: terminal surround, search fields, inline panels, and
      small grouped tool surfaces.
-   - `overlay = 12`: command palette outer shell, inspector cards, fallback
-     overlay cards, and rare modal-like surfaces.
+   - `overlay = 12`: command palette outer shell, fallback overlay cards, and
+     rare modal-like surfaces.
 
    Values above `12` are not part of the default shell scale. They require a
    documented exception in code or a spec update. This keeps Alan precise while
@@ -99,8 +101,9 @@ component roles.
    that flags new active-shell `RoundedRectangle(cornerRadius: 14+)`,
    `layer?.cornerRadius = 14+`, and default-shell `Capsule` usage except for an
    allowlist. Visual review must still compare single-pane, split-pane,
-   command-palette, and inspector screenshots because small radius changes can
-   affect the perceived density and hierarchy.
+   command-palette, and remaining default-shell overlay screenshots because
+   small radius changes can affect the perceived density and hierarchy. Deleted
+   inspector surfaces do not need radius review in this change.
 
 ## Risks / Trade-offs
 

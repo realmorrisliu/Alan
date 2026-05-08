@@ -19,20 +19,20 @@ execution, App Intent routing, and UI smoke flows.
 
 ### Requirement: UI smoke coverage is repeatable
 The Apple client SHALL provide a repeatable UI smoke or screenshot flow for
-launch, space/tab switching, split creation, command UI, inspector disclosure,
-and basic terminal input when terminal runtime is available.
+launch, space/tab switching, split creation, command UI, pane-scoped Find
+behavior, and basic terminal input when terminal runtime is available.
 
 #### Scenario: Launch smoke
 - **WHEN** the UI smoke flow starts the macOS app
-- **THEN** it verifies that the default light-mode window shows the space rail, active tab list, terminal content area, and inspector-off state
+- **THEN** it verifies that the default light-mode window shows the space rail, active tab list, terminal content area, and no persistent inspector pane or toggle
 
 #### Scenario: Split smoke
 - **WHEN** the UI smoke flow creates a split
 - **THEN** it verifies that multiple panes are visible and no raw pane IDs or debug labels dominate the default UI
 
-#### Scenario: Inspector smoke
-- **WHEN** the UI smoke flow opens inspector overview and debug layers
-- **THEN** it verifies that user-facing summary appears in Overview and raw diagnostics are restricted to Debug
+#### Scenario: Find smoke
+- **WHEN** the UI smoke flow opens pane-scoped Find for the focused terminal pane
+- **THEN** it verifies that a focused text field appears in pane chrome, result feedback is visible without raw debug labels, and dismissing Find returns focus to the owning terminal surface
 
 ### Requirement: Test fixtures share production command paths
 Apple tests SHALL exercise shell mutations through the same controller command

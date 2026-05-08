@@ -66,8 +66,8 @@ future macOS surfaces.
 
    Tests do not need to assert every pixel, but they must launch the app and
    exercise representative workflows: launch, switch space/tab, create split,
-   open command UI, show inspector overview/debug, and type basic terminal input
-   when Ghostty is available.
+   open command UI, open pane-scoped Find for the focused pane, and type basic
+   terminal input when Ghostty is available.
 
    Alternative considered: keep screenshot review purely manual. Manual review
    remains useful but should not be the only repeatable signal.

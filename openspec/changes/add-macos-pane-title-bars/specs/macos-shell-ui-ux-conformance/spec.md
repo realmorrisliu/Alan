@@ -32,7 +32,7 @@ terminal title is unavailable.
 
 #### Scenario: Debug terms suppressed
 - **WHEN** terminal metadata contains implementation-oriented summaries such as `title updated`, `window attached`, or raw runtime state
-- **THEN** the title bar does not expose those terms outside the explicit inspector debug surface
+- **THEN** the title bar does not expose those terms outside explicit developer/debug-only surfaces
 
 ### Requirement: Pane close button targets its pane
 The pane title bar close button SHALL close the pane represented by that title

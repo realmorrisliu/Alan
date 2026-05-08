@@ -14,7 +14,7 @@ corner-radius normalization when default macOS shell chrome is changed.
 
 #### Scenario: Visual comparison captured
 - **WHEN** radius normalization implementation is marked complete
-- **THEN** maintainers can inspect running-app screenshots or notes for sidebar, terminal, command palette, and inspector states confirming that the UI is smaller-radius, still native, and not visually flat
+- **THEN** maintainers can inspect running-app screenshots or notes for sidebar, terminal, command palette, and remaining default-shell overlay states confirming that the UI is smaller-radius, still native, and not visually flat
 
 #### Scenario: Legacy surfaces scoped
 - **WHEN** radius inventory finds older or non-primary Apple client surfaces

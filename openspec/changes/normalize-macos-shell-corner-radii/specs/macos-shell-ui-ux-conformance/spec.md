@@ -6,7 +6,7 @@ for rounded rectangular surfaces and controls. It SHALL avoid large ad hoc
 radii and capsule-heavy default chrome.
 
 #### Scenario: Radius scale applied
-- **WHEN** the active macOS shell renders sidebar rows, command rows, pane title bars, inspector cards, terminal surrounds, inline panels, or overlay surfaces
+- **WHEN** the active macOS shell renders sidebar rows, command rows, pane title bars, terminal surrounds, inline panels, or overlay surfaces
 - **THEN** those rounded rectangular elements use the Alan shell radius scale rather than one-off numeric radii
 
 #### Scenario: Default shell avoids large radii
@@ -37,6 +37,6 @@ turning the UI into a flat grid or weakening control affordances.
 - **WHEN** the command palette is open
 - **THEN** the outer overlay, search field, and result rows use distinct but restrained radii so hierarchy is visible without large bubble-like cards
 
-#### Scenario: Inspector remains secondary
-- **WHEN** the inspector is visible
-- **THEN** overview and debug surfaces use restrained radii and do not read as large decorative cards competing with the terminal
+#### Scenario: Overlays remain secondary
+- **WHEN** the command palette or another remaining default-shell overlay is visible
+- **THEN** that surface uses restrained radii and does not read as a large decorative card competing with the terminal
