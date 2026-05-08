@@ -297,17 +297,17 @@ require_pattern \
     "native menu commands must receive the primary shell host"
 
 require_pattern \
-    "clients/apple/AlanNative/AlanNativeApp.swift" \
+    "clients/apple/AlanNative/App/AlanMacShellCommands.swift" \
     "CommandMenu\\(\"Shell\"\\)" \
     "split workspace actions must be exposed through a native Shell menu"
 
 require_pattern \
-    "clients/apple/AlanNative/AlanNativeApp.swift" \
+    "clients/apple/AlanNative/App/AlanMacShellCommands.swift" \
     "\\.keyboardShortcut\\(\"d\", modifiers: \\.command\\)" \
     "split right must have a native command-key shortcut"
 
 require_pattern \
-    "clients/apple/AlanNative/AlanNativeApp.swift" \
+    "clients/apple/AlanNative/App/AlanMacShellCommands.swift" \
     "\\.keyboardShortcut\\(\"d\", modifiers: \\[\\.command, \\.shift\\]\\)" \
     "split down must have a native command-shift shortcut"
 
@@ -452,7 +452,7 @@ reject_pattern \
     "terminal leaf selection must not be owned by a SwiftUI tap wrapper"
 
 require_pattern \
-    "clients/apple/AlanNative/MacShellRootView.swift" \
+    "clients/apple/AlanNative/Support/ShellWindowPlacement.swift" \
     "window\\.isMovableByWindowBackground = true" \
     "hidden-titlebar shell windows must make non-interactive background regions draggable"
 
@@ -537,7 +537,7 @@ require_pattern \
     "macOS app scene must use a unique primary Window instead of a repeatable WindowGroup"
 
 require_pattern \
-    "clients/apple/AlanNative/AlanNativeApp.swift" \
+    "clients/apple/AlanNative/App/AlanMacShellCommands.swift" \
     "CommandGroup\\(replacing: \\.newItem\\)" \
     "macOS app must replace New Window with a focus/reopen command"
 

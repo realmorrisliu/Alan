@@ -1,5 +1,7 @@
-import AppKit
 import SwiftUI
+
+#if os(macOS)
+import AppKit
 #if canImport(QuartzCore)
 import QuartzCore
 #endif
@@ -7,7 +9,6 @@ import QuartzCore
 import GhosttyKit
 #endif
 
-#if os(macOS)
 struct TerminalHostView: NSViewRepresentable {
     let pane: ShellPane?
     let bootProfile: AlanShellBootProfile?
