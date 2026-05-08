@@ -41,7 +41,7 @@
 /* Begin PBXFileReference section */
 		0000000000000000000000F1 /* AlanNative.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = AlanNative.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		000000000000000000000101 /* AlanNativeApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlanNativeApp.swift; sourceTree = "<group>"; };
-		000000000000000000000102 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		000000000000000000000102 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/Console/ContentView.swift; sourceTree = "<group>"; };
 		000000000000000000000103 /* AlanAPIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlanAPIClient.swift; sourceTree = "<group>"; };
 		000000000000000000000104 /* MacShellRootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacShellRootView.swift; sourceTree = "<group>"; };
 		000000000000000000000105 /* ShellModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShellModel.swift; sourceTree = "<group>"; };
@@ -99,8 +99,8 @@
 			children = (
 				000000000000000000000304 /* App */,
 				000000000000000000000306 /* Views/Shell */,
+				000000000000000000000307 /* Views/Console */,
 				000000000000000000000101 /* AlanNativeApp.swift */,
-				000000000000000000000102 /* ContentView.swift */,
 				000000000000000000000103 /* AlanAPIClient.swift */,
 				000000000000000000000112 /* AlanAppSingletonGuard.swift */,
 				000000000000000000000104 /* MacShellRootView.swift */,
@@ -149,6 +149,14 @@
 				00000000000000000000011C /* ShellCommandTabView.swift */,
 			);
 			name = Views/Shell;
+			sourceTree = "<group>";
+		};
+		000000000000000000000307 /* Views/Console */ = {
+			isa = PBXGroup;
+			children = (
+				000000000000000000000102 /* ContentView.swift */,
+			);
+			name = Views/Console;
 			sourceTree = "<group>";
 		};
 		000000000000000000000303 /* Products */ = {
