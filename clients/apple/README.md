@@ -13,11 +13,15 @@ whose shell is readable and operable by both humans and agents.
 
 ## Directory Structure
 
-The current app still has a flat Swift source directory while the macOS shell is
-being split into durable owner folders. The accepted target layout and current
-file inventory are recorded in [`ARCHITECTURE.md`](./ARCHITECTURE.md).
+The current app is being split from a flat Swift source directory into durable
+owner folders. The accepted target layout and current file inventory are
+recorded in [`ARCHITECTURE.md`](./ARCHITECTURE.md).
 
 - `AlanNativeApp.swift`: current app entry point
+- `App/`: macOS app delegate, duplicate-instance startup, primary shell owner,
+  shell commands, and primary window presentation helpers
+- `Support/`: shared design tokens, native material wrappers, and window
+  placement support
 - `MacShellRootView.swift`: current primary macOS shell root
 - `TerminalPaneView.swift` / `TerminalHostView.swift`: current terminal pane and host surfaces
 - `ShellModel.swift` / `ShellHostController.swift`: current shell state and controller

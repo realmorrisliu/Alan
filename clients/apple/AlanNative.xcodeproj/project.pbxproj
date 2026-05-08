@@ -25,6 +25,13 @@
 		000000000000000000000010 /* TerminalRuntimeService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000110 /* TerminalRuntimeService.swift */; };
 		000000000000000000000011 /* TerminalSurfaceController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000111 /* TerminalSurfaceController.swift */; };
 		000000000000000000000012 /* AlanAppSingletonGuard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000112 /* AlanAppSingletonGuard.swift */; };
+		000000000000000000000013 /* AlanMacPrimaryShellOwner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000113 /* AlanMacPrimaryShellOwner.swift */; };
+		000000000000000000000014 /* AlanMacAppStartup.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000114 /* AlanMacAppStartup.swift */; };
+		000000000000000000000015 /* AlanMacAppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000115 /* AlanMacAppDelegate.swift */; };
+		000000000000000000000016 /* AlanMacShellCommands.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000116 /* AlanMacShellCommands.swift */; };
+		000000000000000000000017 /* AlanMacPrimaryWindowPresenter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000117 /* AlanMacPrimaryWindowPresenter.swift */; };
+		000000000000000000000018 /* ShellDesignTokens.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000118 /* ShellDesignTokens.swift */; };
+		000000000000000000000019 /* ShellWindowPlacement.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000119 /* ShellWindowPlacement.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -47,6 +54,13 @@
 		000000000000000000000110 /* TerminalRuntimeService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalRuntimeService.swift; sourceTree = "<group>"; };
 		000000000000000000000111 /* TerminalSurfaceController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalSurfaceController.swift; sourceTree = "<group>"; };
 		000000000000000000000112 /* AlanAppSingletonGuard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlanAppSingletonGuard.swift; sourceTree = "<group>"; };
+		000000000000000000000113 /* AlanMacPrimaryShellOwner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = App/AlanMacPrimaryShellOwner.swift; sourceTree = "<group>"; };
+		000000000000000000000114 /* AlanMacAppStartup.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = App/AlanMacAppStartup.swift; sourceTree = "<group>"; };
+		000000000000000000000115 /* AlanMacAppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = App/AlanMacAppDelegate.swift; sourceTree = "<group>"; };
+		000000000000000000000116 /* AlanMacShellCommands.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = App/AlanMacShellCommands.swift; sourceTree = "<group>"; };
+		000000000000000000000117 /* AlanMacPrimaryWindowPresenter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = App/AlanMacPrimaryWindowPresenter.swift; sourceTree = "<group>"; };
+		000000000000000000000118 /* ShellDesignTokens.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Support/ShellDesignTokens.swift; sourceTree = "<group>"; };
+		000000000000000000000119 /* ShellWindowPlacement.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Support/ShellWindowPlacement.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -75,6 +89,7 @@
 		000000000000000000000302 /* AlanNative */ = {
 			isa = PBXGroup;
 			children = (
+				000000000000000000000304 /* App */,
 				000000000000000000000101 /* AlanNativeApp.swift */,
 				000000000000000000000102 /* ContentView.swift */,
 				000000000000000000000103 /* AlanAPIClient.swift */,
@@ -90,8 +105,30 @@
 				00000000000000000000010F /* TerminalRuntimeRegistry.swift */,
 				00000000000000000000010A /* GhosttyLiveHost.swift */,
 				00000000000000000000010E /* ShellControlPlane.swift */,
+				000000000000000000000305 /* Support */,
 			);
 			path = AlanNative;
+			sourceTree = "<group>";
+		};
+		000000000000000000000304 /* App */ = {
+			isa = PBXGroup;
+			children = (
+				000000000000000000000115 /* AlanMacAppDelegate.swift */,
+				000000000000000000000114 /* AlanMacAppStartup.swift */,
+				000000000000000000000116 /* AlanMacShellCommands.swift */,
+				000000000000000000000113 /* AlanMacPrimaryShellOwner.swift */,
+				000000000000000000000117 /* AlanMacPrimaryWindowPresenter.swift */,
+			);
+			name = App;
+			sourceTree = "<group>";
+		};
+		000000000000000000000305 /* Support */ = {
+			isa = PBXGroup;
+			children = (
+				000000000000000000000118 /* ShellDesignTokens.swift */,
+				000000000000000000000119 /* ShellWindowPlacement.swift */,
+			);
+			name = Support;
 			sourceTree = "<group>";
 		};
 		000000000000000000000303 /* Products */ = {
@@ -209,6 +246,13 @@
 				000000000000000000000012 /* AlanAppSingletonGuard.swift in Sources */,
 				00000000000000000000000E /* ShellControlPlane.swift in Sources */,
 				00000000000000000000000F /* TerminalRuntimeRegistry.swift in Sources */,
+				000000000000000000000013 /* AlanMacPrimaryShellOwner.swift in Sources */,
+				000000000000000000000014 /* AlanMacAppStartup.swift in Sources */,
+				000000000000000000000015 /* AlanMacAppDelegate.swift in Sources */,
+				000000000000000000000016 /* AlanMacShellCommands.swift in Sources */,
+				000000000000000000000017 /* AlanMacPrimaryWindowPresenter.swift in Sources */,
+				000000000000000000000018 /* ShellDesignTokens.swift in Sources */,
+				000000000000000000000019 /* ShellWindowPlacement.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

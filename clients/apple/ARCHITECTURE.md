@@ -6,14 +6,23 @@ maintainability, not product behavior.
 
 ## Current Inventory
 
-All Swift files currently live directly under `clients/apple/AlanNative` and are
-members of the `AlanNative` Xcode target.
+The Apple client is being migrated out of the original flat
+`clients/apple/AlanNative` source directory. Files listed with owner folders are
+already split into the target layout and remain members of the `AlanNative`
+Xcode target.
 
 | File | Lines | Platform / bridge imports | Primary responsibility today | Target owner |
 | --- | ---: | --- | --- | --- |
-| `AlanNativeApp.swift` | 187 | SwiftUI, AppKit, Darwin; macOS gates | App entry, singleton startup, primary shell owner, commands, window focusing | `App/` |
+| `AlanNativeApp.swift` | 31 | SwiftUI; macOS gates | Thin app entry and scene composition | `App/` |
+| `App/AlanMacAppDelegate.swift` | 14 | AppKit; macOS gates | Reopen handling for the primary Alan window | `App/` |
+| `App/AlanMacAppStartup.swift` | 19 | Darwin; macOS gates | Duplicate-instance startup and singleton guard handling | `App/` |
+| `App/AlanMacPrimaryShellOwner.swift` | 20 | Foundation, SwiftUI; macOS gates | Primary `window_main` shell owner creation | `App/` |
+| `App/AlanMacPrimaryWindowPresenter.swift` | 18 | AppKit; macOS gates | Primary Alan window focusing and activation | `App/` |
+| `App/AlanMacShellCommands.swift` | 85 | SwiftUI; macOS gates | App menu and keyboard command definitions routed through shell workspace commands | `App/` |
 | `AlanAppSingletonGuard.swift` | 141 | Foundation, AppKit, Darwin; macOS gates | OS-backed duplicate-instance guard | `App/` or `Support/Windowing/` |
-| `MacShellRootView.swift` | 1998 | SwiftUI, AppKit; macOS gates | Shell root layout, sidebar, command UI, voice command UI, material wrappers, window placement | `Views/Shell/` plus `Support/Design/` and `Support/Windowing/` |
+| `Support/ShellDesignTokens.swift` | 211 | AppKit, SwiftUI; macOS gates | Shell palette, corner radii, and native material wrapper | `Support/` |
+| `Support/ShellWindowPlacement.swift` | 202 | AppKit, SwiftUI; macOS gates | Hidden-titlebar placement, min-size, traffic-light metrics, and primary window activation | `Support/` |
+| `MacShellRootView.swift` | 1787 | SwiftUI; macOS gates | Shell root layout, sidebar, command UI, and voice command UI | `Views/Shell/` |
 | `TerminalPaneView.swift` | 806 | SwiftUI; macOS gates | Split-tree and pane leaf rendering | `Views/Shell/Terminal/` |
 | `TerminalHostView.swift` | 1442 | AppKit, SwiftUI, QuartzCore, GhosttyKit; macOS gates | AppKit terminal host bridge, focus, input routing, overlays, runtime attachment | `Views/Shell/Terminal/` plus terminal collaborators |
 | `GhosttyLiveHost.swift` | 896 | Foundation, AppKit, GhosttyKit; macOS/Ghostty gates | Ghostty canvas bridge and wakeup/occlusion integration | `Services/Terminal/` or `Support/TerminalBridge/` |

@@ -7,16 +7,16 @@
 
 ## 2. App Entry And Window Ownership
 
-- [ ] 2.1 Move macOS app singleton startup and duplicate-instance activation out of `AlanNativeApp.swift` into app-owned files.
-- [ ] 2.2 Move primary shell owner creation and stable `window_main` setup into an app or shell startup owner.
-- [ ] 2.3 Move shell menu/keyboard command definitions into a dedicated command owner that still routes through the shared shell workspace command API.
-- [ ] 2.4 Move hidden-titlebar placement, traffic-light metrics, min-size, tabbing, and primary-window focusing out of `MacShellRootView.swift` into a window support/coordinator boundary.
+- [x] 2.1 Move macOS app singleton startup and duplicate-instance activation out of `AlanNativeApp.swift` into app-owned files.
+- [x] 2.2 Move primary shell owner creation and stable `window_main` setup into an app or shell startup owner.
+- [x] 2.3 Move shell menu/keyboard command definitions into a dedicated command owner that still routes through the shared shell workspace command API.
+- [x] 2.4 Move hidden-titlebar placement, traffic-light metrics, min-size, tabbing, and primary-window focusing out of `MacShellRootView.swift` into a window support/coordinator boundary.
 
 ## 3. SwiftUI Shell View Structure
 
 - [ ] 3.1 Split `MacShellRootView.swift` into focused shell root, sidebar, workspace, command palette, material/theme, and support files without changing behavior.
 - [ ] 3.2 Ensure the shell root reads as stable composition and no longer owns feature-specific sidebar rows, command search internals, inspector/debug panels, or voice command implementation.
-- [ ] 3.3 Move shell visual tokens and material wrappers into support/design-token files that can be reused without importing unrelated shell layout.
+- [x] 3.3 Move shell visual tokens and material wrappers into support/design-token files that can be reused without importing unrelated shell layout.
 - [ ] 3.4 Coordinate with `polish-macos-search-remove-inspector` so inspector removal and Find bar work are not buried inside the architecture split.
 
 ## 4. Console, API, And Event Reduction Boundaries
@@ -56,13 +56,13 @@
 
 ## 9. Verification
 
-- [ ] 9.1 Run the new Apple architecture-maintainability check and document current remaining hotspots.
-- [ ] 9.2 Run `bash clients/apple/scripts/check-shell-contracts.sh`.
+- [x] 9.1 Run the new Apple architecture-maintainability check and document current remaining hotspots.
+- [x] 9.2 Run `bash clients/apple/scripts/check-shell-contracts.sh`.
 - [ ] 9.3 Run focused Apple shell scripts affected by moved model, runtime, terminal surface, or control-plane files.
-- [ ] 9.4 Run `git diff --check`.
-- [ ] 9.5 Run `openspec validate improve-macos-app-architecture-maintainability --type change --strict --json`.
-- [ ] 9.6 Run `openspec validate --all --strict --json`.
-- [ ] 9.7 Build the macOS app with `xcodebuild -project clients/apple/AlanNative.xcodeproj -scheme AlanNative -configuration Debug -destination platform=macOS -derivedDataPath target/xcode-derived build`.
+- [x] 9.4 Run `git diff --check`.
+- [x] 9.5 Run `openspec validate improve-macos-app-architecture-maintainability --type change --strict --json`.
+- [x] 9.6 Run `openspec validate --all --strict --json`.
+- [x] 9.7 Build the macOS app with `xcodebuild -project clients/apple/AlanNative.xcodeproj -scheme AlanNative -configuration Debug -destination platform=macOS -derivedDataPath target/xcode-derived build`.
 
 ## 10. PR Review And Archive Readiness
 
