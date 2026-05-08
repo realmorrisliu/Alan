@@ -1,7 +1,8 @@
-import AppKit
 import SwiftUI
 
 #if os(macOS)
+import AppKit
+
 private extension Color {
     static func shellAdaptive(
         light: (Double, Double, Double),

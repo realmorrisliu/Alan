@@ -1,6 +1,6 @@
+#if os(macOS)
 import AppKit
 
-#if os(macOS)
 final class AlanMacAppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldHandleReopen(
         _ sender: NSApplication,

@@ -1,7 +1,8 @@
-import AppKit
 import SwiftUI
 
 #if os(macOS)
+import AppKit
+
 struct ShellWindowPlacementView: NSViewRepresentable {
     @Binding var metrics: ShellWindowChromeMetrics
 

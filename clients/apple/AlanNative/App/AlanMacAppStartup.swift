@@ -1,6 +1,6 @@
+#if os(macOS)
 import Darwin
 
-#if os(macOS)
 enum AlanMacAppStartup {
     static func acquireSingletonOrTerminate() -> AlanAppSingletonGuard {
         do {

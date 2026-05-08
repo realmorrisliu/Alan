@@ -37,6 +37,26 @@ contains_line() {
     return 1
 }
 
+check_appkit_import_gate() {
+    local rel="$1"
+    local file="$2"
+    if ! awk '
+        /^#if .*os\(macOS\)/ || /^#elseif .*os\(macOS\)/ || /^#if .*canImport\(AppKit\)/ {
+            inside_appkit_gate = 1
+            next
+        }
+        /^#else/ || /^#endif/ {
+            inside_appkit_gate = 0
+            next
+        }
+        /^import AppKit$/ && !inside_appkit_gate {
+            exit 1
+        }
+    ' "$file"; then
+        fail "$rel imports AppKit before a macOS/AppKit platform gate"
+    fi
+}
+
 current_root_swift_allowlist=(
     "AlanAPIClient.swift"
     "AlanAppSingletonGuard.swift"
@@ -87,6 +107,7 @@ while IFS= read -r file; do
         gates="-"
     fi
     printf '  %-36s %5s lines  imports=%s  gates=%s\n' "$rel" "$lines" "$imports" "$gates"
+    check_appkit_import_gate "$rel" "$file"
 
     if [[ "$rel" != */* ]]; then
         if ! contains_line "$rel" "${current_root_swift_allowlist[@]}"; then
