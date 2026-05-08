@@ -25,10 +25,10 @@ recorded in [`ARCHITECTURE.md`](./ARCHITECTURE.md).
 - `MacShellRootView.swift`: thin primary macOS shell composition root
 - `Views/Shell/`: shell sidebar, workspace composition, command palette, and
   other primary macOS shell SwiftUI components
+- `Views/Console/`: legacy/mobile remote-control console surface
 - `TerminalPaneView.swift` / `TerminalHostView.swift`: current terminal pane and host surfaces
 - `ShellModel.swift` / `ShellHostController.swift`: current shell state and controller
 - `ShellControlPlane.swift`: current file/socket shell control plane
-- `ContentView.swift`: current legacy/mobile console surface
 
 ## Quick Start
 
