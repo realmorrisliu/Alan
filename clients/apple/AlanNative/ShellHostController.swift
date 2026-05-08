@@ -525,6 +525,11 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     }
 
     @discardableResult
+    func closePaneByID(_ paneID: String) -> Bool {
+        closePane(paneID: paneID) == .closed
+    }
+
+    @discardableResult
     func liftSelectedPaneToTab(title: String? = nil) -> Bool {
         guard let paneID = selectedPane?.paneID else { return false }
         return liftPaneToTab(paneID: paneID, title: title) == .lifted

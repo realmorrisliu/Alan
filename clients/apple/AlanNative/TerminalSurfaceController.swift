@@ -746,6 +746,7 @@ struct AlanTerminalSearchState: Equatable {
     let isActive: Bool
     let totalMatches: Int?
     let selectedIndex: Int?
+    let focusRequestID: Int
 
     static func inactive(paneID: String) -> AlanTerminalSearchState {
         AlanTerminalSearchState(
@@ -753,7 +754,8 @@ struct AlanTerminalSearchState: Equatable {
             query: "",
             isActive: false,
             totalMatches: nil,
-            selectedIndex: nil
+            selectedIndex: nil,
+            focusRequestID: 0
         )
     }
 }
@@ -787,13 +789,25 @@ final class AlanTerminalSearchAdapter {
         self.state = .inactive(paneID: paneID)
     }
 
+    func requestFocus() {
+        state = AlanTerminalSearchState(
+            paneID: state.paneID,
+            query: state.query,
+            isActive: true,
+            totalMatches: state.totalMatches,
+            selectedIndex: state.selectedIndex,
+            focusRequestID: state.focusRequestID + 1
+        )
+    }
+
     func updateQuery(_ query: String) {
         state = AlanTerminalSearchState(
             paneID: state.paneID,
             query: query,
             isActive: true,
             totalMatches: state.totalMatches,
-            selectedIndex: state.selectedIndex
+            selectedIndex: state.selectedIndex,
+            focusRequestID: state.focusRequestID
         )
     }
 
@@ -809,7 +823,8 @@ final class AlanTerminalSearchAdapter {
             query: state.query,
             isActive: state.isActive,
             totalMatches: total,
-            selectedIndex: boundedIndex
+            selectedIndex: boundedIndex,
+            focusRequestID: state.focusRequestID
         )
     }
 
@@ -1134,28 +1149,6 @@ final class AlanTerminalSurfaceController {
         metadata: TerminalPaneMetadataSnapshot,
         bootProfile: AlanShellBootProfile?
     ) -> AlanTerminalOverlayState? {
-        if let searchState = searchAdapter?.state,
-           searchState.isActive
-        {
-            let status: String
-            if let totalMatches = searchState.totalMatches,
-               let selectedIndex = searchState.selectedIndex
-            {
-                status = "\(selectedIndex + 1) of \(totalMatches)"
-            } else if searchState.query.isEmpty {
-                status = "Type to search this pane."
-            } else {
-                status = "Searching this pane."
-            }
-            return AlanTerminalOverlayState(
-                title: "Search terminal",
-                message: searchState.query.isEmpty ? "Find text in this pane." : searchState.query,
-                badge: "Search",
-                action: status,
-                debugDetail: "pane=\(searchState.paneID)"
-            )
-        }
-
         let readiness: AlanTerminalSurfaceReadiness
         if bootProfile == nil || surfaceHandle == nil {
             readiness = .unready(reason: .missingSurface)
@@ -1261,9 +1254,12 @@ final class AlanTerminalSurfaceController {
             searchAdapter = AlanTerminalSearchAdapter(paneID: paneID)
         }
         if searchAdapter?.state.isActive == true {
+            searchAdapter?.requestFocus()
+            notifySearchStateChanged()
             return true
         }
         guard searchEngine?.startSearch() == true else { return false }
+        searchAdapter?.requestFocus()
         searchAdapter?.updateQuery(searchAdapter?.state.query ?? "")
         return true
     }

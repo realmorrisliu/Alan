@@ -13,12 +13,16 @@ whose shell is readable and operable by both humans and agents.
 
 ## Directory Structure
 
-- `AlanNativeApp.swift`: app entry point
-- `Views/`: UI views
-- `State/`: app state and stores
-- `Networking/`: daemon API and WebSocket client
-- `Models/`: protocol data models
-- `Resources/`: assets and app resources
+The current app still has a flat Swift source directory while the macOS shell is
+being split into durable owner folders. The accepted target layout and current
+file inventory are recorded in [`ARCHITECTURE.md`](./ARCHITECTURE.md).
+
+- `AlanNativeApp.swift`: current app entry point
+- `MacShellRootView.swift`: current primary macOS shell root
+- `TerminalPaneView.swift` / `TerminalHostView.swift`: current terminal pane and host surfaces
+- `ShellModel.swift` / `ShellHostController.swift`: current shell state and controller
+- `ShellControlPlane.swift`: current file/socket shell control plane
+- `ContentView.swift`: current legacy/mobile console surface
 
 ## Quick Start
 
@@ -155,6 +159,9 @@ xcodebuild \
 
 # Shell control-plane contract smoke
 bash clients/apple/scripts/check-shell-contracts.sh
+
+# Apple source architecture maintainability report
+bash clients/apple/scripts/check-architecture-maintainability.sh
 
 # iOS
 xcodebuild \

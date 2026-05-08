@@ -136,6 +136,28 @@ final class TerminalRuntimeRegistry: ObservableObject {
         return runtimeService.sendText(to: paneID, text: text)
     }
 
+    @discardableResult
+    func beginFindInteraction(for paneID: String) -> Bool {
+        hostViewsByPaneID[paneID]?.beginFindInteraction() ?? false
+    }
+
+    @discardableResult
+    func updateFindQuery(for paneID: String, query: String) -> Bool {
+        hostViewsByPaneID[paneID]?.updateFindQuery(query) ?? false
+    }
+
+    func selectNextFindMatch(for paneID: String) {
+        hostViewsByPaneID[paneID]?.selectNextFindMatch()
+    }
+
+    func selectPreviousFindMatch(for paneID: String) {
+        hostViewsByPaneID[paneID]?.selectPreviousFindMatch()
+    }
+
+    func dismissFindInteraction(for paneID: String, refocusTerminal: Bool = true) {
+        hostViewsByPaneID[paneID]?.dismissFindInteraction(refocusTerminal: refocusTerminal)
+    }
+
     var registeredPaneIDs: Set<String> {
         Set(hostViewsByPaneID.keys).union(runtimeService.registeredPaneIDs)
     }

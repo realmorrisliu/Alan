@@ -17,6 +17,9 @@ private enum ShellRuntimeMetadataTests {
         verifiesRuntimeProjectsTerminalStatusIntoPaneMetadata()
         verifiesSurfaceExitOverridesRunningMetadata()
         verifiesTerminalStatusSummaryPrioritizesExitAndRendererHealth()
+        verifiesPaneTitleBarPrefersTerminalTitle()
+        verifiesPaneTitleBarFallbackOrdering()
+        verifiesPaneTitleBarSuppressesInternalTitles()
         print("Shell runtime metadata tests passed.")
     }
 
@@ -193,6 +196,171 @@ private enum ShellRuntimeMetadataTests {
         expect(shellTerminalStatusSummary(for: ordinary) == nil, "ordinary summaries must not hide cwd or branch metadata")
     }
 
+    private static func verifiesPaneTitleBarPrefersTerminalTitle() {
+        let title = shellPaneTitleBarTitle(
+            for: pane(
+                context: context(
+                    workingDirectoryName: "Alan",
+                    processState: "running",
+                    rendererHealth: "ready",
+                    surfaceReadiness: "ready",
+                    lastCommandExitCode: nil
+                ),
+                viewport: ShellViewportSnapshot(
+                    title: "vim main.rs - fish",
+                    summary: nil,
+                    visibleExcerpt: nil,
+                    lastActivityAt: nil
+                ),
+                cwd: "/Users/morris/Developer/Alan",
+                process: ShellProcessBinding(program: "fish", argvPreview: nil),
+                attention: .idle
+            )
+        )
+
+        expect(title == "vim main.rs", "pane title bar must prefer normalized terminal title over cwd")
+    }
+
+    private static func verifiesPaneTitleBarFallbackOrdering() {
+        let cwdTitle = shellPaneTitleBarTitle(
+            for: pane(
+                context: context(
+                    workingDirectoryName: "Workspace",
+                    processState: "running",
+                    rendererHealth: "ready",
+                    surfaceReadiness: "ready",
+                    lastCommandExitCode: nil
+                ),
+                viewport: nil,
+                cwd: "/tmp/project",
+                process: ShellProcessBinding(program: "fish", argvPreview: nil),
+                attention: .idle
+            )
+        )
+        expect(cwdTitle == "project", "pane title bar must use cwd leaf before working-directory name")
+
+        let workingDirectoryTitle = shellPaneTitleBarTitle(
+            for: pane(
+                context: context(
+                    workingDirectoryName: "Workspace",
+                    processState: "running",
+                    rendererHealth: "ready",
+                    surfaceReadiness: "ready",
+                    lastCommandExitCode: nil
+                ),
+                viewport: nil,
+                cwd: nil,
+                process: ShellProcessBinding(program: "fish", argvPreview: nil),
+                attention: .idle
+            )
+        )
+        expect(workingDirectoryTitle == "Workspace", "pane title bar must use working directory when cwd is missing")
+
+        let alanTitle = shellPaneTitleBarTitle(
+            for: pane(
+                context: context(
+                    workingDirectoryName: nil,
+                    processState: "running",
+                    rendererHealth: "ready",
+                    surfaceReadiness: "ready",
+                    lastCommandExitCode: nil
+                ),
+                viewport: nil,
+                cwd: nil,
+                launchTarget: .alan,
+                process: ShellProcessBinding(program: "alan", argvPreview: nil),
+                attention: .idle
+            )
+        )
+        expect(alanTitle == "Alan", "pane title bar must expose Alan launch-target fallback")
+
+        let processTitle = shellPaneTitleBarTitle(
+            for: pane(
+                context: context(
+                    workingDirectoryName: nil,
+                    processState: "running",
+                    rendererHealth: "ready",
+                    surfaceReadiness: "ready",
+                    lastCommandExitCode: nil
+                ),
+                viewport: nil,
+                cwd: nil,
+                process: ShellProcessBinding(program: "fish", argvPreview: nil),
+                attention: .idle
+            )
+        )
+        expect(processTitle == "fish", "pane title bar must use process fallback before generic Terminal")
+    }
+
+    private static func verifiesPaneTitleBarSuppressesInternalTitles() {
+        let debugTitle = shellPaneTitleBarTitle(
+            for: pane(
+                context: context(
+                    workingDirectoryName: "Alan",
+                    processState: "running",
+                    rendererHealth: "ready",
+                    surfaceReadiness: "ready",
+                    lastCommandExitCode: nil
+                ),
+                viewport: ShellViewportSnapshot(
+                    title: "title updated",
+                    summary: nil,
+                    visibleExcerpt: nil,
+                    lastActivityAt: nil
+                ),
+                cwd: "/Users/morris/Developer/Alan",
+                process: ShellProcessBinding(program: "fish", argvPreview: nil),
+                attention: .idle
+            )
+        )
+        expect(debugTitle == "Alan", "pane title bar must suppress debug title text")
+
+        let rawPaneTitle = shellPaneTitleBarTitle(
+            for: pane(
+                context: context(
+                    workingDirectoryName: "Workspace",
+                    processState: "running",
+                    rendererHealth: "ready",
+                    surfaceReadiness: "ready",
+                    lastCommandExitCode: nil
+                ),
+                viewport: ShellViewportSnapshot(
+                    title: "pane_42",
+                    summary: nil,
+                    visibleExcerpt: nil,
+                    lastActivityAt: nil
+                ),
+                cwd: nil,
+                process: ShellProcessBinding(program: "fish", argvPreview: nil),
+                attention: .idle
+            )
+        )
+        expect(rawPaneTitle == "Workspace", "pane title bar must suppress raw pane IDs")
+
+        let longTitle = "ssh production-shell-with-a-very-long-title.example.com"
+        let preservedLongTitle = shellPaneTitleBarTitle(
+            for: pane(
+                context: context(
+                    workingDirectoryName: nil,
+                    processState: "running",
+                    rendererHealth: "ready",
+                    surfaceReadiness: "ready",
+                    lastCommandExitCode: nil
+                ),
+                viewport: ShellViewportSnapshot(
+                    title: longTitle,
+                    summary: nil,
+                    visibleExcerpt: nil,
+                    lastActivityAt: nil
+                ),
+                cwd: nil,
+                process: nil,
+                attention: .idle
+            )
+        )
+        expect(preservedLongTitle == longTitle, "pane title helper must leave long titles available for UI truncation")
+    }
+
     private static func makeController() -> ShellHostController {
         let windowID = "metadata_test_\(UUID().uuidString)"
         let registry = TerminalRuntimeRegistry(runtimeService: FakeAlanTerminalRuntimeService())
@@ -213,15 +381,18 @@ private enum ShellRuntimeMetadataTests {
     private static func pane(
         context: ShellContextSnapshot,
         viewport: ShellViewportSnapshot?,
+        cwd: String? = "/Users/morris/Developer/Alan",
+        launchTarget: ShellLaunchTarget = .shell,
+        process: ShellProcessBinding? = ShellProcessBinding(program: "fish", argvPreview: nil),
         attention: ShellAttentionState
     ) -> ShellPane {
         ShellPane(
             paneID: "pane_1",
             tabID: "tab_1",
             spaceID: "space_1",
-            launchTarget: .shell,
-            cwd: "/Users/morris/Developer/Alan",
-            process: ShellProcessBinding(program: "fish", argvPreview: nil),
+            launchTarget: launchTarget,
+            cwd: cwd,
+            process: process,
             attention: attention,
             context: context,
             viewport: viewport,
@@ -230,13 +401,14 @@ private enum ShellRuntimeMetadataTests {
     }
 
     private static func context(
+        workingDirectoryName: String? = "Alan",
         processState: String,
         rendererHealth: String,
         surfaceReadiness: String,
         lastCommandExitCode: Int?
     ) -> ShellContextSnapshot {
         ShellContextSnapshot(
-            workingDirectoryName: "Alan",
+            workingDirectoryName: workingDirectoryName,
             repositoryRoot: nil,
             gitBranch: nil,
             controlPath: nil,

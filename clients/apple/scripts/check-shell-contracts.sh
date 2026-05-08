@@ -28,7 +28,33 @@ reject_pattern() {
     fi
 }
 
+reject_active_shell_radius_drift() {
+    local matched=0
+    local file
+
+    for file in \
+        "clients/apple/AlanNative/MacShellRootView.swift" \
+        "clients/apple/AlanNative/TerminalPaneView.swift" \
+        "clients/apple/AlanNative/TerminalHostView.swift"
+    do
+        if grep -En 'RoundedRectangle\(cornerRadius: (1[4-9]|[2-9][0-9])|cornerRadius = (1[4-9]|[2-9][0-9])' "$REPO_ROOT/$file" >&2; then
+            matched=1
+        fi
+
+        if grep -En 'Capsule\(style: \.continuous\)' "$REPO_ROOT/$file" >&2; then
+            matched=1
+        fi
+    done
+
+    if [[ "$matched" -ne 0 ]]; then
+        printf 'error: active macOS shell chrome must use ShellRadii tokens and avoid default Capsule chrome\n' >&2
+        exit 1
+    fi
+}
+
 "$SCRIPT_DIR/setup-local-ghosttykit.sh" --check >/dev/null
+"$SCRIPT_DIR/check-architecture-maintainability.sh" >/dev/null
+reject_active_shell_radius_drift
 
 require_pattern \
     "clients/apple/AlanNative/TerminalRuntimeRegistry.swift" \
@@ -114,6 +140,31 @@ require_pattern \
     "clients/apple/scripts/test-terminal-surface-controller.swift" \
     "verifiesSearchActionsReachSurfaceEngine" \
     "surface controller tests must prove search actions reach the surface engine"
+
+require_pattern \
+    "clients/apple/AlanNative/TerminalPaneView.swift" \
+    "ShellFindBarView" \
+    "pane-scoped Find must render as a real SwiftUI find bar"
+
+reject_pattern \
+    "clients/apple/AlanNative/MacShellRootView.swift" \
+    "alanShellShowsInspector|showsInspector|ShellInspectorView|ShellInspectorSection|InspectorCard|toggleInspector|Show Inspector|Hide Inspector|right-side shell inspector" \
+    "default macOS shell must not expose the removed inspector product surface"
+
+reject_pattern \
+    "clients/apple/AlanNative/MacShellRootView.swift" \
+    "show inspector|hide inspector|open inspector|close inspector|toggle inspector" \
+    "legacy shell voice commands must not expose inspector commands"
+
+reject_pattern \
+    "clients/apple/AlanNative/TerminalHostView.swift" \
+    "handleSearchKeyIfNeeded|current \\+ characters|dropLast\\(\\)" \
+    "Find query editing must be owned by the SwiftUI Find bar instead of terminal key capture"
+
+reject_pattern \
+    "clients/apple/AlanNative/TerminalSurfaceController.swift" \
+    "Search terminal|Find text in this pane|Type to search this pane" \
+    "Find UI must render through ShellFindBarView instead of the passive terminal overlay card"
 
 require_pattern \
     "clients/apple/scripts/test-terminal-surface-controller.swift" \
@@ -284,6 +335,26 @@ require_pattern \
     "clients/apple/AlanNative/TerminalPaneView.swift" \
     "ShellTerminalSurfaceFrame" \
     "terminal panes must share one outer rounded terminal surface frame"
+
+require_pattern \
+    "clients/apple/AlanNative/TerminalPaneView.swift" \
+    "ShellPaneTitleBarView" \
+    "visible terminal panes must render a compact pane title bar"
+
+require_pattern \
+    "clients/apple/AlanNative/TerminalPaneView.swift" \
+    "shellPaneTitleBarTitle" \
+    "pane title bars must use a dedicated title helper with terminal-title-first priority"
+
+require_pattern \
+    "clients/apple/AlanNative/ShellHostController.swift" \
+    "func closePaneByID\\(_ paneID: String\\) -> Bool" \
+    "pane title-bar close must route through a controller-owned targeted pane close path"
+
+require_pattern \
+    "clients/apple/scripts/test-shell-split-model.swift" \
+    "verifiesPaneScopedCloseKeepsInactivePaneTargeting" \
+    "split model tests must cover pane-scoped close targeting"
 
 require_pattern \
     "clients/apple/AlanNative/TerminalPaneView.swift" \

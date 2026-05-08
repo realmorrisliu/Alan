@@ -7,8 +7,9 @@ Ghostty bridge, but those concerns are still expressed through large flat Swift
 files:
 
 - `MacShellRootView.swift` mixes theme tokens, SwiftUI shell layout, AppKit
-  material wrappers, window placement, sidebar, inspector, command tab, and
-  voice command UI.
+  material wrappers, window placement, sidebar, command tab, and voice command
+  UI. The inspector product surface has been removed, but the remaining shell
+  root still needs smaller view ownership.
 - `AlanNativeApp.swift` mixes the app entry point, singleton handling, primary
   shell owner, window focusing, app delegate, and shell commands.
 - `ContentView.swift` still combines legacy/mobile console models, daemon event

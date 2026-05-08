@@ -16,6 +16,10 @@ private enum ShellSplitModelTests {
         try verifiesSameDirectionAttachKeepsBinarySplitTree()
         try verifiesSpatialFocusFollowsSplitTree()
         try verifiesSpatialFocusPreservesPerpendicularPosition()
+        try verifiesPaneScopedCloseRemovesSelectedPane()
+        try verifiesPaneScopedCloseKeepsInactivePaneTargeting()
+        try verifiesPaneScopedCloseClosesSinglePaneTab()
+        try verifiesPaneScopedClosePreservesFinalPane()
         try verifiesLegacySplitDecodeDefaultsToEqualRatio()
         print("Shell split model tests passed.")
     }
@@ -166,6 +170,59 @@ private enum ShellSplitModelTests {
             upResult.paneID == "pane_3",
             "focus up from the lower-right pane must return to the upper-right pane"
         )
+    }
+
+    private static func verifiesPaneScopedCloseKeepsInactivePaneTargeting() throws {
+        var state = ShellStateSnapshot.bootstrapDefault(workingDirectory: "/tmp")
+        state = try state.splittingPane("pane_1", placement: .right).state
+        state = try state.focusingPane("pane_1").state
+
+        let result = try state.closingPane("pane_2")
+        let tree = try requireFocusedTabTree(result.state)
+
+        expect(result.state.pane(paneID: "pane_2") == nil, "targeted close must remove the requested pane")
+        expect(result.state.pane(paneID: "pane_1") != nil, "targeted close must preserve the selected sibling")
+        expect(result.state.focusedPaneID == "pane_1", "closing an inactive pane must not move focus")
+        expect(tree.paneIDs == ["pane_1"], "split tree must repair after closing the inactive pane")
+    }
+
+    private static func verifiesPaneScopedCloseRemovesSelectedPane() throws {
+        var state = ShellStateSnapshot.bootstrapDefault(workingDirectory: "/tmp")
+        state = try state.splittingPane("pane_1", placement: .right).state
+
+        let result = try state.closingPane("pane_2")
+        let tree = try requireFocusedTabTree(result.state)
+
+        expect(result.state.pane(paneID: "pane_2") == nil, "selected pane close must remove the selected pane")
+        expect(result.state.focusedPaneID == "pane_1", "selected pane close must focus the remaining sibling")
+        expect(tree.paneIDs == ["pane_1"], "selected pane close must repair the split tree")
+    }
+
+    private static func verifiesPaneScopedCloseClosesSinglePaneTab() throws {
+        var state = ShellStateSnapshot.bootstrapDefault(workingDirectory: "/tmp")
+        state = try state.openingTerminalTab(
+            in: state.focusedSpaceID,
+            title: "Second",
+            workingDirectory: "/tmp"
+        ).state
+
+        let result = try state.closingPane("pane_2")
+
+        expect(result.state.pane(paneID: "pane_2") == nil, "single-pane tab close must remove that pane")
+        expect(result.state.tab(tabID: "tab_2") == nil, "single-pane tab close must reuse tab close semantics")
+        expect(result.state.pane(paneID: "pane_1") != nil, "single-pane tab close must preserve remaining tab panes")
+        expect(result.state.focusedPaneID == "pane_1", "single-pane tab close must focus a remaining pane")
+    }
+
+    private static func verifiesPaneScopedClosePreservesFinalPane() throws {
+        let state = ShellStateSnapshot.bootstrapDefault(workingDirectory: "/tmp")
+
+        do {
+            _ = try state.closingPane("pane_1")
+            expect(false, "closing the final pane in the final tab must throw")
+        } catch ShellStateMutationError.lastTab {
+            // Expected.
+        }
     }
 
     private static func verifiesLegacySplitDecodeDefaultsToEqualRatio() throws {

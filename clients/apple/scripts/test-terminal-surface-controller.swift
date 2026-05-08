@@ -347,6 +347,14 @@ private enum TerminalSurfaceControllerTests {
         expect(controller.beginSearch(), "controller must start search through the surface engine")
         expect(handle.searchActions == ["start_search"], "begin search must invoke Ghostty search action")
         expect(controller.searchAdapter?.state.isActive == true, "started search must become active")
+        let firstFocusRequestID = controller.searchAdapter?.state.focusRequestID
+
+        expect(controller.beginSearch(), "active search must accept a renewed focus request")
+        expect(handle.searchActions == ["start_search"], "active search focus must not restart the search engine")
+        expect(
+            controller.searchAdapter?.state.focusRequestID == firstFocusRequestID.map { $0 + 1 },
+            "active search focus must refresh the Find bar focus token"
+        )
 
         expect(
             controller.updateSearchQuery("alan"),

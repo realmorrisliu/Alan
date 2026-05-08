@@ -1,0 +1,169 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
+APPLE_ROOT="$REPO_ROOT/clients/apple"
+SOURCE_ROOT="$APPLE_ROOT/AlanNative"
+PROJECT_FILE="$APPLE_ROOT/AlanNative.xcodeproj/project.pbxproj"
+README_FILE="$APPLE_ROOT/README.md"
+ARCH_DOC="$APPLE_ROOT/ARCHITECTURE.md"
+STRICT=0
+
+if [[ "${1:-}" == "--strict" ]]; then
+    STRICT=1
+fi
+
+warnings=0
+failures=0
+
+warn() {
+    printf 'warning: %s\n' "$1"
+    warnings=$((warnings + 1))
+}
+
+fail() {
+    printf 'error: %s\n' "$1" >&2
+    failures=$((failures + 1))
+}
+
+contains_line() {
+    local needle="$1"
+    shift
+    local item
+    for item in "$@"; do
+        [[ "$item" == "$needle" ]] && return 0
+    done
+    return 1
+}
+
+current_root_swift_allowlist=(
+    "AlanAPIClient.swift"
+    "AlanAppSingletonGuard.swift"
+    "AlanNativeApp.swift"
+    "ContentView.swift"
+    "GhosttyLiveHost.swift"
+    "MacShellRootView.swift"
+    "ShellControlPlane.swift"
+    "ShellHostController.swift"
+    "ShellModel.swift"
+    "TerminalHostRuntime.swift"
+    "TerminalHostView.swift"
+    "TerminalPaneView.swift"
+    "TerminalRuntimeRegistry.swift"
+    "TerminalRuntimeService.swift"
+    "TerminalSurfaceController.swift"
+)
+
+target_dirs=(
+    "App"
+    "Views/Shell"
+    "Views/Console"
+    "Models"
+    "Controllers"
+    "Services"
+    "Support"
+)
+
+large_file_threshold=1200
+
+printf 'Apple architecture maintainability report\n'
+printf 'Source root: clients/apple/AlanNative\n\n'
+
+if [[ ! -f "$ARCH_DOC" ]]; then
+    fail "clients/apple/ARCHITECTURE.md must record the architecture inventory and target layout"
+fi
+
+printf 'Current Swift inventory:\n'
+while IFS= read -r file; do
+    rel="${file#$SOURCE_ROOT/}"
+    lines="$(wc -l < "$file" | tr -d ' ')"
+    imports="$(grep -E '^import ' "$file" | sed 's/^import //' | paste -sd ',' - || true)"
+    gates="$(grep -E '^#if (os|canImport)' "$file" | sed 's/^#if //' | paste -sd ',' - || true)"
+    if [[ -z "$imports" ]]; then
+        imports="-"
+    fi
+    if [[ -z "$gates" ]]; then
+        gates="-"
+    fi
+    printf '  %-36s %5s lines  imports=%s  gates=%s\n' "$rel" "$lines" "$imports" "$gates"
+
+    if [[ "$rel" != */* ]]; then
+        if ! contains_line "$rel" "${current_root_swift_allowlist[@]}"; then
+            fail "new root-level Swift file '$rel' should be placed in the target owner folder"
+        fi
+    fi
+
+    if (( lines > large_file_threshold )); then
+        warn "$rel is $lines lines; keep new behavior in the target owner or document the temporary boundary"
+    fi
+
+    if grep -Eq '^import (AppKit|Darwin)$' "$file"; then
+        case "$rel" in
+            App/*|Services/*|Support/*|Views/Shell/Terminal/*|AlanNativeApp.swift|AlanAppSingletonGuard.swift|GhosttyLiveHost.swift|ShellControlPlane.swift|TerminalHostView.swift|TerminalRuntimeService.swift|TerminalSurfaceController.swift)
+                ;;
+            MacShellRootView.swift|ContentView.swift|ShellHostController.swift|TerminalRuntimeRegistry.swift)
+                warn "$rel imports AppKit or Darwin while it remains outside a narrow bridge owner"
+                ;;
+            *)
+                fail "$rel imports AppKit or Darwin outside an accepted app, service, support, or terminal bridge boundary"
+                ;;
+        esac
+    fi
+
+    if ! grep -q "$rel" "$PROJECT_FILE"; then
+        fail "$rel is not referenced by the Xcode project"
+    fi
+done < <(find "$SOURCE_ROOT" -name '*.swift' -type f | sort)
+
+printf '\nTarget layout status:\n'
+for dir in "${target_dirs[@]}"; do
+    if [[ -d "$SOURCE_ROOT/$dir" ]]; then
+        printf '  present: clients/apple/AlanNative/%s\n' "$dir"
+    else
+        warn "target folder clients/apple/AlanNative/$dir is not present yet"
+    fi
+    if [[ -f "$ARCH_DOC" ]] && ! grep -q "\`$dir/\`" "$ARCH_DOC"; then
+        fail "clients/apple/ARCHITECTURE.md must document target folder $dir/"
+    fi
+done
+
+printf '\nREADME layout drift:\n'
+while IFS= read -r entry; do
+    path="$(printf '%s' "$entry" | sed -E 's/^- `([^`]+)`.*/\1/')"
+    [[ "$path" == "$entry" ]] && continue
+    case "$path" in
+        *.swift)
+            [[ -f "$SOURCE_ROOT/$path" ]] || warn "README lists $path but the file is not at clients/apple/AlanNative/$path"
+            ;;
+        */)
+            [[ -d "$SOURCE_ROOT/${path%/}" ]] || warn "README lists $path but the folder is not present yet"
+            ;;
+    esac
+done < <(grep -E '^- `[^`]+`' "$README_FILE" || true)
+
+if ! grep -q "check-architecture-maintainability.sh" "$README_FILE"; then
+    warn "README does not mention the architecture maintainability report command"
+fi
+
+printf '\nXcode project membership drift:\n'
+while IFS= read -r ref; do
+    name="$(printf '%s' "$ref" | sed -E 's/.*path = ([^;]+);.*/\1/')"
+    [[ "$name" == "$ref" ]] && continue
+    [[ "$name" == *.swift ]] || continue
+    if [[ ! -f "$SOURCE_ROOT/$name" ]]; then
+        fail "Xcode project references missing Swift file $name"
+    fi
+done < <(grep -E 'path = .*\.swift;' "$PROJECT_FILE" || true)
+
+if (( failures > 0 )); then
+    printf '\nArchitecture maintainability check failed with %d error(s) and %d warning(s).\n' "$failures" "$warnings" >&2
+    exit 1
+fi
+
+if (( STRICT == 1 && warnings > 0 )); then
+    printf '\nArchitecture maintainability strict check failed with %d warning(s).\n' "$warnings" >&2
+    exit 1
+fi
+
+printf '\nArchitecture maintainability report completed with %d warning(s).\n' "$warnings"
