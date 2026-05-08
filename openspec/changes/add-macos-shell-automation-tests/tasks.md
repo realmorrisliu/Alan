@@ -23,7 +23,7 @@
 
 ## 4. UI Smoke And Documentation
 
-- [ ] 4.1 Add a repeatable UI smoke or screenshot script for launch, space/tab switching, split creation, command UI, inspector overview/debug, and basic terminal input when available.
+- [ ] 4.1 Add a repeatable UI smoke or screenshot script for launch, space/tab switching, split creation, command UI, pane-scoped Find behavior for the focused pane, and basic terminal input when available.
 - [ ] 4.2 Add focused Apple test and UI smoke commands to `justfile` or Apple helper scripts.
 - [ ] 4.3 Update `clients/apple/README.md` with dependency setup, focused tests, UI smoke, and Ghostty integration commands.
 - [ ] 4.4 Ensure smoke artifacts avoid exposing private terminal content.
