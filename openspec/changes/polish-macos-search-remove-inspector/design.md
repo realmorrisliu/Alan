@@ -104,8 +104,10 @@ macOS Find control.
 
    - `Command-F`: open Find for the focused pane and focus/select the query
      field.
-   - `Return` or `Command-G`: next match.
-   - `Shift-Return` or `Shift-Command-G`: previous match.
+   - `Return` or `Command-G`: next match for the pane that owns the active Find
+     interaction.
+   - `Shift-Return` or `Shift-Command-G`: previous match for the pane that owns
+     the active Find interaction.
    - `Escape`: close Find and return focus to the owning terminal pane.
 
    Optional controls should be icon-first: previous, next, close, and a match
@@ -114,10 +116,12 @@ macOS Find control.
 
 6. Keep backend search lifecycle pane-owned.
 
-   Search start/update/navigation/end continues through the focused pane's
-   `TerminalSurfaceController` and `AlanTerminalSearchEngine`. View rebuilds
-   should not lose active search state for the pane runtime. Closing Find calls
-   `endSearch()` and returns first responder to the terminal host when possible.
+   Search starts through the focused pane's `TerminalSurfaceController` and
+   `AlanTerminalSearchEngine`. Once Find is active, query
+   update/navigation/end continues through the pane that owns that Find
+   interaction even if split-pane focus changes. View rebuilds should not lose
+   active search state for the pane runtime. Closing Find calls `endSearch()`
+   and returns first responder to the terminal host when possible.
 
 ## Risks / Trade-offs
 

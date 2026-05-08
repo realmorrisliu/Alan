@@ -93,11 +93,11 @@ into a dashboard or page layout.
 
 #### Scenario: Search updates
 - **WHEN** the user types or edits text in the Find bar
-- **THEN** query changes are applied to the focused pane's terminal search engine without sending those characters as terminal input
+- **THEN** query changes are applied to the terminal search engine for the pane that owns the active Find interaction without sending those characters as terminal input
 
 #### Scenario: Search navigates
 - **WHEN** matches exist and the user presses Return, `Command-G`, Shift-Return, Shift-`Command-G`, or the previous/next controls
-- **THEN** Alan moves between matches in the focused pane and updates visible match feedback such as `2 of 9`
+- **THEN** Alan moves between matches for the pane that owns the active Find interaction and updates visible match feedback such as `2 of 9`
 
 #### Scenario: Search closes
 - **WHEN** the user dismisses terminal search with Escape or the close control

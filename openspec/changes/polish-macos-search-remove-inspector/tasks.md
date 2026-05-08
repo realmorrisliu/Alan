@@ -18,8 +18,8 @@
 ## 3. Find Keyboard And Focus Routing
 
 - [ ] 3.1 Keep `Command-F` routed to the focused pane's terminal search owner and open the Find bar.
-- [ ] 3.2 Route Return and `Command-G` to next search result while Find is active.
-- [ ] 3.3 Route Shift-Return and Shift-`Command-G` to previous search result while Find is active.
+- [ ] 3.2 Route Return and `Command-G` to the next search result for the pane that owns the active Find interaction.
+- [ ] 3.3 Route Shift-Return and Shift-`Command-G` to the previous search result for the pane that owns the active Find interaction.
 - [ ] 3.4 Route Escape and the close control to `dismissSearch()` for the owning pane.
 - [ ] 3.5 Return first responder/focus to the owning terminal pane after Find is dismissed.
 - [ ] 3.6 Verify split-pane focus changes cannot send query edits or navigation to the wrong pane.
