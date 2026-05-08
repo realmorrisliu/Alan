@@ -795,6 +795,9 @@ private struct ShellFindBarView: View {
                     guard nextQuery != query else { return }
                     query = nextQuery
                 }
+                .onChange(of: searchState.focusRequestID) { _, _ in
+                    isFocused = true
+                }
                 .onSubmit {
                     onNext()
                 }
