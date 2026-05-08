@@ -38,7 +38,8 @@ Xcode target.
 | `ShellHostController.swift` | 1965 | Foundation, AppKit, SwiftUI; macOS gates | Observable shell controller, persistence, boot profiles, runtime projection, command routing | `Controllers/Shell/` plus service collaborators |
 | `ShellControlPlane.swift` | 2105 | Foundation, Darwin; macOS gates | Protocol DTOs, socket server, file polling, local executor, state merging, persistence, diagnostics | `Services/ControlPlane/` plus `Models/ControlPlane/` |
 | `AlanAPIClient.swift` | 764 | Foundation | Daemon API DTOs and HTTP client | `Services/Daemon/` plus `Models/API/` |
-| `Views/Console/ContentView.swift` | 1960 | SwiftUI, AppKit; iOS/macOS gates | Legacy/mobile console UI, console view model state, daemon event polling and reduction | `Views/Console/`, `Models/Console/`, and `Services/Daemon/` |
+| `Models/Console/ConsoleModels.swift` | 148 | Foundation | Console chat messages, timeline entries, structured questions, and pending-yield value state | `Models/Console/` |
+| `Views/Console/ContentView.swift` | 1813 | SwiftUI, AppKit; iOS/macOS gates | Legacy/mobile console UI, console view model state, daemon event polling and reduction | `Views/Console/`, `Controllers/Console/`, and `Services/Daemon/` |
 
 ## Target Layout
 

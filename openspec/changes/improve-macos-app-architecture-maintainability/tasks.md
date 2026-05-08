@@ -22,7 +22,7 @@
 ## 4. Console, API, And Event Reduction Boundaries
 
 - [x] 4.1 Move mobile or legacy console UI from `ContentView.swift` into a clearly named console/mobile folder while preserving the non-macOS app entry path.
-- [ ] 4.2 Move chat/timeline/pending-yield value types into model files or console-specific model files.
+- [x] 4.2 Move chat/timeline/pending-yield value types into model files or console-specific model files.
 - [ ] 4.3 Split daemon API DTOs and `AlanAPIClient` ownership from console view model and SwiftUI screens.
 - [ ] 4.4 Extract daemon event polling/reading and event-to-UI-state reduction from `AlanConsoleViewModel` so event mapping is testable without rendering the full console UI.
 
