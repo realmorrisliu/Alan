@@ -13,25 +13,29 @@ Xcode target.
 
 | File | Lines | Platform / bridge imports | Primary responsibility today | Target owner |
 | --- | ---: | --- | --- | --- |
-| `AlanNativeApp.swift` | 31 | SwiftUI; macOS gates | Thin app entry and scene composition | `App/` |
-| `App/AlanMacAppDelegate.swift` | 14 | AppKit; macOS gates | Reopen handling for the primary Alan window | `App/` |
+| `AlanNativeApp.swift` | 34 | SwiftUI; macOS gates | Thin app entry and scene composition | `App/` |
+| `App/AlanMacAppDelegate.swift` | 13 | AppKit; macOS gates | Reopen handling for the primary Alan window | `App/` |
 | `App/AlanMacAppStartup.swift` | 19 | Darwin; macOS gates | Duplicate-instance startup and singleton guard handling | `App/` |
-| `App/AlanMacPrimaryShellOwner.swift` | 20 | Foundation, SwiftUI; macOS gates | Primary `window_main` shell owner creation | `App/` |
-| `App/AlanMacPrimaryWindowPresenter.swift` | 18 | AppKit; macOS gates | Primary Alan window focusing and activation | `App/` |
-| `App/AlanMacShellCommands.swift` | 85 | SwiftUI; macOS gates | App menu and keyboard command definitions routed through shell workspace commands | `App/` |
+| `App/AlanMacPrimaryShellOwner.swift` | 21 | Foundation, SwiftUI; macOS gates | Primary `window_main` shell owner creation | `App/` |
+| `App/AlanMacPrimaryWindowPresenter.swift` | 20 | AppKit; macOS gates | Primary Alan window focusing and activation | `App/` |
+| `App/AlanMacShellCommands.swift` | 91 | SwiftUI; macOS gates | App menu and keyboard command definitions routed through shell workspace commands | `App/` |
 | `AlanAppSingletonGuard.swift` | 141 | Foundation, AppKit, Darwin; macOS gates | OS-backed duplicate-instance guard | `App/` or `Support/Windowing/` |
-| `Support/ShellDesignTokens.swift` | 211 | AppKit, SwiftUI; macOS gates | Shell palette, corner radii, and native material wrapper | `Support/` |
-| `Support/ShellWindowPlacement.swift` | 202 | AppKit, SwiftUI; macOS gates | Hidden-titlebar placement, min-size, traffic-light metrics, and primary window activation | `Support/` |
-| `MacShellRootView.swift` | 1787 | SwiftUI; macOS gates | Shell root layout, sidebar, command UI, and voice command UI | `Views/Shell/` |
-| `TerminalPaneView.swift` | 806 | SwiftUI; macOS gates | Split-tree and pane leaf rendering | `Views/Shell/Terminal/` |
-| `TerminalHostView.swift` | 1442 | AppKit, SwiftUI, QuartzCore, GhosttyKit; macOS gates | AppKit terminal host bridge, focus, input routing, overlays, runtime attachment | `Views/Shell/Terminal/` plus terminal collaborators |
+| `Support/ShellDesignTokens.swift` | 200 | AppKit, SwiftUI; macOS gates | Shell palette, corner radii, and native material wrapper | `Support/` |
+| `Support/ShellWindowPlacement.swift` | 205 | AppKit, SwiftUI; macOS gates | Hidden-titlebar placement, min-size, traffic-light metrics, and primary window activation | `Support/` |
+| `Support/ShellVoiceCommandController.swift` | 63 | AppKit, SwiftUI; macOS gates | Narrow speech-recognizer bridge for command palette voice actions | `Support/` |
+| `MacShellRootView.swift` | 63 | SwiftUI; macOS gates | Thin primary shell composition root | `Views/Shell/` |
+| `Views/Shell/ShellSidebarView.swift` | 538 | SwiftUI; macOS gates | Primary shell sidebar, tab rows, space dock, and sidebar state | `Views/Shell/` |
+| `Views/Shell/ShellWorkspaceView.swift` | 46 | SwiftUI; macOS gates | Shell workspace composition and space keyboard shortcuts | `Views/Shell/` |
+| `Views/Shell/ShellCommandTabView.swift` | 621 | SwiftUI; macOS gates | Command palette search, routing, attention, and action presentation | `Views/Shell/` |
+| `TerminalPaneView.swift` | 1002 | SwiftUI; macOS gates | Split-tree and pane leaf rendering | `Views/Shell/Terminal/` |
+| `TerminalHostView.swift` | 1447 | AppKit, SwiftUI, QuartzCore, GhosttyKit; macOS gates | AppKit terminal host bridge, focus, input routing, overlays, runtime attachment | `Views/Shell/Terminal/` plus terminal collaborators |
 | `GhosttyLiveHost.swift` | 896 | Foundation, AppKit, GhosttyKit; macOS/Ghostty gates | Ghostty canvas bridge and wakeup/occlusion integration | `Services/Terminal/` or `Support/TerminalBridge/` |
 | `TerminalHostRuntime.swift` | 636 | Foundation; macOS gates | Terminal host runtime protocols and fallback runtime state | `Services/Terminal/` |
-| `TerminalRuntimeRegistry.swift` | 172 | SwiftUI, AppKit; macOS gates | Pane-keyed terminal host/runtime registry | `Services/Terminal/` |
+| `TerminalRuntimeRegistry.swift` | 194 | SwiftUI, AppKit; macOS gates | Pane-keyed terminal host/runtime registry | `Services/Terminal/` |
 | `TerminalRuntimeService.swift` | 1054 | Foundation, AppKit, GhosttyKit; macOS/Ghostty gates | Window-scoped terminal runtime service and Ghostty bootstrap | `Services/Terminal/` |
-| `TerminalSurfaceController.swift` | 1428 | Foundation, AppKit, GhosttyKit; macOS/Ghostty gates | Terminal input, pointer, scrollback, search, and surface adapters | `Services/Terminal/` |
-| `ShellModel.swift` | 2145 | Foundation | Shell IDs, panes, tabs, spaces, split tree, snapshots, mutations, persistence shims | `Models/Shell/` |
-| `ShellHostController.swift` | 1960 | Foundation, AppKit, SwiftUI; macOS gates | Observable shell controller, persistence, boot profiles, runtime projection, command routing | `Controllers/Shell/` plus service collaborators |
+| `TerminalSurfaceController.swift` | 1424 | Foundation, AppKit, GhosttyKit; macOS/Ghostty gates | Terminal input, pointer, scrollback, search, and surface adapters | `Services/Terminal/` |
+| `ShellModel.swift` | 2256 | Foundation | Shell IDs, panes, tabs, spaces, split tree, snapshots, mutations, persistence shims | `Models/Shell/` |
+| `ShellHostController.swift` | 1965 | Foundation, AppKit, SwiftUI; macOS gates | Observable shell controller, persistence, boot profiles, runtime projection, command routing | `Controllers/Shell/` plus service collaborators |
 | `ShellControlPlane.swift` | 2105 | Foundation, Darwin; macOS gates | Protocol DTOs, socket server, file polling, local executor, state merging, persistence, diagnostics | `Services/ControlPlane/` plus `Models/ControlPlane/` |
 | `AlanAPIClient.swift` | 764 | Foundation | Daemon API DTOs and HTTP client | `Services/Daemon/` plus `Models/API/` |
 | `ContentView.swift` | 1960 | SwiftUI, AppKit; iOS/macOS gates | Legacy/mobile console UI, console view model state, daemon event polling and reduction | `Views/Console/`, `Models/Console/`, and `Services/Daemon/` |
@@ -60,9 +64,11 @@ The accepted target under `clients/apple/AlanNative` is:
 
 - Start with report-mode checks and pure model/support moves.
 - Keep behavior changes out of mechanical move commits.
-- Rebase UI slices around `polish-macos-search-remove-inspector`,
-  `add-macos-pane-title-bars`, and `normalize-macos-shell-corner-radii` before
-  splitting `MacShellRootView.swift`.
+- `polish-macos-search-remove-inspector` and
+  `normalize-macos-shell-corner-radii` were archived before the shell-root
+  split. Keep future UI behavior work, such as `add-macos-pane-title-bars`,
+  rebased on top of the current shell component files instead of burying
+  behavior changes inside architecture-only slices.
 - Split terminal host and control-plane collaborators only with focused runtime
   or IPC script checks in the same slice.
 

@@ -32,6 +32,10 @@
 		000000000000000000000017 /* AlanMacPrimaryWindowPresenter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000117 /* AlanMacPrimaryWindowPresenter.swift */; };
 		000000000000000000000018 /* ShellDesignTokens.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000118 /* ShellDesignTokens.swift */; };
 		000000000000000000000019 /* ShellWindowPlacement.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000119 /* ShellWindowPlacement.swift */; };
+		00000000000000000000001A /* ShellSidebarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000011A /* ShellSidebarView.swift */; };
+		00000000000000000000001B /* ShellWorkspaceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000011B /* ShellWorkspaceView.swift */; };
+		00000000000000000000001C /* ShellCommandTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000011C /* ShellCommandTabView.swift */; };
+		00000000000000000000001D /* ShellVoiceCommandController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000011D /* ShellVoiceCommandController.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -61,6 +65,10 @@
 		000000000000000000000117 /* AlanMacPrimaryWindowPresenter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = App/AlanMacPrimaryWindowPresenter.swift; sourceTree = "<group>"; };
 		000000000000000000000118 /* ShellDesignTokens.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Support/ShellDesignTokens.swift; sourceTree = "<group>"; };
 		000000000000000000000119 /* ShellWindowPlacement.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Support/ShellWindowPlacement.swift; sourceTree = "<group>"; };
+		00000000000000000000011A /* ShellSidebarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/Shell/ShellSidebarView.swift; sourceTree = "<group>"; };
+		00000000000000000000011B /* ShellWorkspaceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/Shell/ShellWorkspaceView.swift; sourceTree = "<group>"; };
+		00000000000000000000011C /* ShellCommandTabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/Shell/ShellCommandTabView.swift; sourceTree = "<group>"; };
+		00000000000000000000011D /* ShellVoiceCommandController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Support/ShellVoiceCommandController.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -90,6 +98,7 @@
 			isa = PBXGroup;
 			children = (
 				000000000000000000000304 /* App */,
+				000000000000000000000306 /* Views/Shell */,
 				000000000000000000000101 /* AlanNativeApp.swift */,
 				000000000000000000000102 /* ContentView.swift */,
 				000000000000000000000103 /* AlanAPIClient.swift */,
@@ -127,8 +136,19 @@
 			children = (
 				000000000000000000000118 /* ShellDesignTokens.swift */,
 				000000000000000000000119 /* ShellWindowPlacement.swift */,
+				00000000000000000000011D /* ShellVoiceCommandController.swift */,
 			);
 			name = Support;
+			sourceTree = "<group>";
+		};
+		000000000000000000000306 /* Views/Shell */ = {
+			isa = PBXGroup;
+			children = (
+				00000000000000000000011A /* ShellSidebarView.swift */,
+				00000000000000000000011B /* ShellWorkspaceView.swift */,
+				00000000000000000000011C /* ShellCommandTabView.swift */,
+			);
+			name = Views/Shell;
 			sourceTree = "<group>";
 		};
 		000000000000000000000303 /* Products */ = {
@@ -253,6 +273,10 @@
 				000000000000000000000017 /* AlanMacPrimaryWindowPresenter.swift in Sources */,
 				000000000000000000000018 /* ShellDesignTokens.swift in Sources */,
 				000000000000000000000019 /* ShellWindowPlacement.swift in Sources */,
+				00000000000000000000001A /* ShellSidebarView.swift in Sources */,
+				00000000000000000000001B /* ShellWorkspaceView.swift in Sources */,
+				00000000000000000000001C /* ShellCommandTabView.swift in Sources */,
+				00000000000000000000001D /* ShellVoiceCommandController.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
