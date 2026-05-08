@@ -6,10 +6,10 @@ terminal-first app. A quick inventory shows the active shell uses hard-coded
 rounded rectangles at 8, 10, 11, 12, 13, 14, 16, 18, 20, 22, and 24 points,
 plus `Capsule` shapes for chips and keycap-like controls. The largest values
 show up in the command palette outer shell (`24`), command search field (`18`),
-tab rail cards (`18`), and terminal info cards (`22`). The separate inspector
-surfaces that previously used `20`-point cards are being removed by
-`polish-macos-search-remove-inspector`, so this normalization pass should not
-keep them alive as a target surface.
+tab rail cards (`18`), and terminal info cards (`22`). The inspector surface
+that previously used `20`-point cards is removed by
+`polish-macos-search-remove-inspector`, so this normalization pass must not keep
+it alive as a target surface.
 
 This conflicts with the current product direction: Arc-like native material,
 compact rows, terminal-first focus, and calm precision. The UI should feel

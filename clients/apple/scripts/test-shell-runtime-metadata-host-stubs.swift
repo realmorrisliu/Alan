@@ -25,5 +25,19 @@ final class AlanTerminalHostNSView: NSView {
     func teardownTerminalRuntime() {
         teardownCount += 1
     }
+
+    func beginFindInteraction() -> Bool {
+        false
+    }
+
+    func updateFindQuery(_ query: String) -> Bool {
+        false
+    }
+
+    func selectNextFindMatch() {}
+
+    func selectPreviousFindMatch() {}
+
+    func dismissFindInteraction(refocusTerminal: Bool = true) {}
 }
 #endif

@@ -1134,28 +1134,6 @@ final class AlanTerminalSurfaceController {
         metadata: TerminalPaneMetadataSnapshot,
         bootProfile: AlanShellBootProfile?
     ) -> AlanTerminalOverlayState? {
-        if let searchState = searchAdapter?.state,
-           searchState.isActive
-        {
-            let status: String
-            if let totalMatches = searchState.totalMatches,
-               let selectedIndex = searchState.selectedIndex
-            {
-                status = "\(selectedIndex + 1) of \(totalMatches)"
-            } else if searchState.query.isEmpty {
-                status = "Type to search this pane."
-            } else {
-                status = "Searching this pane."
-            }
-            return AlanTerminalOverlayState(
-                title: "Search terminal",
-                message: searchState.query.isEmpty ? "Find text in this pane." : searchState.query,
-                badge: "Search",
-                action: status,
-                debugDetail: "pane=\(searchState.paneID)"
-            )
-        }
-
         let readiness: AlanTerminalSurfaceReadiness
         if bootProfile == nil || surfaceHandle == nil {
             readiness = .unready(reason: .missingSurface)

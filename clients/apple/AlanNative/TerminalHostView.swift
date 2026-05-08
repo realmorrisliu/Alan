@@ -249,7 +249,7 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
     private func configureView() {
         wantsLayer = true
         layer?.backgroundColor = NSColor(calibratedRed: 0.06, green: 0.08, blue: 0.10, alpha: 1).cgColor
-        layer?.cornerRadius = 12
+        layer?.cornerRadius = ShellRadii.surface
         layer?.cornerCurve = .continuous
         layer?.masksToBounds = true
         layer?.borderWidth = 0
@@ -270,7 +270,7 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
         overlayCard.state = .active
         overlayCard.translatesAutoresizingMaskIntoConstraints = false
         overlayCard.wantsLayer = true
-        overlayCard.layer?.cornerRadius = 18
+        overlayCard.layer?.cornerRadius = ShellRadii.overlay
         overlayCard.layer?.borderWidth = 1
         overlayCard.layer?.borderColor = NSColor.white.withAlphaComponent(0.12).cgColor
 
@@ -997,9 +997,6 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
         if routeNativeKeyCommandIfNeeded(event) {
             return
         }
-        if handleSearchKeyIfNeeded(event) {
-            return
-        }
 
 #if canImport(GhosttyKit)
         if isApplicationReservedKeyEquivalent(event) {
@@ -1217,10 +1214,7 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
     private func routeNativeKeyCommandIfNeeded(_ event: NSEvent) -> Bool {
         switch surfaceController.inputAdapter.routeKey(terminalKeyInput(for: event)) {
         case .nativeCommand("find"):
-            guard surfaceController.beginSearch() else { return false }
-            syncOverlayVisibility()
-            publishRuntimeSnapshot()
-            return true
+            return beginFindInteraction()
         case .nativeCommand("quit"):
             return false
         case .nativeCommand, .terminalText, .terminalKey, .ignored:
@@ -1235,33 +1229,6 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
             return false
         }
         workspaceCommandHandler?(command)
-        return true
-    }
-
-    private func handleSearchKeyIfNeeded(_ event: NSEvent) -> Bool {
-        guard surfaceController.searchAdapter?.state.isActive == true else { return false }
-        guard event.type == .keyDown else { return true }
-        if event.modifierFlags.intersection(.deviceIndependentFlagsMask).contains(.command) {
-            return false
-        }
-
-        switch event.keyCode {
-        case 0x35:
-            surfaceController.dismissSearch()
-        case 0x24:
-            surfaceController.nextSearchMatch()
-        case 0x33:
-            let current = surfaceController.searchAdapter?.state.query ?? ""
-            surfaceController.updateSearchQuery(String(current.dropLast()))
-        default:
-            if let characters = textForKeyEvent(event), shouldSendText(characters) {
-                let current = surfaceController.searchAdapter?.state.query ?? ""
-                surfaceController.updateSearchQuery(current + characters)
-            }
-        }
-
-        syncOverlayVisibility()
-        publishRuntimeSnapshot()
         return true
     }
 
@@ -1413,6 +1380,43 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
 
     func characterIndex(for point: NSPoint) -> Int {
         0
+    }
+
+    @discardableResult
+    func beginFindInteraction() -> Bool {
+        guard surfaceController.beginSearch() else { return false }
+        syncOverlayVisibility()
+        publishRuntimeSnapshot()
+        return true
+    }
+
+    @discardableResult
+    func updateFindQuery(_ query: String) -> Bool {
+        guard surfaceController.updateSearchQuery(query) else { return false }
+        syncOverlayVisibility()
+        publishRuntimeSnapshot()
+        return true
+    }
+
+    func selectNextFindMatch() {
+        surfaceController.nextSearchMatch()
+        syncOverlayVisibility()
+        publishRuntimeSnapshot()
+    }
+
+    func selectPreviousFindMatch() {
+        surfaceController.previousSearchMatch()
+        syncOverlayVisibility()
+        publishRuntimeSnapshot()
+    }
+
+    func dismissFindInteraction(refocusTerminal: Bool) {
+        surfaceController.dismissSearch()
+        syncOverlayVisibility()
+        publishRuntimeSnapshot()
+        if refocusTerminal {
+            requestTerminalFocus()
+        }
     }
 }
 

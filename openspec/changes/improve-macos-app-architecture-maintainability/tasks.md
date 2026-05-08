@@ -1,9 +1,9 @@
 ## 1. Architecture Inventory And Guardrails
 
-- [ ] 1.1 Inventory current Apple client Swift files by primary responsibility, line count, platform scope, AppKit imports, and Xcode project membership.
-- [ ] 1.2 Define the accepted target folder layout under `clients/apple/AlanNative` and record which current files should move to each owner.
-- [ ] 1.3 Add a focused architecture-maintainability check that reports flat-directory drift, README/source layout mismatch, oversized multi-responsibility files, and AppKit bridge leakage.
-- [ ] 1.4 Keep the first architecture check in report or narrowly failing mode so it protects new regressions without requiring the full migration in one commit.
+- [x] 1.1 Inventory current Apple client Swift files by primary responsibility, line count, platform scope, AppKit imports, and Xcode project membership.
+- [x] 1.2 Define the accepted target folder layout under `clients/apple/AlanNative` and record which current files should move to each owner.
+- [x] 1.3 Add a focused architecture-maintainability check that reports flat-directory drift, README/source layout mismatch, oversized multi-responsibility files, and AppKit bridge leakage.
+- [x] 1.4 Keep the first architecture check in report or narrowly failing mode so it protects new regressions without requiring the full migration in one commit.
 
 ## 2. App Entry And Window Ownership
 

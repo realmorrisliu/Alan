@@ -113,11 +113,11 @@ struct TerminalPaneView: View {
         .padding(.horizontal, 9)
         .padding(.vertical, 6)
         .background(
-            Capsule(style: .continuous)
+            RoundedRectangle(cornerRadius: ShellRadii.row, style: .continuous)
                 .fill(Color.white.opacity(0.62))
         )
         .overlay {
-            Capsule(style: .continuous)
+            RoundedRectangle(cornerRadius: ShellRadii.row, style: .continuous)
                 .stroke(ShellPalette.line.opacity(0.22), lineWidth: 1)
         }
     }
@@ -450,7 +450,7 @@ struct TerminalPaneView: View {
 }
 
 private struct ShellTerminalSurfaceFrame: ViewModifier {
-    private let shape = RoundedRectangle(cornerRadius: 12, style: .continuous)
+    private let shape = RoundedRectangle(cornerRadius: ShellRadii.surface, style: .continuous)
 
     func body(content: Content) -> some View {
         content
@@ -487,6 +487,9 @@ private struct ShellPaneTreeLayoutView: View {
                     activationDelegate: host,
                     onWorkspaceCommand: { command in
                         host.performShellWorkspaceCommand(command)
+                    },
+                    onClosePane: {
+                        host.closePaneByID(pane.paneID)
                     },
                     onRuntimeUpdate: host.updateTerminalRuntime,
                     onMetadataUpdate: { metadata in
@@ -643,29 +646,219 @@ private struct ShellTerminalLeafView: View {
     let runtimeRegistry: TerminalRuntimeRegistry
     let activationDelegate: TerminalHostActivationDelegate?
     let onWorkspaceCommand: (ShellWorkspaceCommand) -> Void
+    let onClosePane: () -> Void
     let onRuntimeUpdate: (TerminalHostRuntimeSnapshot) -> Void
     let onMetadataUpdate: (TerminalPaneMetadataSnapshot) -> Void
 
     var body: some View {
-        TerminalHostView(
-            pane: pane,
-            bootProfile: bootProfile,
-            isSelected: isSelected,
-            runtimeRegistry: runtimeRegistry,
-            activationDelegate: activationDelegate,
-            onWorkspaceCommand: onWorkspaceCommand,
-            onRuntimeUpdate: onRuntimeUpdate,
-            onMetadataUpdate: onMetadataUpdate
-        )
-        .id(pane.paneID)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(ShellPalette.terminal)
-        .overlay {
-            ShellInactivePaneDim(
+        VStack(spacing: 0) {
+            ShellPaneTitleBarView(
+                title: shellPaneTitleBarTitle(for: pane),
                 isSelected: isSelected,
-                isEnabled: dimsInactiveSplitPanes
+                onFocusPane: {
+                    activationDelegate?.terminalHostDidRequestActivation(paneID: pane.paneID)
+                },
+                onClosePane: onClosePane
             )
+
+            ZStack(alignment: .topTrailing) {
+                TerminalHostView(
+                    pane: pane,
+                    bootProfile: bootProfile,
+                    isSelected: isSelected,
+                    runtimeRegistry: runtimeRegistry,
+                    activationDelegate: activationDelegate,
+                    onWorkspaceCommand: onWorkspaceCommand,
+                    onRuntimeUpdate: onRuntimeUpdate,
+                    onMetadataUpdate: onMetadataUpdate
+                )
+                .id(pane.paneID)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .background(ShellPalette.terminal)
+                .overlay {
+                    ShellInactivePaneDim(
+                        isSelected: isSelected,
+                        isEnabled: dimsInactiveSplitPanes
+                    )
+                }
+
+                if isSelected,
+                   let searchState = runtimeRegistry.snapshot(for: pane.paneID).surfaceState.search,
+                   searchState.isActive
+                {
+                    ShellFindBarView(
+                        searchState: searchState,
+                        onQueryChange: { query in
+                            _ = runtimeRegistry.updateFindQuery(for: pane.paneID, query: query)
+                        },
+                        onNext: {
+                            runtimeRegistry.selectNextFindMatch(for: pane.paneID)
+                        },
+                        onPrevious: {
+                            runtimeRegistry.selectPreviousFindMatch(for: pane.paneID)
+                        },
+                        onClose: {
+                            runtimeRegistry.dismissFindInteraction(for: pane.paneID)
+                        }
+                    )
+                    .padding(10)
+                }
+            }
         }
+    }
+}
+
+private struct ShellPaneTitleBarView: View {
+    let title: String
+    let isSelected: Bool
+    let onFocusPane: () -> Void
+    let onClosePane: () -> Void
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Text(title)
+                .font(.system(size: 11, weight: isSelected ? .semibold : .medium))
+                .foregroundStyle(isSelected ? ShellPalette.ink : ShellPalette.mutedInk)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            Button(action: onClosePane) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(ShellPalette.mutedInk)
+                    .frame(width: 22, height: 22)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Close pane")
+            .accessibilityLabel("Close pane")
+        }
+        .padding(.leading, 10)
+        .padding(.trailing, 6)
+        .frame(height: 28)
+        .background(
+            Rectangle()
+                .fill(isSelected ? ShellPalette.terminalSoft.opacity(0.52) : Color.black.opacity(0.08))
+        )
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(ShellPalette.line.opacity(isSelected ? 0.18 : 0.12))
+                .frame(height: 1)
+        }
+        .contentShape(Rectangle())
+        .onTapGesture(perform: onFocusPane)
+    }
+}
+
+private struct ShellFindBarView: View {
+    let searchState: AlanTerminalSearchState
+    let onQueryChange: (String) -> Void
+    let onNext: () -> Void
+    let onPrevious: () -> Void
+    let onClose: () -> Void
+
+    @State private var query: String
+    @FocusState private var isFocused: Bool
+
+    init(
+        searchState: AlanTerminalSearchState,
+        onQueryChange: @escaping (String) -> Void,
+        onNext: @escaping () -> Void,
+        onPrevious: @escaping () -> Void,
+        onClose: @escaping () -> Void
+    ) {
+        self.searchState = searchState
+        self.onQueryChange = onQueryChange
+        self.onNext = onNext
+        self.onPrevious = onPrevious
+        self.onClose = onClose
+        _query = State(initialValue: searchState.query)
+    }
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(ShellPalette.mutedInk)
+
+            TextField("Find", text: $query)
+                .textFieldStyle(.plain)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(ShellPalette.ink)
+                .focused($isFocused)
+                .frame(width: 180)
+                .onChange(of: query) { _, nextQuery in
+                    onQueryChange(nextQuery)
+                }
+                .onChange(of: searchState.query) { _, nextQuery in
+                    guard nextQuery != query else { return }
+                    query = nextQuery
+                }
+                .onSubmit {
+                    onNext()
+                }
+
+            Text(resultLabel)
+                .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                .foregroundStyle(ShellPalette.mutedInk)
+                .frame(minWidth: 48, alignment: .trailing)
+
+            Button(action: onPrevious) {
+                Image(systemName: "chevron.up")
+                    .font(.system(size: 10, weight: .bold))
+                    .frame(width: 22, height: 22)
+            }
+            .buttonStyle(.plain)
+            .help("Previous match")
+            .keyboardShortcut("g", modifiers: [.command, .shift])
+
+            Button(action: onNext) {
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 10, weight: .bold))
+                    .frame(width: 22, height: 22)
+            }
+            .buttonStyle(.plain)
+            .help("Next match")
+            .keyboardShortcut("g", modifiers: [.command])
+
+            Button(action: onClose) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 10, weight: .bold))
+                    .frame(width: 22, height: 22)
+            }
+            .buttonStyle(.plain)
+            .help("Close Find")
+            .keyboardShortcut(.escape, modifiers: [])
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .background(
+            RoundedRectangle(cornerRadius: ShellRadii.surface, style: .continuous)
+                .fill(ShellPalette.panel.opacity(0.96))
+        )
+        .overlay {
+            RoundedRectangle(cornerRadius: ShellRadii.surface, style: .continuous)
+                .stroke(ShellPalette.line.opacity(0.35), lineWidth: 1)
+        }
+        .shadow(color: Color.black.opacity(0.12), radius: 14, y: 6)
+        .onAppear {
+            query = searchState.query
+            isFocused = true
+        }
+        .onExitCommand {
+            onClose()
+        }
+    }
+
+    private var resultLabel: String {
+        if let total = searchState.totalMatches,
+           let selected = searchState.selectedIndex
+        {
+            guard total > 0 else { return "0" }
+            return "\(selected + 1)/\(total)"
+        }
+        return query.isEmpty ? "" : "..."
     }
 }
 
@@ -713,7 +906,7 @@ private struct TerminalActionLabel: View {
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
         .background(
-            Capsule(style: .continuous)
+            RoundedRectangle(cornerRadius: ShellRadii.row, style: .continuous)
                 .fill(Color.white.opacity(0.8))
         )
     }
@@ -735,7 +928,7 @@ private struct TerminalPaneChip: View {
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
         .background(
-            Capsule(style: .continuous)
+            RoundedRectangle(cornerRadius: ShellRadii.row, style: .continuous)
                 .fill(background)
         )
     }
@@ -757,11 +950,11 @@ private struct TerminalInfoCard<Content: View>: View {
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
-            RoundedRectangle(cornerRadius: 22, style: .continuous)
+            RoundedRectangle(cornerRadius: ShellRadii.overlay, style: .continuous)
                 .fill(Color.white.opacity(0.76))
         )
         .overlay {
-            RoundedRectangle(cornerRadius: 22, style: .continuous)
+            RoundedRectangle(cornerRadius: ShellRadii.overlay, style: .continuous)
                 .stroke(accent.opacity(0.16), lineWidth: 1)
         }
     }
@@ -797,7 +990,7 @@ private struct TerminalMonoLine: View {
             .padding(.horizontal, 10)
             .padding(.vertical, 8)
             .background(
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                RoundedRectangle(cornerRadius: ShellRadii.surface, style: .continuous)
                     .fill(ShellPalette.canvas.opacity(0.78))
             )
     }

@@ -3,7 +3,8 @@
 ## Purpose
 Define the default native macOS shell UI contract: Arc-like space/tab
 organization, terminal-first layout, native light-mode material treatment,
-restrained toolbar behavior, and progressive inspector disclosure.
+restrained toolbar behavior, pane-scoped terminal controls, and progressive
+disclosure that keeps debug surfaces out of the default shell.
 ## Requirements
 ### Requirement: Sidebar matches space rail plus tab list
 The default macOS sidebar SHALL present spaces as a compact vertical rail and
@@ -40,7 +41,7 @@ theme panels, and ornamental controls.
 - **THEN** rows, icon controls, counters, and status marks keep stable dimensions and do not resize the sidebar or terminal content
 
 #### Scenario: No dashboard treatment
-- **WHEN** the user views the default shell without the Debug inspector selected
+- **WHEN** the user views the default shell
 - **THEN** the UI does not present page-like sections, nested cards, large explanatory panels, or marketing-style hero composition
 
 ### Requirement: Terminal content is the center of gravity
@@ -67,20 +68,20 @@ terms outside explicit debug surfaces.
 
 #### Scenario: Normal terminal workflow
 - **WHEN** a user creates, selects, splits, or closes tabs and panes
-- **THEN** visible copy uses product terms such as Space, Tab, Split, Inspector, Go to or Command, Open in Alan, and Ask Alan
+- **THEN** visible copy uses product terms such as Space, Tab, Split, Go to or Command, Open in Alan, and Ask Alan
 
 #### Scenario: Command search results
 - **WHEN** the command UI shows tabs, panes, actions, routing candidates, or attention items
 - **THEN** result titles and summaries use user-facing names where available and do not expose raw pane IDs as the primary label unless the user is in a debug context
 
-#### Scenario: Debug inspector
-- **WHEN** the user opens the inspector debug section
-- **THEN** implementation details may be shown with clear debug framing
+#### Scenario: Debug surfaces
+- **WHEN** implementation details are needed
+- **THEN** they remain in explicit debug-only surfaces, logs, scripts, or snapshots rather than default shell chrome
 
 ### Requirement: Toolbar is native and restrained
 The macOS toolbar/titlebar SHALL feel like native window chrome and contain only
-the current tab title/context, one command entry point, a small number of
-frequent actions, and an optional inspector toggle.
+the current tab title/context, one command entry point, and a small number of
+frequent actions.
 
 #### Scenario: Toolbar default state
 - **WHEN** no urgent attention item exists
@@ -90,17 +91,17 @@ frequent actions, and an optional inspector toggle.
 - **WHEN** the user invokes the command UI
 - **THEN** the entry point is labeled and organized as `Go to or Command...`
 
-### Requirement: Inspector uses progressive disclosure
-The inspector SHALL be optional, off by default, and separated into Overview and
-Debug layers.
+### Requirement: Default shell does not expose inspector chrome
+The default macOS shell SHALL not include a persistent right-side inspector,
+inspector toggle, or inspector command surface.
 
-#### Scenario: Overview selected
-- **WHEN** the inspector overview is visible
-- **THEN** it shows only user-relevant secondary state such as focused tab or pane summary, cwd or repo context, Alan attachment summary, attention summary, and minimal process status
+#### Scenario: Default shell opened
+- **WHEN** the user opens the macOS shell
+- **THEN** no inspector pane, inspector toggle, or inspector-specific command appears in the default UI
 
-#### Scenario: Debug selected
-- **WHEN** the inspector debug layer is visible
-- **THEN** debug data such as JSON snapshots, runtime phase, Ghostty data, control paths, and Alan binding details can be inspected without dominating the default layout
+#### Scenario: Diagnostics needed
+- **WHEN** maintainers need runtime diagnostics
+- **THEN** diagnostics remain available through shell snapshots, logs, scripts, tests, or an explicit future debug surface rather than a default inspector
 
 ### Requirement: UI conformance is verified visually
 Mac shell UI changes SHALL be reviewed against the documented UI contract before
@@ -108,17 +109,16 @@ the UI conformance tasks are marked complete.
 
 #### Scenario: Default screenshot review
 - **WHEN** a UI conformance implementation pass is ready for review
-- **THEN** maintainers can inspect a running-app screenshot of the default light-mode window showing the space rail, active-space tab list, terminal-first content area, and inspector-off state
+- **THEN** maintainers can inspect a running-app screenshot of the default light-mode window showing the space rail, active-space tab list, terminal-first content area, and no inspector surface
 
-#### Scenario: Inspector screenshot review
-- **WHEN** inspector-related UI tasks are marked complete
-- **THEN** maintainers can inspect screenshots or recorded notes for both Overview and Debug inspector states, confirming that debug data is hidden from the default workflow and visible in the Debug layer
+#### Scenario: Removed-inspector review
+- **WHEN** inspector-removal UI tasks are marked complete
+- **THEN** maintainers can inspect screenshots or recorded notes confirming the default shell has no right-side inspector and no inspector toggle
 
 ### Requirement: Terminal overlays use user-facing language
-The macOS terminal UI SHALL present terminal search, child-exit, renderer
-failure, readonly, input-not-ready, and clipboard states with concise
-terminal-user language in the canvas area or inspector overview, while raw
-runtime details remain debug-only.
+The macOS terminal UI SHALL present child-exit, renderer failure, readonly,
+input-not-ready, and clipboard states with concise terminal-user language in
+the canvas area, while raw runtime details remain debug-only.
 
 #### Scenario: Renderer failure visible
 - **WHEN** a focused terminal pane cannot render
@@ -128,9 +128,9 @@ runtime details remain debug-only.
 - **WHEN** a terminal child process exits
 - **THEN** the pane shows a compact terminal exit state rather than debug event names
 
-#### Scenario: Debug layer opened
-- **WHEN** the user opens the inspector debug layer
-- **THEN** renderer diagnostics, surface identifiers, input mode details, and raw event payloads may be inspected with debug framing
+#### Scenario: Debug diagnostics inspected
+- **WHEN** maintainers inspect explicit debug diagnostics
+- **THEN** renderer diagnostics, surface identifiers, input mode details, and raw event payloads use debug framing outside the default shell
 
 ### Requirement: Terminal search does not displace workspace structure
 Terminal search UI SHALL be compact, pane scoped, and layered over the terminal
@@ -143,6 +143,23 @@ workflow without turning the shell into a dashboard or page layout.
 #### Scenario: Search closes
 - **WHEN** the user dismisses terminal search
 - **THEN** keyboard focus returns to the terminal pane that owned the search interaction
+
+### Requirement: Native Find bar owns terminal search UI
+Terminal search SHALL render through a compact pane-scoped Find bar rather than
+the passive terminal overlay card, and query edits SHALL be routed to the
+owning terminal surface search controller.
+
+#### Scenario: Find opens
+- **WHEN** the user invokes `Command-F` for a focused pane
+- **THEN** Alan shows a compact Find bar for that pane, focuses the query field, and does not send printable query text to the terminal application
+
+#### Scenario: Find navigates
+- **WHEN** the Find bar owns an active query
+- **THEN** Return, `Command-G`, and Shift-`Command-G` navigate matches through the pane's search owner
+
+#### Scenario: Find dismisses
+- **WHEN** the user presses Escape or clicks the close control
+- **THEN** Alan dismisses the Find interaction and returns focus to the owning terminal pane
 
 ### Requirement: Terminal panes have unambiguous hit-testing boundaries
 The macOS shell UI SHALL keep terminal-rendering surfaces from intercepting
@@ -195,6 +212,114 @@ card grid or debug layout.
 - **WHEN** a split pane is not the active terminal pane
 - **THEN** Alan may apply a preference-backed lightweight dim treatment that preserves terminal readability and pointer input while making the active pane and split boundary easier to scan
 
+### Requirement: Terminal panes expose narrow title bars
+Each visible macOS terminal pane SHALL include a compact title bar at the top of
+the pane that identifies the terminal and provides a pane-scoped close
+affordance while keeping terminal content visually dominant.
+
+#### Scenario: Single pane title visible
+- **WHEN** a terminal tab contains one visible pane
+- **THEN** the pane shows a narrow title bar above the terminal canvas with a user-facing terminal title and one slim close button
+
+#### Scenario: Split pane titles visible
+- **WHEN** a terminal tab contains multiple visible panes
+- **THEN** every pane leaf shows its own title bar and close button without adding a pane selector strip, card grid, or debug labels
+
+#### Scenario: Long title fits
+- **WHEN** a pane title is long or changes while the pane is visible
+- **THEN** the title truncates within a stable fixed-height title bar without resizing split dividers, sidebar rows, toolbar content, or sibling panes
+
+### Requirement: Pane title bars consume terminal metadata
+Pane title bars SHALL consume the current terminal title already projected into
+pane metadata, and SHALL use existing user-facing fallback labels only when the
+terminal title is unavailable.
+
+#### Scenario: Terminal title exists
+- **WHEN** a pane has a non-empty `viewport.title`
+- **THEN** the title bar shows the normalized terminal title rather than raw pane IDs, cwd-first labels, runtime phases, or debug event text
+
+#### Scenario: Terminal title missing
+- **WHEN** a pane has no usable terminal title
+- **THEN** the title bar falls back to cwd leaf, working-directory name, launch target, process name, or `Terminal` using user-facing copy
+
+#### Scenario: Debug terms suppressed
+- **WHEN** terminal metadata contains implementation-oriented summaries such as `title updated`, `window attached`, or raw runtime state
+- **THEN** the title bar does not expose those terms outside explicit developer/debug-only surfaces
+
+### Requirement: Pane close button targets its pane
+The pane title bar close button SHALL close the pane represented by that title
+bar through the shared shell controller mutation path.
+
+#### Scenario: Inactive split pane closed
+- **WHEN** a user clicks the close button on a non-selected visible split pane
+- **THEN** Alan closes that pane, repairs the split tree, and keeps the remaining pane runtimes alive without closing a different selected pane
+
+#### Scenario: Single pane tab closed
+- **WHEN** a user clicks the close button for the only pane in a tab and other tabs remain
+- **THEN** Alan applies the existing tab-close semantics for that tab and focuses a remaining terminal pane
+
+#### Scenario: Last remaining pane protected
+- **WHEN** a close button targets the only pane in the only remaining tab
+- **THEN** Alan keeps the shell state valid and does not remove the final workspace surface
+
+### Requirement: Pane title bars preserve terminal input ownership
+Pane title bars SHALL own only their explicit title and button controls, and
+SHALL not intercept terminal input, selection, mouse reporting, scrollback, or
+renderer hit-testing inside the terminal canvas.
+
+#### Scenario: Terminal canvas clicked below title bar
+- **WHEN** a user clicks, drags, scrolls, or right-clicks inside the terminal canvas below a pane title bar
+- **THEN** the terminal host receives the event according to the terminal event ownership contract
+
+#### Scenario: Close button clicked
+- **WHEN** a user clicks the close button in the pane title bar
+- **THEN** the button handles the pane close action without routing that click through terminal text input
+
+#### Scenario: Title area clicked
+- **WHEN** a user clicks the non-button title area
+- **THEN** Alan may focus the pane, but it does not send text, mouse reports, or scroll events to the terminal application
+
+### Requirement: Corner radii are restrained and tokenized
+The default Alan macOS shell UI SHALL use a small role-based corner-radius scale
+for rounded rectangular surfaces and controls. It SHALL avoid large ad hoc
+radii and capsule-heavy default chrome.
+
+#### Scenario: Radius scale applied
+- **WHEN** the active macOS shell renders sidebar rows, command rows, pane title bars, terminal surrounds, inline panels, or overlay surfaces
+- **THEN** those rounded rectangular elements use the Alan shell radius scale rather than one-off numeric radii
+
+#### Scenario: Default shell avoids large radii
+- **WHEN** a default shell surface is visible in normal light-mode use
+- **THEN** rounded rectangular chrome does not use radii larger than the overlay radius unless a specific exception is documented in the UI contract
+
+#### Scenario: Capsule use is limited
+- **WHEN** the default shell shows text chips, keycap hints, metadata chips, command badges, sidebar controls, or pane title controls
+- **THEN** those controls use restrained rounded rectangles rather than `Capsule` shapes unless the component is explicitly defined as a semantic pill
+
+#### Scenario: True circles remain semantic
+- **WHEN** the shell shows attention dots, status indicators, traffic-light-like indicators, or intentionally round icon-only controls
+- **THEN** those elements may remain circular because the circle communicates state or system-like control behavior
+
+#### Scenario: Terminal surface remains precise
+- **WHEN** a single pane or split-pane tab is visible
+- **THEN** terminal panes keep a shared continuous terminal surround with smaller outer corners and no per-pane rounded card treatment
+
+### Requirement: Radius normalization preserves shell hierarchy
+Radius normalization SHALL make Alan feel calmer and more precise without
+turning the UI into a flat grid or weakening control affordances.
+
+#### Scenario: Sidebar remains skimmable
+- **WHEN** sidebar spaces, tabs, command entry, and creation controls are visible
+- **THEN** smaller radii preserve row scanning, hover states, selected states, and stable dimensions
+
+#### Scenario: Command UI remains readable
+- **WHEN** the command palette is open
+- **THEN** the outer overlay, search field, and result rows use distinct but restrained radii so hierarchy is visible without large bubble-like cards
+
+#### Scenario: Overlays remain secondary
+- **WHEN** the command palette or another remaining default-shell overlay is visible
+- **THEN** that surface uses restrained radii and does not read as a large decorative card competing with the terminal
+
 ### Requirement: Command UI owns navigation and shell actions
 The default command entry SHALL present tabs, panes, spaces, routing candidates,
 attention items, and common shell workspace actions through `Go to or Command...`
@@ -214,7 +339,7 @@ not turn the toolbar into a dense control strip.
 
 #### Scenario: Multiple panes visible
 - **WHEN** a tab contains multiple panes
-- **THEN** the default toolbar remains focused on current tab context, command entry, frequent actions, and inspector toggle
+- **THEN** the default toolbar remains focused on current tab context, command entry, and frequent actions
 
 #### Scenario: Pane lift available
 - **WHEN** pane lift is available through command UI or another explicit non-terminal affordance
