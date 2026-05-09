@@ -289,9 +289,19 @@ require_pattern \
     "spatial focus commands must use explicit left/right/up/down directions"
 
 require_pattern \
+    "clients/apple/AlanNative/Models/Shell/ShellValueTypes.swift" \
+    "enum ShellWorkspaceCommand: String, CaseIterable, Identifiable" \
+    "shell workspace commands must remain a centralized shared vocabulary"
+
+require_pattern \
     "clients/apple/AlanNative/ShellHostController.swift" \
     "func performShellWorkspaceCommand\\(_ command: ShellWorkspaceCommand\\)" \
     "menu, keyboard, and command UI actions must route through one shell command entry point"
+
+require_pattern \
+    "clients/apple/AlanNative/ShellHostController.swift" \
+    "case \\.splitRight:" \
+    "shared shell workspace command routing must be exhaustively owned by ShellHostController"
 
 require_pattern \
     "clients/apple/AlanNative/AlanNativeApp.swift" \
@@ -314,9 +324,19 @@ require_pattern \
     "split down must have a native command-shift shortcut"
 
 require_pattern \
+    "clients/apple/AlanNative/App/AlanMacShellCommands.swift" \
+    "host\\.performShellWorkspaceCommand\\(\\.closeTab\\)" \
+    "native menu close actions must use the shared shell workspace command vocabulary"
+
+require_pattern \
     "clients/apple/AlanNative/Views/Shell/ShellCommandTabView.swift" \
     "ShellWorkspaceCommand\\.splitRight" \
     "command UI split actions must call the same shell command router as native menus"
+
+require_pattern \
+    "clients/apple/AlanNative/Views/Shell/ShellCommandTabView.swift" \
+    "host\\.performShellWorkspaceCommand\\(\\.newTerminalTab\\)" \
+    "command UI tab actions must use the shared shell workspace command vocabulary"
 
 require_pattern \
     "clients/apple/AlanNative/Views/Shell/ShellSidebarView.swift" \
@@ -329,9 +349,24 @@ require_pattern \
     "terminal input routing must recognize Alan workspace shortcuts before terminal bindings"
 
 require_pattern \
+    "clients/apple/AlanNative/TerminalSurfaceController.swift" \
+    "return \\.newTerminalTab" \
+    "terminal keyboard tab shortcuts must map to the shared shell workspace command vocabulary"
+
+require_pattern \
     "clients/apple/AlanNative/TerminalHostView.swift" \
     "routeWorkspaceKeyCommandIfNeeded\\(event\\)" \
     "terminal host key equivalents must give Alan workspace shortcuts priority over Ghostty bindings"
+
+require_pattern \
+    "clients/apple/AlanNative/TerminalPaneView.swift" \
+    "host\\.performShellWorkspaceCommand\\(command\\)" \
+    "terminal workspace shortcut routing must enter the shared shell workspace command handler"
+
+require_pattern \
+    "clients/apple/AlanNative/ShellHostController.swift" \
+    "private func handleControlPlaneCommand\\(_ command: AlanShellControlCommand\\)" \
+    "control-plane protocol commands must stay separate from UI command vocabulary while sharing shell mutation authority"
 
 require_pattern \
     "clients/apple/AlanNative/TerminalPaneView.swift" \
