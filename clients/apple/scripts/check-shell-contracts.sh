@@ -703,10 +703,15 @@ require_pattern \
     "enum AlanShellPublishedStateMerger" \
     "published state merging must live in a dedicated shell service owner"
 
+require_pattern \
+    "clients/apple/AlanNative/Services/Shell/ShellControlFilePoller.swift" \
+    "final class AlanShellControlFilePoller" \
+    "file-polling control plane must live in a dedicated shell service owner"
+
 reject_pattern \
     "clients/apple/AlanNative/ShellControlPlane.swift" \
-    "final class AlanShellSocketServer|SO_RCVTIMEO|SO_SNDTIMEO|maxRequestBytes|command_timeout|enum AlanShellPublishedStateMerger" \
-    "shell control-plane coordinator must not own socket transport bounds or state merging"
+    "final class AlanShellSocketServer|SO_RCVTIMEO|SO_SNDTIMEO|maxRequestBytes|command_timeout|enum AlanShellPublishedStateMerger|pollCommands\\(|pollBindings\\(|handleCommandFile\\(" \
+    "shell control-plane coordinator must not own socket transport bounds, state merging, or file polling"
 
 reject_pattern \
     "clients/apple/AlanNative" \
