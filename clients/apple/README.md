@@ -28,7 +28,7 @@ recorded in [`ARCHITECTURE.md`](./ARCHITECTURE.md).
 - `Views/Console/`: legacy/mobile remote-control console surface
 - `Models/API/`: daemon API response, operation, and JSON value models
 - `Models/Console/`: legacy/mobile console value types
-- `Services/Daemon/`: daemon HTTP client ownership
+- `Services/Daemon/`: daemon HTTP client, event page reader, and console event reducer ownership
 - `TerminalPaneView.swift` / `TerminalHostView.swift`: current terminal pane and host surfaces
 - `ShellModel.swift` / `ShellHostController.swift`: current shell state and controller
 - `ShellControlPlane.swift`: current file/socket shell control plane
