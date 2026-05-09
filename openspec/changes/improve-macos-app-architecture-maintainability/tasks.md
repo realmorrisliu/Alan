@@ -68,6 +68,6 @@
 
 - [x] 10.1 Keep mechanical file moves separate from behavior edits in commits or PR descriptions.
 - [x] 10.2 Ask reviewers to evaluate whether source ownership, AppKit bridge boundaries, and validation gates make future work easier to maintain.
-- [ ] 10.3 Before archive, sync the accepted `macos-app-architecture-maintainability` requirements into `openspec/specs/`.
-- [ ] 10.4 Before archive, sync the accepted build/test contract delta into `openspec/specs/macos-shell-build-test-contract/spec.md`.
-- [ ] 10.5 Record implementation verification evidence and remaining architecture debt before archiving the change.
+- [x] 10.3 Before archive, sync the accepted `macos-app-architecture-maintainability` requirements into `openspec/specs/`.
+- [x] 10.4 Before archive, sync the accepted build/test contract delta into `openspec/specs/macos-shell-build-test-contract/spec.md`.
+- [x] 10.5 Record implementation verification evidence and remaining architecture debt before archiving the change.

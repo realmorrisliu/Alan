@@ -29,14 +29,24 @@ recorded in [`ARCHITECTURE.md`](./ARCHITECTURE.md).
 - `Models/API/`: daemon API response, operation, and JSON value models
 - `Models/Console/`: legacy/mobile console value types
 - `Models/Shell/`: shell command enums, launch targets, snapshots, and shell mutation helpers
+- `Controllers/`: target owner for observable app and shell controllers; current
+  migration debt is tracked in `ARCHITECTURE.md`
 - `Services/Daemon/`: daemon HTTP client, event page reader, and console event reducer ownership
-- `Services/Shell/`: shell projection, persistence, and controller support
-  services that keep runtime metadata and storage out of the observable host
+- `Services/Shell/`: shell projection, persistence, control-plane transport,
+  file polling, event store, diagnostics, and command-execution services that
+  keep runtime metadata and IO out of the observable host
 - `Services/Terminal/`: terminal host runtime reporting, window observation,
   and terminal runtime service collaborators
 - `TerminalPaneView.swift` / `TerminalHostView.swift`: current terminal pane and host surfaces
 - `ShellModel.swift` / `ShellHostController.swift`: current shell state and controller
-- `ShellControlPlane.swift`: current file/socket shell control plane
+- `ShellControlPlane.swift`: thin shell control-plane orchestration across the
+  shell service owners
+
+Run the current architecture report with:
+
+```bash
+bash clients/apple/scripts/check-architecture-maintainability.sh
+```
 
 ## Quick Start
 
