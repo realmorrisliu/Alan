@@ -219,7 +219,12 @@ require_pattern \
     "surface controller behavior tests must compile the controller boundary"
 
 require_pattern \
-    "clients/apple/AlanNative/ShellControlPlane.swift" \
+    "clients/apple/AlanNative/Models/Shell/ShellControlPlaneDTOs.swift" \
+    "struct AlanShellControlCommand: Codable" \
+    "shell control-plane protocol DTOs must live in the shell model boundary"
+
+require_pattern \
+    "clients/apple/AlanNative/Models/Shell/ShellControlPlaneDTOs.swift" \
     "deliveryCode: String?" \
     "pane.send_text responses must expose service delivery state"
 
