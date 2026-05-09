@@ -229,6 +229,16 @@ require_pattern \
     "pane.send_text responses must expose service delivery state"
 
 require_pattern \
+    "clients/apple/AlanNative/Services/Shell/ShellLocalCommandExecutor.swift" \
+    "enum AlanShellLocalCommandExecutor" \
+    "shell local command execution must live outside the socket server boundary"
+
+reject_pattern \
+    "clients/apple/AlanNative/ShellControlPlane.swift" \
+    "enum AlanShellLocalCommandExecutor|struct AlanShellLocalCommandResult" \
+    "shell control plane transport must not own local command execution"
+
+require_pattern \
     "clients/apple/AlanNative/ShellHostController.swift" \
     "runtimePhase: delivery.runtimePhase" \
     "pane.send_text responses must expose the service runtime phase"
