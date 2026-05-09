@@ -500,6 +500,41 @@ require_pattern \
 
 require_pattern \
     "clients/apple/AlanNative/TerminalHostView.swift" \
+    "override func mouseDown\\(with event: NSEvent\\)" \
+    "terminal pointer down events must remain owned by the AppKit terminal host"
+
+require_pattern \
+    "clients/apple/AlanNative/TerminalHostView.swift" \
+    "private func routePointer\\(_ input: AlanTerminalPointerInput\\)" \
+    "terminal pointer routing must stay behind the AppKit terminal host boundary"
+
+require_pattern \
+    "clients/apple/AlanNative/TerminalHostView.swift" \
+    "private func routeScrollWheel\\(_ event: NSEvent\\)" \
+    "terminal scroll routing must stay behind the AppKit terminal host boundary"
+
+require_pattern \
+    "clients/apple/AlanNative/TerminalHostView.swift" \
+    "override func scrollWheel\\(with event: NSEvent\\)" \
+    "terminal scroll wheel events must remain owned by the AppKit terminal host"
+
+require_pattern \
+    "clients/apple/AlanNative/TerminalHostView.swift" \
+    "override func keyDown\\(with event: NSEvent\\)" \
+    "terminal key events must remain owned by the AppKit terminal host"
+
+require_pattern \
+    "clients/apple/AlanNative/TerminalHostView.swift" \
+    "func insertText\\(_ string: Any, replacementRange: NSRange\\)" \
+    "terminal IME text insertion must remain owned by the AppKit terminal host"
+
+require_pattern \
+    "clients/apple/AlanNative/TerminalHostView.swift" \
+    "workspaceCommandHandler\\?\\(command\\)" \
+    "terminal workspace shortcuts must leave the AppKit host through the shared command callback"
+
+require_pattern \
+    "clients/apple/AlanNative/TerminalHostView.swift" \
     "private let overlayCard = AlanTerminalPassiveOverlayView\\(\\)" \
     "passive terminal overlays must use a non-interactive overlay view"
 
