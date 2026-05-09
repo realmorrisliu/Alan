@@ -9,7 +9,8 @@ services, and support code without reading every file in a flat directory.
 - **WHEN** a developer inspects `clients/apple/AlanNative`
 - **THEN** app entry code, shell views, console views, protocol models,
   observable controllers, service/IO code, and support utilities are grouped by
-  responsibility rather than mixed in one flat source directory
+  responsibility or explicitly documented as migration debt rather than silently
+  mixed in one flat source directory
 
 #### Scenario: README documents source layout
 - **WHEN** the Apple client README describes the directory structure
@@ -130,9 +131,9 @@ is active for macOS shell development.
 
 ### Requirement: Large files have planned ownership boundaries
 The Apple client SHALL avoid large multi-responsibility Swift files as the
-stable end state. When a file remains large during migration, the owning change
-SHALL document the intended split and avoid adding unrelated responsibilities to
-that file.
+stable end state. When a file remains large or in a transitional owner during
+migration, the owning change SHALL document the intended split and avoid adding
+unrelated responsibilities to that file.
 
 #### Scenario: Large file receives new behavior
 - **WHEN** a developer adds behavior to an existing large Apple client file
@@ -144,3 +145,26 @@ that file.
 - **WHEN** a behavior-preserving architecture refactor slice is completed
 - **THEN** the resulting file ownership makes future changes narrower to review
   than the previous large-file organization
+
+### Requirement: Architecture migration debt is explicit and bounded
+The Apple client SHALL keep known architecture-maintainability warnings visible
+as tracked migration debt until they are resolved by focused refactor slices.
+Known debt MUST identify the affected owner or file, the intended boundary, and
+whether the current architecture gate treats it as non-blocking.
+
+#### Scenario: Architecture report has warnings
+- **WHEN** `check-architecture-maintainability.sh` completes in report mode with
+  warnings
+- **THEN** `clients/apple/ARCHITECTURE.md` records the current warning classes
+  and explains why they remain non-blocking migration debt
+
+#### Scenario: New architecture warning appears
+- **WHEN** a change introduces a new architecture-maintainability warning or
+  broadens an existing one
+- **THEN** the change either resolves the warning in the target owner or updates
+  the migration debt record with a concrete follow-up boundary
+
+#### Scenario: Migration debt is reduced
+- **WHEN** a focused refactor slice resolves a tracked warning
+- **THEN** the architecture debt record and validation expectations are updated
+  in the same PR so the warning cannot silently reappear

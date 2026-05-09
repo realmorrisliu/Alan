@@ -151,3 +151,26 @@ unrelated responsibilities to that file.
 - **WHEN** a behavior-preserving architecture refactor slice is completed
 - **THEN** the resulting file ownership makes future changes narrower to review
   than the previous large-file organization
+
+### Requirement: Architecture migration debt is explicit and bounded
+The Apple client SHALL keep known architecture-maintainability warnings visible
+as tracked migration debt until they are resolved by focused refactor slices.
+Known debt MUST identify the affected owner or file, the intended boundary, and
+whether the current architecture gate treats it as non-blocking.
+
+#### Scenario: Architecture report has warnings
+- **WHEN** `check-architecture-maintainability.sh` completes in report mode with
+  warnings
+- **THEN** `clients/apple/ARCHITECTURE.md` records the current warning classes
+  and explains why they remain non-blocking migration debt
+
+#### Scenario: New architecture warning appears
+- **WHEN** a change introduces a new architecture-maintainability warning or
+  broadens an existing one
+- **THEN** the change either resolves the warning in the target owner or updates
+  the migration debt record with a concrete follow-up boundary
+
+#### Scenario: Migration debt is reduced
+- **WHEN** a focused refactor slice resolves a tracked warning
+- **THEN** the architecture debt record and validation expectations are updated
+  in the same PR so the warning cannot silently reappear
