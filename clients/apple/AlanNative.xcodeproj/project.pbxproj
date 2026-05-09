@@ -37,13 +37,14 @@
 		00000000000000000000001C /* ShellCommandTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000011C /* ShellCommandTabView.swift */; };
 		00000000000000000000001D /* ShellVoiceCommandController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000011D /* ShellVoiceCommandController.swift */; };
 		00000000000000000000001E /* ConsoleModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000011E /* ConsoleModels.swift */; };
+		00000000000000000000001F /* DaemonAPIModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000011F /* DaemonAPIModels.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
 		0000000000000000000000F1 /* AlanNative.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = AlanNative.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		000000000000000000000101 /* AlanNativeApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlanNativeApp.swift; sourceTree = "<group>"; };
 		000000000000000000000102 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/Console/ContentView.swift; sourceTree = "<group>"; };
-		000000000000000000000103 /* AlanAPIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlanAPIClient.swift; sourceTree = "<group>"; };
+		000000000000000000000103 /* AlanAPIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/Daemon/AlanAPIClient.swift; sourceTree = "<group>"; };
 		000000000000000000000104 /* MacShellRootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacShellRootView.swift; sourceTree = "<group>"; };
 		000000000000000000000105 /* ShellModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShellModel.swift; sourceTree = "<group>"; };
 		000000000000000000000106 /* ShellHostController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShellHostController.swift; sourceTree = "<group>"; };
@@ -71,6 +72,7 @@
 		00000000000000000000011C /* ShellCommandTabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/Shell/ShellCommandTabView.swift; sourceTree = "<group>"; };
 		00000000000000000000011D /* ShellVoiceCommandController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Support/ShellVoiceCommandController.swift; sourceTree = "<group>"; };
 		00000000000000000000011E /* ConsoleModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models/Console/ConsoleModels.swift; sourceTree = "<group>"; };
+		00000000000000000000011F /* DaemonAPIModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models/API/DaemonAPIModels.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -102,9 +104,10 @@
 				000000000000000000000304 /* App */,
 				000000000000000000000306 /* Views/Shell */,
 				000000000000000000000307 /* Views/Console */,
+				000000000000000000000309 /* Models/API */,
 				000000000000000000000308 /* Models/Console */,
+				00000000000000000000030A /* Services/Daemon */,
 				000000000000000000000101 /* AlanNativeApp.swift */,
-				000000000000000000000103 /* AlanAPIClient.swift */,
 				000000000000000000000112 /* AlanAppSingletonGuard.swift */,
 				000000000000000000000104 /* MacShellRootView.swift */,
 				000000000000000000000105 /* ShellModel.swift */,
@@ -168,6 +171,22 @@
 				00000000000000000000011E /* ConsoleModels.swift */,
 			);
 			name = Models/Console;
+			sourceTree = "<group>";
+		};
+		000000000000000000000309 /* Models/API */ = {
+			isa = PBXGroup;
+			children = (
+				00000000000000000000011F /* DaemonAPIModels.swift */,
+			);
+			name = Models/API;
+			sourceTree = "<group>";
+		};
+		00000000000000000000030A /* Services/Daemon */ = {
+			isa = PBXGroup;
+			children = (
+				000000000000000000000103 /* AlanAPIClient.swift */,
+			);
+			name = Services/Daemon;
 			sourceTree = "<group>";
 		};
 		000000000000000000000303 /* Products */ = {
@@ -297,6 +316,7 @@
 				00000000000000000000001C /* ShellCommandTabView.swift in Sources */,
 				00000000000000000000001D /* ShellVoiceCommandController.swift in Sources */,
 				00000000000000000000001E /* ConsoleModels.swift in Sources */,
+				00000000000000000000001F /* DaemonAPIModels.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

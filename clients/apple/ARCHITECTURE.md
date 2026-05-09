@@ -37,8 +37,9 @@ Xcode target.
 | `ShellModel.swift` | 2256 | Foundation | Shell IDs, panes, tabs, spaces, split tree, snapshots, mutations, persistence shims | `Models/Shell/` |
 | `ShellHostController.swift` | 1965 | Foundation, AppKit, SwiftUI; macOS gates | Observable shell controller, persistence, boot profiles, runtime projection, command routing | `Controllers/Shell/` plus service collaborators |
 | `ShellControlPlane.swift` | 2105 | Foundation, Darwin; macOS gates | Protocol DTOs, socket server, file polling, local executor, state merging, persistence, diagnostics | `Services/ControlPlane/` plus `Models/ControlPlane/` |
-| `AlanAPIClient.swift` | 764 | Foundation | Daemon API DTOs and HTTP client | `Services/Daemon/` plus `Models/API/` |
+| `Models/API/DaemonAPIModels.swift` | 529 | Foundation | Daemon API response DTOs, operation payloads, JSON values, and API error type | `Models/API/` |
 | `Models/Console/ConsoleModels.swift` | 148 | Foundation | Console chat messages, timeline entries, structured questions, and pending-yield value state | `Models/Console/` |
+| `Services/Daemon/AlanAPIClient.swift` | 236 | Foundation | Daemon HTTP client, request construction, endpoint routing, and response validation | `Services/Daemon/` |
 | `Views/Console/ContentView.swift` | 1813 | SwiftUI, AppKit; iOS/macOS gates | Legacy/mobile console UI, console view model state, daemon event polling and reduction | `Views/Console/`, `Controllers/Console/`, and `Services/Daemon/` |
 
 ## Target Layout

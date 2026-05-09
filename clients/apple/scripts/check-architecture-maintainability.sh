@@ -58,7 +58,6 @@ check_appkit_import_gate() {
 }
 
 current_root_swift_allowlist=(
-    "AlanAPIClient.swift"
     "AlanAppSingletonGuard.swift"
     "AlanNativeApp.swift"
     "GhosttyLiveHost.swift"
