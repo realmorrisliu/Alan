@@ -515,6 +515,11 @@ require_pattern \
 
 require_pattern \
     "clients/apple/AlanNative/TerminalHostView.swift" \
+    "override func scrollWheel\\(with event: NSEvent\\)" \
+    "terminal scroll wheel events must remain owned by the AppKit terminal host"
+
+require_pattern \
+    "clients/apple/AlanNative/TerminalHostView.swift" \
     "override func keyDown\\(with event: NSEvent\\)" \
     "terminal key events must remain owned by the AppKit terminal host"
 
