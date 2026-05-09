@@ -31,7 +31,7 @@
 - [x] 5.1 Split pure shell enum/value types, pane/tree/tab/space snapshots, obsolete legacy decoding removal, bootstrap defaults, and mutation helpers out of the current monolithic `ShellModel.swift`.
 - [x] 5.2 Keep shell mutation behavior covered by the existing focused shell model script tests after each split.
 - [ ] 5.3 Review `ShellHostController` for controller/store/service boundaries and move persistence, boot-profile projection, attention projection, and runtime update projection where they have clear owners.
-- [ ] 5.4 Preserve `ShellWorkspaceCommand` as the shared command vocabulary used by menu, command palette, keyboard, and control-plane paths.
+- [x] 5.4 Preserve `ShellWorkspaceCommand` as the shared command vocabulary used by menu, command palette, keyboard, and control-plane paths.
 
 ## 6. Terminal Host And Runtime Service Boundaries
 
