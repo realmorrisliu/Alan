@@ -32,6 +32,8 @@ recorded in [`ARCHITECTURE.md`](./ARCHITECTURE.md).
 - `Services/Daemon/`: daemon HTTP client, event page reader, and console event reducer ownership
 - `Services/Shell/`: shell projection, persistence, and controller support
   services that keep runtime metadata and storage out of the observable host
+- `Services/Terminal/`: terminal host runtime reporting, window observation,
+  and terminal runtime service collaborators
 - `TerminalPaneView.swift` / `TerminalHostView.swift`: current terminal pane and host surfaces
 - `ShellModel.swift` / `ShellHostController.swift`: current shell state and controller
 - `ShellControlPlane.swift`: current file/socket shell control plane

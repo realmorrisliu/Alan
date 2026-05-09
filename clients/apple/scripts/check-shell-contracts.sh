@@ -359,6 +359,26 @@ require_pattern \
     "terminal host key equivalents must give Alan workspace shortcuts priority over Ghostty bindings"
 
 require_pattern \
+    "clients/apple/AlanNative/TerminalHostView.swift" \
+    "private let runtimeReporter = TerminalHostRuntimeReporter\\(\\)" \
+    "terminal host runtime snapshot publication must be owned by a focused collaborator"
+
+require_pattern \
+    "clients/apple/AlanNative/Services/Terminal/TerminalHostRuntimeReporter.swift" \
+    "snapshotsEqualIgnoringTimestamp" \
+    "terminal runtime reporter must preserve timestamp-insensitive snapshot deduplication"
+
+require_pattern \
+    "clients/apple/AlanNative/TerminalHostView.swift" \
+    "private let windowObserver = TerminalHostWindowObserver\\(\\)" \
+    "terminal host window notifications must be owned by a focused collaborator"
+
+require_pattern \
+    "clients/apple/AlanNative/Services/Terminal/TerminalHostWindowObserver.swift" \
+    "NSWindow\\.didChangeOcclusionStateNotification" \
+    "terminal host window observer must keep occlusion changes connected to surface/runtime refresh"
+
+require_pattern \
     "clients/apple/AlanNative/TerminalPaneView.swift" \
     "host\\.performShellWorkspaceCommand\\(command\\)" \
     "terminal workspace shortcut routing must enter the shared shell workspace command handler"

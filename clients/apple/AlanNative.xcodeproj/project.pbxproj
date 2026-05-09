@@ -45,6 +45,8 @@
 		000000000000000000000024 /* ShellStateMutations.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000124 /* ShellStateMutations.swift */; };
 		000000000000000000000025 /* ShellPaneProjectionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000125 /* ShellPaneProjectionService.swift */; };
 		000000000000000000000026 /* ShellStatePersistenceStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000126 /* ShellStatePersistenceStore.swift */; };
+		000000000000000000000027 /* TerminalHostRuntimeReporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000127 /* TerminalHostRuntimeReporter.swift */; };
+		000000000000000000000028 /* TerminalHostWindowObserver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000128 /* TerminalHostWindowObserver.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -87,6 +89,8 @@
 		000000000000000000000124 /* ShellStateMutations.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models/Shell/ShellStateMutations.swift; sourceTree = "<group>"; };
 		000000000000000000000125 /* ShellPaneProjectionService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/Shell/ShellPaneProjectionService.swift; sourceTree = "<group>"; };
 		000000000000000000000126 /* ShellStatePersistenceStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/Shell/ShellStatePersistenceStore.swift; sourceTree = "<group>"; };
+		000000000000000000000127 /* TerminalHostRuntimeReporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/Terminal/TerminalHostRuntimeReporter.swift; sourceTree = "<group>"; };
+		000000000000000000000128 /* TerminalHostWindowObserver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/Terminal/TerminalHostWindowObserver.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -123,6 +127,7 @@
 				00000000000000000000030B /* Models/Shell */,
 				00000000000000000000030A /* Services/Daemon */,
 				00000000000000000000030C /* Services/Shell */,
+				00000000000000000000030D /* Services/Terminal */,
 				000000000000000000000101 /* AlanNativeApp.swift */,
 				000000000000000000000112 /* AlanAppSingletonGuard.swift */,
 				000000000000000000000104 /* MacShellRootView.swift */,
@@ -224,6 +229,15 @@
 				000000000000000000000126 /* ShellStatePersistenceStore.swift */,
 			);
 			name = Services/Shell;
+			sourceTree = "<group>";
+		};
+		00000000000000000000030D /* Services/Terminal */ = {
+			isa = PBXGroup;
+			children = (
+				000000000000000000000127 /* TerminalHostRuntimeReporter.swift */,
+				000000000000000000000128 /* TerminalHostWindowObserver.swift */,
+			);
+			name = Services/Terminal;
 			sourceTree = "<group>";
 		};
 		000000000000000000000303 /* Products */ = {
@@ -361,6 +375,8 @@
 				000000000000000000000024 /* ShellStateMutations.swift in Sources */,
 				000000000000000000000025 /* ShellPaneProjectionService.swift in Sources */,
 				000000000000000000000026 /* ShellStatePersistenceStore.swift in Sources */,
+				000000000000000000000027 /* TerminalHostRuntimeReporter.swift in Sources */,
+				000000000000000000000028 /* TerminalHostWindowObserver.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
