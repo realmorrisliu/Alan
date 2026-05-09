@@ -99,6 +99,21 @@ require_pattern \
     "terminal runtime registry must delegate runtime authority to the service"
 
 require_pattern \
+    "clients/apple/AlanNative/TerminalRuntimeRegistry.swift" \
+    "runtimeService\\.surfaceHandle\\(for: paneID, bootProfile: bootProfile\\)" \
+    "terminal runtime registry must resolve service-owned handles by pane ID"
+
+require_pattern \
+    "clients/apple/AlanNative/TerminalRuntimeService.swift" \
+    "private var handlesByPaneID: \\[String: AlanTerminalSurfaceHandle\\]" \
+    "terminal runtime service must keep runtime identity pane-keyed"
+
+require_pattern \
+    "clients/apple/AlanNative/TerminalRuntimeService.swift" \
+    "var registeredPaneIDs: Set<String>" \
+    "terminal runtime service must expose pane-keyed registration state"
+
+require_pattern \
     "clients/apple/AlanNative/TerminalSurfaceController.swift" \
     "final class AlanTerminalSurfaceController" \
     "terminal surface behavior must be owned by a controller boundary"
