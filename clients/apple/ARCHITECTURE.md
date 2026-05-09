@@ -42,9 +42,15 @@ Xcode target.
 | `Models/Shell/ShellStateMutations.swift` | 1034 | Foundation | Shell bootstrap defaults, state mutation result/error types, mutation helpers, and preview fixtures | `Models/Shell/` |
 | `ShellModel.swift` | 169 | Foundation | Shell title, label, and status presentation helpers | `Models/Shell/` or `Support/ShellPresentation/` |
 | `ShellHostController.swift` | 1632 | Foundation, AppKit, SwiftUI; macOS gates | Observable shell controller, runtime update intake, command routing, control-plane command handling | `Controllers/Shell/` plus service collaborators |
+| `Services/Shell/ShellControlFilePoller.swift` | 182 | Foundation; macOS gates | File-backed command/result polling and Alan binding-file projection | `Services/Shell/` |
+| `Services/Shell/ShellDiagnostics.swift` | 16 | Foundation; macOS gates | Shell service diagnostic routing | `Services/Shell/` |
+| `Services/Shell/ShellEventStore.swift` | 298 | Foundation; macOS gates | Shell event buffering, diffing, `events.read`, and jsonl persistence | `Services/Shell/` |
+| `Services/Shell/ShellLocalCommandExecutor.swift` | 706 | Foundation; macOS gates | Local shell control command execution against shell state | `Services/Shell/` |
 | `Services/Shell/ShellPaneProjectionService.swift` | 266 | Foundation; macOS gates | Pane boot context, runtime metadata, viewport, attention, and Alan binding projection | `Services/Shell/` |
+| `Services/Shell/ShellPublishedStateMerger.swift` | 158 | Foundation; macOS gates | Merge published shell state with authoritative runtime metadata | `Services/Shell/` |
+| `Services/Shell/ShellSocketServer.swift` | 397 | Foundation, Darwin; macOS gates | Bounded local socket transport, request parsing, and client response handling | `Services/Shell/` |
 | `Services/Shell/ShellStatePersistenceStore.swift` | 116 | Foundation; macOS gates | Shell state save/restore, persistence URL selection, and restored window context lookup | `Services/Shell/` |
-| `ShellControlPlane.swift` | 2075 | Foundation, Darwin; macOS gates | Protocol DTOs, socket server, file polling, local executor, state merging, persistence, diagnostics | `Services/ControlPlane/` plus `Models/ControlPlane/` |
+| `ShellControlPlane.swift` | 253 | Foundation; macOS gates | Shell control-plane orchestration across socket, file polling, state publishing, pane support directories, event store, and diagnostics | `Services/Shell/` |
 | `Models/API/DaemonAPIModels.swift` | 529 | Foundation | Daemon API response DTOs, operation payloads, JSON values, and API error type | `Models/API/` |
 | `Models/Console/ConsoleModels.swift` | 148 | Foundation | Console chat messages, timeline entries, structured questions, and pending-yield value state | `Models/Console/` |
 | `Services/Daemon/AlanAPIClient.swift` | 236 | Foundation | Daemon HTTP client, request construction, endpoint routing, and response validation | `Services/Daemon/` |
@@ -62,7 +68,7 @@ The accepted target under `clients/apple/AlanNative` is:
 - `Views/Console/`: mobile or legacy remote-control console screens and view
   models that are not the primary macOS shell path.
 - `Models/`: API DTOs, shell snapshots, shell IDs, enums, value types, and
-  compatibility decoding shims.
+  current-format decoding.
 - `Controllers/`: observable app and shell controllers that own UI state and
   delegate IO or domain work to services.
 - `Services/`: daemon API clients, event readers/reducers, terminal runtime
@@ -94,3 +100,44 @@ bash clients/apple/scripts/check-architecture-maintainability.sh
 The default mode reports known migration debt and fails only on narrow
 regressions such as new root-level Swift files or Xcode project membership drift.
 Use `--strict` when intentionally tightening the architecture gate.
+
+## Implementation Evidence
+
+The architecture-maintainability implementation was completed as behavior-
+preserving PR slices. The final validation pass before syncing this spec ran:
+
+- `bash clients/apple/scripts/test-terminal-runtime-service.sh`
+- `bash clients/apple/scripts/test-terminal-surface-controller.sh`
+- `bash clients/apple/scripts/test-shell-runtime-metadata.sh`
+- `bash clients/apple/scripts/check-shell-contracts.sh`
+- `bash clients/apple/scripts/check-architecture-maintainability.sh`
+- `git diff --check`
+- `openspec validate improve-macos-app-architecture-maintainability --type change --strict --json`
+- `openspec validate --all --strict --json`
+- `xcodebuild -project clients/apple/AlanNative.xcodeproj -scheme AlanNative -configuration Debug -destination platform=macOS -derivedDataPath target/xcode-derived build`
+
+The macOS build succeeded. Local Xcode continued to print the existing
+CoreSimulator version warning while building for `platform=macOS`; simulator
+device support was not required for this validation.
+
+## Remaining Architecture Debt
+
+`check-architecture-maintainability.sh` currently completes in report mode with
+eight known warnings:
+
+- `ShellHostController.swift` remains large and still imports AppKit outside a
+  final narrow controller/service split.
+- `TerminalHostView.swift` remains large pending additional terminal-host
+  collaborator extraction.
+- `TerminalRuntimeRegistry.swift` still imports AppKit before it is moved under
+  a terminal service or bridge owner.
+- `TerminalSurfaceController.swift` remains large pending deeper terminal
+  surface adapter splits.
+- `Views/Console/ContentView.swift` remains large and imports AppKit because the
+  legacy/mobile console path is isolated but not fully decomposed.
+- `Controllers/` is documented as the target owner for observable controllers
+  but has not been introduced yet.
+
+The current architecture gate intentionally keeps those warnings non-blocking
+while failing narrower regressions such as new root-level Swift files, project
+membership drift, or reintroduced control-plane ownership in the wrong file.
