@@ -60,6 +60,8 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
     private let footerLabel = NSTextField(wrappingLabelWithString: "")
     private let statusBadge = NSTextField(labelWithString: "")
     private let surfaceController = AlanTerminalSurfaceController()
+    private let runtimeReporter = TerminalHostRuntimeReporter()
+    private let windowObserver = TerminalHostWindowObserver()
 
     private var pane: ShellPane?
     private var bootProfile: AlanShellBootProfile?
@@ -68,11 +70,9 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
     private var workspaceCommandHandler: ((ShellWorkspaceCommand) -> Void)?
     private var runtimeObserver: ((TerminalHostRuntimeSnapshot) -> Void)?
     private var metadataObserver: ((TerminalPaneMetadataSnapshot) -> Void)?
-    private var windowObservers: [NSObjectProtocol] = []
     private var rendererSnapshot: TerminalRendererSnapshot = .placeholder
     private var paneMetadata: TerminalPaneMetadataSnapshot = .placeholder
     private var lastReportedMetadata: TerminalPaneMetadataSnapshot?
-    private var lastReportedRuntime: TerminalHostRuntimeSnapshot?
     private var trackingArea: NSTrackingArea?
     private var markedText = NSMutableAttributedString()
     private var keyTextAccumulator: [String]?
@@ -359,51 +359,20 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
     private func teardownRuntimeIfNeeded() {
         guard !hasTornDownRuntime else { return }
         hasTornDownRuntime = true
-        removeWindowObservers()
+        windowObserver.remove()
         surfaceController.detach()
     }
 
     private func installWindowObservers() {
-        removeWindowObservers()
-        guard let window else { return }
-        let center = NotificationCenter.default
-        windowObservers = [
-            center.addObserver(
-                forName: NSWindow.didBecomeKeyNotification,
-                object: window,
-                queue: .main
-            ) { [weak self] _ in
+        windowObserver.install(
+            for: window,
+            onRuntimeEnvironmentChange: { [weak self] in
                 self?.publishRuntimeSnapshot()
             },
-            center.addObserver(
-                forName: NSWindow.didResignKeyNotification,
-                object: window,
-                queue: .main
-            ) { [weak self] _ in
-                self?.publishRuntimeSnapshot()
-            },
-            center.addObserver(
-                forName: NSWindow.didChangeScreenNotification,
-                object: window,
-                queue: .main
-            ) { [weak self] _ in
+            onSurfaceEnvironmentChange: { [weak self] in
                 self?.synchronizeLiveHost()
-                self?.publishRuntimeSnapshot()
-            },
-            center.addObserver(
-                forName: NSWindow.didChangeOcclusionStateNotification,
-                object: window,
-                queue: .main
-            ) { [weak self] _ in
-                self?.synchronizeLiveHost()
-                self?.publishRuntimeSnapshot()
-            },
-        ]
-    }
-
-    private func removeWindowObservers() {
-        windowObservers.forEach(NotificationCenter.default.removeObserver)
-        windowObservers.removeAll()
+            }
+        )
     }
 
     private func publishRuntimeSnapshot() {
@@ -436,47 +405,7 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
             surfaceState: surfaceController.surfaceStateSnapshot,
             lastUpdatedAt: .now
         )
-        reportRuntimeIfNeeded(snapshot, runtimeObserver: runtimeObserver)
-    }
-
-    private func reportRuntimeIfNeeded(
-        _ snapshot: TerminalHostRuntimeSnapshot,
-        runtimeObserver: @escaping (TerminalHostRuntimeSnapshot) -> Void
-    ) {
-        if let lastReportedRuntime,
-           runtimeSnapshotEqualsIgnoringTimestamp(lastReportedRuntime, snapshot)
-        {
-            return
-        }
-
-        lastReportedRuntime = snapshot
-        DispatchQueue.main.async { [weak self] in
-            guard let self,
-                  let lastReportedRuntime = self.lastReportedRuntime,
-                  self.runtimeSnapshotEqualsIgnoringTimestamp(lastReportedRuntime, snapshot)
-            else {
-                return
-            }
-            runtimeObserver(snapshot)
-        }
-    }
-
-    private func runtimeSnapshotEqualsIgnoringTimestamp(
-        _ lhs: TerminalHostRuntimeSnapshot,
-        _ rhs: TerminalHostRuntimeSnapshot
-    ) -> Bool {
-        lhs.stage == rhs.stage
-            && lhs.paneID == rhs.paneID
-            && lhs.tabID == rhs.tabID
-            && lhs.logicalSize == rhs.logicalSize
-            && lhs.backingSize == rhs.backingSize
-            && lhs.displayName == rhs.displayName
-            && lhs.displayID == rhs.displayID
-            && lhs.attachedWindowTitle == rhs.attachedWindowTitle
-            && lhs.isFocused == rhs.isFocused
-            && lhs.renderer == rhs.renderer
-            && lhs.paneMetadata == rhs.paneMetadata
-            && lhs.surfaceState.equalsIgnoringTimestamp(rhs.surfaceState)
+        runtimeReporter.publish(snapshot, observer: runtimeObserver)
     }
 
     private func synchronizeLiveHost() {
