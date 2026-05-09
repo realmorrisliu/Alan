@@ -12,6 +12,8 @@ mkdir -p "$MODULE_CACHE_DIR"
 CLANG_MODULE_CACHE_PATH="$MODULE_CACHE_DIR" swiftc \
     "$REPO_ROOT/clients/apple/AlanNative/Models/Shell/ShellValueTypes.swift" \
     "$REPO_ROOT/clients/apple/AlanNative/Models/Shell/ShellSnapshots.swift" \
+    "$REPO_ROOT/clients/apple/AlanNative/Models/Shell/ShellTreeMutations.swift" \
+    "$REPO_ROOT/clients/apple/AlanNative/Models/Shell/ShellStateMutations.swift" \
     "$REPO_ROOT/clients/apple/AlanNative/ShellModel.swift" \
     "$REPO_ROOT/clients/apple/AlanNative/ShellControlPlane.swift" \
     "$REPO_ROOT/clients/apple/AlanNative/TerminalHostRuntime.swift" \
