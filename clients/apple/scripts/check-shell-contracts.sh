@@ -279,12 +279,12 @@ require_pattern \
     "split resize preview persistence must be controlled at mutation application"
 
 require_pattern \
-    "clients/apple/AlanNative/ShellModel.swift" \
+    "clients/apple/AlanNative/Models/Shell/ShellValueTypes.swift" \
     "enum ShellPaneSplitDirection" \
     "split commands must model left/right/up/down placement separately from split axis"
 
 require_pattern \
-    "clients/apple/AlanNative/ShellModel.swift" \
+    "clients/apple/AlanNative/Models/Shell/ShellValueTypes.swift" \
     "enum ShellSpatialFocusDirection" \
     "spatial focus commands must use explicit left/right/up/down directions"
 

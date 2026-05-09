@@ -39,6 +39,7 @@
 		00000000000000000000001E /* ConsoleModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000011E /* ConsoleModels.swift */; };
 		00000000000000000000001F /* DaemonAPIModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000011F /* DaemonAPIModels.swift */; };
 		000000000000000000000020 /* ConsoleEventReducer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000120 /* ConsoleEventReducer.swift */; };
+		000000000000000000000021 /* ShellValueTypes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000121 /* ShellValueTypes.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -75,6 +76,7 @@
 		00000000000000000000011E /* ConsoleModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models/Console/ConsoleModels.swift; sourceTree = "<group>"; };
 		00000000000000000000011F /* DaemonAPIModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models/API/DaemonAPIModels.swift; sourceTree = "<group>"; };
 		000000000000000000000120 /* ConsoleEventReducer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/Daemon/ConsoleEventReducer.swift; sourceTree = "<group>"; };
+		000000000000000000000121 /* ShellValueTypes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models/Shell/ShellValueTypes.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -108,6 +110,7 @@
 				000000000000000000000307 /* Views/Console */,
 				000000000000000000000309 /* Models/API */,
 				000000000000000000000308 /* Models/Console */,
+				00000000000000000000030B /* Models/Shell */,
 				00000000000000000000030A /* Services/Daemon */,
 				000000000000000000000101 /* AlanNativeApp.swift */,
 				000000000000000000000112 /* AlanAppSingletonGuard.swift */,
@@ -190,6 +193,14 @@
 				000000000000000000000120 /* ConsoleEventReducer.swift */,
 			);
 			name = Services/Daemon;
+			sourceTree = "<group>";
+		};
+		00000000000000000000030B /* Models/Shell */ = {
+			isa = PBXGroup;
+			children = (
+				000000000000000000000121 /* ShellValueTypes.swift */,
+			);
+			name = Models/Shell;
 			sourceTree = "<group>";
 		};
 		000000000000000000000303 /* Products */ = {
@@ -321,6 +332,7 @@
 				00000000000000000000001E /* ConsoleModels.swift in Sources */,
 				00000000000000000000001F /* DaemonAPIModels.swift in Sources */,
 				000000000000000000000020 /* ConsoleEventReducer.swift in Sources */,
+				000000000000000000000021 /* ShellValueTypes.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
