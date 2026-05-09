@@ -81,7 +81,6 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     private static let iso8601Formatter = ISO8601DateFormatter()
     private static let persistenceFilePrefix = "shell-state-"
     private static let persistenceFileExtension = ".json"
-    private static let legacyPersistenceFileName = "shell-state-v0.1.json"
     private static let defaultRestorationWindowID = "window_main"
 
     private let fileManager: FileManager
@@ -1925,9 +1924,9 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
 
     private static func isShellStatePersistenceURL(_ url: URL) -> Bool {
         let fileName = url.lastPathComponent
-        return fileName == legacyPersistenceFileName
-            || (fileName.hasPrefix(persistenceFilePrefix)
-                && fileName.hasSuffix(persistenceFileExtension))
+        return fileName.hasPrefix(persistenceFilePrefix)
+            && fileName.hasSuffix(persistenceFileExtension)
+            && fileName != "shell-state-v0.1.json"
     }
 
     private static func restoreShellState(
@@ -1942,7 +1941,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         else {
             return nil
         }
-        return state.migratingLegacyAlanBootstrapIfNeeded()
+        return state
     }
 
     private static func attentionRank(for attention: ShellAttentionState) -> Int {

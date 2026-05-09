@@ -20,7 +20,7 @@ private enum ShellSplitModelTests {
         try verifiesPaneScopedCloseKeepsInactivePaneTargeting()
         try verifiesPaneScopedCloseClosesSinglePaneTab()
         try verifiesPaneScopedClosePreservesFinalPane()
-        try verifiesLegacySplitDecodeDefaultsToEqualRatio()
+        try verifiesSplitDecodeRequiresPersistedRatio()
         print("Shell split model tests passed.")
     }
 
@@ -225,8 +225,8 @@ private enum ShellSplitModelTests {
         }
     }
 
-    private static func verifiesLegacySplitDecodeDefaultsToEqualRatio() throws {
-        let legacyJSON = """
+    private static func verifiesSplitDecodeRequiresPersistedRatio() throws {
+        let missingRatioJSON = """
         {
           "contract_version": "0.1",
           "window_id": "window_test",
@@ -262,15 +262,12 @@ private enum ShellSplitModelTests {
           ]
         }
         """
-        let data = Data(legacyJSON.utf8)
-        let state = try JSONDecoder().decode(ShellStateSnapshot.self, from: data)
-        let tree = try requireFocusedTabTree(state)
-
-        expect(tree.ratio == 0.5, "legacy split trees without ratio must decode as equal splits")
-
-        let encoded = try JSONEncoder().encode(state)
-        let encodedString = String(decoding: encoded, as: UTF8.self)
-        expect(encodedString.contains("\"ratio\""), "decoded legacy split ratios must persist when re-encoded")
+        do {
+            _ = try JSONDecoder().decode(ShellStateSnapshot.self, from: Data(missingRatioJSON.utf8))
+            expect(false, "split trees without persisted ratio must fail to decode")
+        } catch DecodingError.keyNotFound(_, _) {
+            // Expected.
+        }
     }
 
     private static func requireFocusedTabTree(_ state: ShellStateSnapshot) throws -> ShellPaneTreeNode {
