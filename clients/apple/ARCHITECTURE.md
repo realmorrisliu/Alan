@@ -139,3 +139,5 @@ seven known warnings:
 The current architecture gate intentionally keeps those warnings non-blocking
 while failing narrower regressions such as new root-level Swift files, project
 membership drift, or reintroduced control-plane ownership in the wrong file.
+The `macos-app-architecture-maintainability` spec requires this debt record to
+stay current whenever warnings are introduced, broadened, or resolved.
