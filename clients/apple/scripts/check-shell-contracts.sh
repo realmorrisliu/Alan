@@ -684,14 +684,24 @@ reject_pattern \
     "Apple client docs must not describe each macOS window as an independent shell context"
 
 require_pattern \
-    "clients/apple/AlanNative/ShellControlPlane.swift" \
+    "clients/apple/AlanNative/Services/Shell/ShellSocketServer.swift" \
     "private static let maxRequestBytes" \
     "socket server must enforce a bounded request size"
 
 require_pattern \
-    "clients/apple/AlanNative/ShellControlPlane.swift" \
+    "clients/apple/AlanNative/Services/Shell/ShellSocketServer.swift" \
     "command_timeout" \
     "socket server must return a stable timeout error"
+
+require_pattern \
+    "clients/apple/AlanNative/Services/Shell/ShellSocketServer.swift" \
+    "private static let maxConcurrentClients" \
+    "socket server must keep concurrency limits in the transport owner"
+
+reject_pattern \
+    "clients/apple/AlanNative/ShellControlPlane.swift" \
+    "final class AlanShellSocketServer|SO_RCVTIMEO|SO_SNDTIMEO|maxRequestBytes|command_timeout" \
+    "shell control-plane coordinator must not own socket transport bounds"
 
 reject_pattern \
     "clients/apple/AlanNative" \
