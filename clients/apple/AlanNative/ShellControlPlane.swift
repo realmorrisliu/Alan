@@ -52,12 +52,10 @@ final class AlanShellControlPlane {
     private let eventsFileURL: URL
     private let commandHandler: (AlanShellControlCommand) -> AlanShellControlResponse
     private let stateAdoptionHandler: @MainActor (ShellStateSnapshot) -> Void
-    private let bindingProjectionHandler: @MainActor (String, ShellAlanBinding?) -> Void
     private let diagnosticHandler: @MainActor (String) -> Void
     private let socketServer: AlanShellSocketServer
-    private var pollSource: DispatchSourceTimer?
+    private var filePoller: AlanShellControlFilePoller?
     private var trackedPaneIDs: Set<String> = []
-    private var lastBindingPayloadByPaneID: [String: Data] = [:]
     private var events: [AlanShellEventEnvelope] = []
     private var nextEventOrdinal = 1
 
@@ -83,7 +81,6 @@ final class AlanShellControlPlane {
         self.eventsFileURL = rootURL.appendingPathComponent("events.jsonl")
         self.commandHandler = commandHandler
         self.stateAdoptionHandler = stateAdoptionHandler
-        self.bindingProjectionHandler = bindingProjectionHandler
         self.diagnosticHandler = diagnosticHandler
         self.socketServer = AlanShellSocketServer(
             socketURL: self.socketURL,
@@ -95,14 +92,28 @@ final class AlanShellControlPlane {
             },
             sideEffectHandler: { _ in }
         )
+        self.filePoller = nil
+        self.filePoller = AlanShellControlFilePoller(
+            windowID: windowID,
+            fileManager: fileManager,
+            commandsURL: commandsURL,
+            resultsURL: resultsURL,
+            encoder: encoder,
+            decoder: decoder,
+            commandHandler: { [weak self, commandHandler] command in
+                guard let self else { return commandHandler(command) }
+                return self.responseForPolledCommand(command)
+            },
+            bindingProjectionHandler: bindingProjectionHandler,
+            diagnosticHandler: diagnosticHandler
+        )
 
         ensureDirectories()
         socketServer.start()
-        startPolling()
+        filePoller?.start()
     }
 
     deinit {
-        pollSource?.cancel()
         socketServer.stop()
     }
 
@@ -138,20 +149,6 @@ final class AlanShellControlPlane {
         } catch {
             recordDiagnostic("Failed to persist shell state: \(error.localizedDescription)")
         }
-    }
-
-    private func startPolling() {
-        pollSource?.cancel()
-        let source = DispatchSource.makeTimerSource(queue: DispatchQueue(label: "dev.alan.shell.control.poll"))
-        source.schedule(deadline: .now() + .milliseconds(250), repeating: .milliseconds(250), leeway: .milliseconds(100))
-        source.setEventHandler { [weak self] in
-            Task { @MainActor [weak self] in
-                self?.pollCommands()
-                self?.pollBindings()
-            }
-        }
-        source.resume()
-        pollSource = source
     }
 
     private func ensureDirectories() {
@@ -196,6 +193,14 @@ final class AlanShellControlPlane {
         )
     }
 
+    private func responseForPolledCommand(
+        _ command: AlanShellControlCommand
+    ) -> AlanShellControlResponse {
+        specialCommandResponse(for: command)
+            ?? socketServer.handleLocally(command)
+            ?? commandHandler(command)
+    }
+
     func recordTextDelivery(
         requestID: String,
         spaceID: String?,
@@ -231,6 +236,7 @@ final class AlanShellControlPlane {
         let paneIDs = Set(state.panes.map(\.paneID))
         let previousPaneIDs = trackedPaneIDs
         trackedPaneIDs = paneIDs
+        filePoller?.updateTrackedPaneIDs(paneIDs)
 
         for paneID in paneIDs {
             let paneURL = alanShellPaneSupportDirectoryURL(
@@ -243,11 +249,6 @@ final class AlanShellControlPlane {
             } catch {
                 recordDiagnostic("Failed to create pane support directory \(paneURL.path): \(error.localizedDescription)")
             }
-        }
-
-        let stalePaneIDs = Set(lastBindingPayloadByPaneID.keys).subtracting(paneIDs)
-        for paneID in stalePaneIDs {
-            lastBindingPayloadByPaneID.removeValue(forKey: paneID)
         }
 
         for paneID in previousPaneIDs.subtracting(paneIDs) {
@@ -481,109 +482,6 @@ final class AlanShellControlPlane {
         let slice = events.dropFirst(startIndex)
         let capped = limit.map { max(0, $0) } ?? 50
         return Array(slice.prefix(capped))
-    }
-
-    private func pollCommands() {
-        ensureDirectories()
-
-        let commandFiles: [URL]
-        do {
-            commandFiles = try fileManager.contentsOfDirectory(
-                at: commandsURL,
-                includingPropertiesForKeys: [.creationDateKey, .contentModificationDateKey],
-                options: [.skipsHiddenFiles]
-            )
-            .filter { $0.pathExtension == "json" }
-            .sorted(by: compareCommandFiles)
-        } catch {
-            recordDiagnostic("Failed to read shell command directory: \(error.localizedDescription)")
-            return
-        }
-
-        for fileURL in commandFiles {
-            handleCommandFile(at: fileURL)
-        }
-    }
-
-    private func handleCommandFile(at fileURL: URL) {
-        guard let data = try? Data(contentsOf: fileURL),
-              let command = try? decoder.decode(AlanShellControlCommand.self, from: data)
-        else {
-            recordDiagnostic("Ignored unreadable shell command file \(fileURL.lastPathComponent).")
-            do {
-                try fileManager.removeItem(at: fileURL)
-            } catch {
-                recordDiagnostic("Failed to remove unreadable shell command file \(fileURL.lastPathComponent): \(error.localizedDescription)")
-            }
-            return
-        }
-
-        let response =
-            specialCommandResponse(for: command)
-            ?? socketServer.handleLocally(command)
-            ?? commandHandler(command)
-        let responseURL = resultsURL.appendingPathComponent("\(command.requestID).json")
-
-        do {
-            let responseData = try encoder.encode(response)
-            try responseData.write(to: responseURL, options: .atomic)
-        } catch {
-            recordDiagnostic("Failed to write shell command result \(responseURL.lastPathComponent): \(error.localizedDescription)")
-        }
-
-        do {
-            try fileManager.removeItem(at: fileURL)
-        } catch {
-            recordDiagnostic("Failed to remove processed shell command file \(fileURL.lastPathComponent): \(error.localizedDescription)")
-        }
-    }
-
-    private func compareCommandFiles(_ lhs: URL, _ rhs: URL) -> Bool {
-        let lhsValues = try? lhs.resourceValues(forKeys: [.creationDateKey, .contentModificationDateKey])
-        let rhsValues = try? rhs.resourceValues(forKeys: [.creationDateKey, .contentModificationDateKey])
-        let lhsDate = lhsValues?.creationDate ?? lhsValues?.contentModificationDate ?? .distantPast
-        let rhsDate = rhsValues?.creationDate ?? rhsValues?.contentModificationDate ?? .distantPast
-
-        if lhsDate != rhsDate {
-            return lhsDate < rhsDate
-        }
-
-        return lhs.lastPathComponent < rhs.lastPathComponent
-    }
-
-    private func pollBindings() {
-        for paneID in trackedPaneIDs.sorted() {
-            let bindingURL = alanShellBindingFileURL(
-                windowID: windowID,
-                paneID: paneID,
-                fileManager: fileManager
-            )
-
-            guard fileManager.fileExists(atPath: bindingURL.path) else {
-                if lastBindingPayloadByPaneID.removeValue(forKey: paneID) != nil {
-                    bindingProjectionHandler(paneID, nil)
-                }
-                continue
-            }
-
-            guard let data = try? Data(contentsOf: bindingURL) else {
-                recordDiagnostic("Failed to read Alan binding file for \(paneID).")
-                continue
-            }
-
-            if lastBindingPayloadByPaneID[paneID] == data {
-                continue
-            }
-
-            guard let projection = try? decoder.decode(AlanShellBindingProjection.self, from: data) else {
-                lastBindingPayloadByPaneID[paneID] = data
-                recordDiagnostic("Ignored invalid Alan binding file for \(paneID).")
-                continue
-            }
-
-            lastBindingPayloadByPaneID[paneID] = data
-            bindingProjectionHandler(paneID, projection.shellBinding)
-        }
     }
 }
 #endif

@@ -16,6 +16,7 @@ CLANG_MODULE_CACHE_PATH="$MODULE_CACHE_DIR" swiftc \
     "$REPO_ROOT/clients/apple/AlanNative/Models/Shell/ShellTreeMutations.swift" \
     "$REPO_ROOT/clients/apple/AlanNative/Models/Shell/ShellStateMutations.swift" \
     "$REPO_ROOT/clients/apple/AlanNative/ShellModel.swift" \
+    "$REPO_ROOT/clients/apple/AlanNative/Services/Shell/ShellControlFilePoller.swift" \
     "$REPO_ROOT/clients/apple/AlanNative/Services/Shell/ShellLocalCommandExecutor.swift" \
     "$REPO_ROOT/clients/apple/AlanNative/Services/Shell/ShellPublishedStateMerger.swift" \
     "$REPO_ROOT/clients/apple/AlanNative/Services/Shell/ShellSocketServer.swift" \

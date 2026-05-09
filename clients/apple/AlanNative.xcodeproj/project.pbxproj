@@ -51,6 +51,7 @@
 		00000000000000000000002A /* ShellLocalCommandExecutor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000012A /* ShellLocalCommandExecutor.swift */; };
 		00000000000000000000002B /* ShellSocketServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000012B /* ShellSocketServer.swift */; };
 		00000000000000000000002C /* ShellPublishedStateMerger.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000012C /* ShellPublishedStateMerger.swift */; };
+		00000000000000000000002D /* ShellControlFilePoller.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000012D /* ShellControlFilePoller.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -99,6 +100,7 @@
 		00000000000000000000012A /* ShellLocalCommandExecutor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/Shell/ShellLocalCommandExecutor.swift; sourceTree = "<group>"; };
 		00000000000000000000012B /* ShellSocketServer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/Shell/ShellSocketServer.swift; sourceTree = "<group>"; };
 		00000000000000000000012C /* ShellPublishedStateMerger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/Shell/ShellPublishedStateMerger.swift; sourceTree = "<group>"; };
+		00000000000000000000012D /* ShellControlFilePoller.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/Shell/ShellControlFilePoller.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -235,6 +237,7 @@
 			isa = PBXGroup;
 			children = (
 				000000000000000000000125 /* ShellPaneProjectionService.swift */,
+				00000000000000000000012D /* ShellControlFilePoller.swift */,
 				00000000000000000000012A /* ShellLocalCommandExecutor.swift */,
 				00000000000000000000012C /* ShellPublishedStateMerger.swift */,
 				00000000000000000000012B /* ShellSocketServer.swift */,
@@ -393,6 +396,7 @@
 				00000000000000000000002A /* ShellLocalCommandExecutor.swift in Sources */,
 				00000000000000000000002B /* ShellSocketServer.swift in Sources */,
 				00000000000000000000002C /* ShellPublishedStateMerger.swift in Sources */,
+				00000000000000000000002D /* ShellControlFilePoller.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
