@@ -67,7 +67,7 @@ Target source organization should use stable top-level folders under
 - `Views/Console/` or `LegacyConsole/`: mobile/remote-control console UI and
   view model code that is not the primary macOS shell.
 - `Models/`: API DTOs, shell snapshots, shell IDs, enums, value types, and
-  legacy decoding shims.
+  current-format decoding.
 - `Stores/` or `Controllers/`: observable app/shell controllers that own view
   state and delegate domain work to services.
 - `Services/`: daemon API client, event stream reader/reducer, terminal runtime

@@ -227,36 +227,6 @@ struct ShellPane: Identifiable, Codable, Equatable {
 }
 
 extension ShellPane {
-    // Preserve window-state compatibility while converging persisted naming on tabs.
-    private enum LegacyCodingKeys: String, CodingKey {
-        case surfaceID = "surface_id"
-    }
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        let legacyContainer = try decoder.container(keyedBy: LegacyCodingKeys.self)
-
-        let tabID: String
-        if let decodedTabID = try container.decodeIfPresent(String.self, forKey: .tabID) {
-            tabID = decodedTabID
-        } else {
-            tabID = try legacyContainer.decode(String.self, forKey: .surfaceID)
-        }
-
-        self.init(
-            paneID: try container.decode(String.self, forKey: .paneID),
-            tabID: tabID,
-            spaceID: try container.decode(String.self, forKey: .spaceID),
-            launchTarget: try container.decodeIfPresent(ShellLaunchTarget.self, forKey: .launchTarget),
-            cwd: try container.decodeIfPresent(String.self, forKey: .cwd),
-            process: try container.decodeIfPresent(ShellProcessBinding.self, forKey: .process),
-            attention: try container.decode(ShellAttentionState.self, forKey: .attention),
-            context: try container.decodeIfPresent(ShellContextSnapshot.self, forKey: .context),
-            viewport: try container.decodeIfPresent(ShellViewportSnapshot.self, forKey: .viewport),
-            alanBinding: try container.decodeIfPresent(ShellAlanBinding.self, forKey: .alanBinding)
-        )
-    }
-
     var resolvedLaunchTarget: ShellLaunchTarget {
         if let launchTarget {
             return launchTarget
@@ -323,13 +293,13 @@ struct ShellPaneTreeNode: Identifiable, Codable, Equatable {
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         let kind = try container.decode(ShellPaneTreeKind.self, forKey: .kind)
-        let decodedRatio = try container.decodeIfPresent(Double.self, forKey: .ratio)
+        let decodedRatio = kind == .split ? try container.decode(Double.self, forKey: .ratio) : nil
 
         self.init(
             nodeID: try container.decode(String.self, forKey: .nodeID),
             kind: kind,
             direction: try container.decodeIfPresent(ShellSplitDirection.self, forKey: .direction),
-            ratio: kind == .split ? decodedRatio : nil,
+            ratio: decodedRatio,
             paneID: try container.decodeIfPresent(String.self, forKey: .paneID),
             children: try container.decodeIfPresent([ShellPaneTreeNode].self, forKey: .children)
         )
@@ -889,84 +859,8 @@ struct ShellStateSnapshot: Codable, Equatable {
 }
 
 extension ShellTab {
-    private enum LegacyCodingKeys: String, CodingKey {
-        case surfaceID = "surface_id"
-    }
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        let legacyContainer = try decoder.container(keyedBy: LegacyCodingKeys.self)
-
-        let tabID: String
-        if let decodedTabID = try container.decodeIfPresent(String.self, forKey: .tabID) {
-            tabID = decodedTabID
-        } else {
-            tabID = try legacyContainer.decode(String.self, forKey: .surfaceID)
-        }
-
-        self.init(
-            tabID: tabID,
-            kind: try container.decode(ShellTabKind.self, forKey: .kind),
-            title: try container.decodeIfPresent(String.self, forKey: .title),
-            paneTree: try container.decode(ShellPaneTreeNode.self, forKey: .paneTree)
-        )
-    }
-
     func contains(paneID: String) -> Bool {
         paneTree.contains(paneID: paneID)
-    }
-}
-
-extension ShellSpace {
-    private enum LegacyCodingKeys: String, CodingKey {
-        case surfaces
-    }
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        let legacyContainer = try decoder.container(keyedBy: LegacyCodingKeys.self)
-
-        let tabs: [ShellTab]
-        if let decodedTabs = try container.decodeIfPresent([ShellTab].self, forKey: .tabs) {
-            tabs = decodedTabs
-        } else {
-            tabs = try legacyContainer.decode([ShellTab].self, forKey: .surfaces)
-        }
-
-        self.init(
-            spaceID: try container.decode(String.self, forKey: .spaceID),
-            title: try container.decode(String.self, forKey: .title),
-            attention: try container.decode(ShellAttentionState.self, forKey: .attention),
-            tabs: tabs
-        )
-    }
-}
-
-extension ShellStateSnapshot {
-    private enum LegacyCodingKeys: String, CodingKey {
-        case focusedSurfaceID = "focused_surface_id"
-    }
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        let legacyContainer = try decoder.container(keyedBy: LegacyCodingKeys.self)
-
-        let focusedTabID: String?
-        if let decodedTabID = try container.decodeIfPresent(String.self, forKey: .focusedTabID) {
-            focusedTabID = decodedTabID
-        } else {
-            focusedTabID = try legacyContainer.decodeIfPresent(String.self, forKey: .focusedSurfaceID)
-        }
-
-        self.init(
-            contractVersion: try container.decode(String.self, forKey: .contractVersion),
-            windowID: try container.decode(String.self, forKey: .windowID),
-            focusedSpaceID: try container.decodeIfPresent(String.self, forKey: .focusedSpaceID),
-            focusedTabID: focusedTabID,
-            focusedPaneID: try container.decodeIfPresent(String.self, forKey: .focusedPaneID),
-            spaces: try container.decode([ShellSpace].self, forKey: .spaces),
-            panes: try container.decode([ShellPane].self, forKey: .panes)
-        )
     }
 }
 
@@ -1868,36 +1762,6 @@ extension ShellStateSnapshot {
                 lastActivityAt: formatter.string(from: now)
             ),
             alanBinding: nil
-        )
-    }
-
-    func migratingLegacyAlanBootstrapIfNeeded(
-        defaultWorkingDirectory: String = defaultShellWorkingDirectory()
-    ) -> ShellStateSnapshot {
-        guard spaces.count == 1,
-              panes.count == 1,
-              let space = spaces.first,
-              let tab = space.tabs.first,
-              let pane = panes.first
-        else {
-            return self
-        }
-
-        let isLegacyBootstrap =
-            space.title == "Alan"
-            && tab.title == "Main Session"
-            && pane.process?.program == "alan-tui"
-            && pane.viewport?.title == "Alan"
-            && pane.alanBinding == nil
-            && pane.launchTarget == nil
-
-        guard isLegacyBootstrap else {
-            return self
-        }
-
-        return .bootstrapDefault(
-            windowID: windowID,
-            workingDirectory: pane.cwd ?? defaultWorkingDirectory
         )
     }
 
