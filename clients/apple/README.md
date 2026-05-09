@@ -30,6 +30,8 @@ recorded in [`ARCHITECTURE.md`](./ARCHITECTURE.md).
 - `Models/Console/`: legacy/mobile console value types
 - `Models/Shell/`: shell command enums, launch targets, snapshots, and shell mutation helpers
 - `Services/Daemon/`: daemon HTTP client, event page reader, and console event reducer ownership
+- `Services/Shell/`: shell projection, persistence, and controller support
+  services that keep runtime metadata and storage out of the observable host
 - `TerminalPaneView.swift` / `TerminalHostView.swift`: current terminal pane and host surfaces
 - `ShellModel.swift` / `ShellHostController.swift`: current shell state and controller
 - `ShellControlPlane.swift`: current file/socket shell control plane
