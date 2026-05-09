@@ -38,6 +38,7 @@
 		00000000000000000000001D /* ShellVoiceCommandController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000011D /* ShellVoiceCommandController.swift */; };
 		00000000000000000000001E /* ConsoleModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000011E /* ConsoleModels.swift */; };
 		00000000000000000000001F /* DaemonAPIModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000011F /* DaemonAPIModels.swift */; };
+		000000000000000000000020 /* ConsoleEventReducer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000120 /* ConsoleEventReducer.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -73,6 +74,7 @@
 		00000000000000000000011D /* ShellVoiceCommandController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Support/ShellVoiceCommandController.swift; sourceTree = "<group>"; };
 		00000000000000000000011E /* ConsoleModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models/Console/ConsoleModels.swift; sourceTree = "<group>"; };
 		00000000000000000000011F /* DaemonAPIModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models/API/DaemonAPIModels.swift; sourceTree = "<group>"; };
+		000000000000000000000120 /* ConsoleEventReducer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/Daemon/ConsoleEventReducer.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -185,6 +187,7 @@
 			isa = PBXGroup;
 			children = (
 				000000000000000000000103 /* AlanAPIClient.swift */,
+				000000000000000000000120 /* ConsoleEventReducer.swift */,
 			);
 			name = Services/Daemon;
 			sourceTree = "<group>";
@@ -317,6 +320,7 @@
 				00000000000000000000001D /* ShellVoiceCommandController.swift in Sources */,
 				00000000000000000000001E /* ConsoleModels.swift in Sources */,
 				00000000000000000000001F /* DaemonAPIModels.swift in Sources */,
+				000000000000000000000020 /* ConsoleEventReducer.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

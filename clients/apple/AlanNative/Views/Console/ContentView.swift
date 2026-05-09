@@ -80,7 +80,7 @@ final class AlanConsoleViewModel: ObservableObject {
 
     private var lastEventID: String?
     private var eventPumpTask: Task<Void, Never>?
-    private var assistantMessageByTurnID: [String: UUID] = [:]
+    private var eventReducer = ConsoleEventReducer()
     private var lastPumpErrorMessage: String?
 
     deinit {
@@ -131,7 +131,7 @@ final class AlanConsoleViewModel: ObservableObject {
                     selectedSessionID = nil
                     messages = []
                     pendingYield = nil
-                    assistantMessageByTurnID.removeAll()
+                    eventReducer.reset()
                     lastEventID = nil
                     eventPumpTask?.cancel()
                     eventPumpTask = nil
@@ -212,7 +212,7 @@ final class AlanConsoleViewModel: ObservableObject {
             selectedSessionID = nil
             messages = []
             pendingYield = nil
-            assistantMessageByTurnID.removeAll()
+            eventReducer.reset()
             lastEventID = nil
             eventPumpTask?.cancel()
             eventPumpTask = nil
@@ -381,7 +381,7 @@ final class AlanConsoleViewModel: ObservableObject {
         pendingYield = nil
         confirmationModifications = ""
         structuredAnswerDrafts = [:]
-        assistantMessageByTurnID.removeAll()
+        eventReducer.reset()
         lastEventID = nil
 
         let session = try await client().readSession(sessionID: sessionID)
@@ -427,6 +427,13 @@ final class AlanConsoleViewModel: ObservableObject {
 
     private func runEventPump(sessionID: String) async {
         connectionState = .connecting
+        let eventReader: ConsoleEventReader
+        do {
+            eventReader = try ConsoleEventReader(client: client())
+        } catch {
+            reportEventPumpError(error)
+            return
+        }
 
         while !Task.isCancelled {
             guard selectedSessionID == sessionID else {
@@ -434,10 +441,9 @@ final class AlanConsoleViewModel: ObservableObject {
             }
 
             do {
-                let page = try await client().readEvents(
+                let page = try await eventReader.readNextPage(
                     sessionID: sessionID,
-                    afterEventID: lastEventID,
-                    limit: 200
+                    afterEventID: lastEventID
                 )
 
                 connectionState = .online
@@ -465,149 +471,37 @@ final class AlanConsoleViewModel: ObservableObject {
                         return
                     }
                     lastEventID = event.eventID
-                    handle(event: event)
+                    reduce(event: event)
                 }
             } catch is CancellationError {
                 return
             } catch {
-                connectionState = .degraded
-                let message = error.localizedDescription
-                if message != lastPumpErrorMessage {
-                    lastPumpErrorMessage = message
-                    appendTimeline("Event Stream Error", detail: message, level: .warning)
-                    lastError = message
-                }
+                reportEventPumpError(error)
                 try? await Task.sleep(nanoseconds: 1_000_000_000)
             }
         }
     }
 
-    private func handle(event: SessionEventEnvelope) {
-        switch event.type {
-        case "turn_started":
-            appendTimeline("Turn Started", detail: shortID(event.turnID), level: .info)
-
-        case "text_delta", "message_delta", "message_delta_chunk":
-            if let chunk = event.textChunk, !chunk.isEmpty {
-                appendAssistantChunk(
-                    chunk,
-                    turnID: event.turnID ?? "turn_unknown",
-                    isFinal: event.isFinal == true
-                )
-            }
-
-        case "thinking_delta":
-            if let chunk = event.textChunk, !chunk.isEmpty {
-                appendTimeline(
-                    "Thinking",
-                    detail: summarize(chunk, maxLength: 140),
-                    level: .info
-                )
-            }
-
-        case "tool_call_started":
-            let title = "Tool Started"
-            let detail = "\(event.name ?? "tool") • \(shortID(event.toolCallID))"
-            appendTimeline(title, detail: detail, level: .action)
-
-        case "tool_call_completed":
-            let preview = event.resultPreview ?? "Completed"
-            appendTimeline("Tool Completed", detail: preview, level: .action)
-
-        case "yield":
-            let pending = PendingYieldState.from(event: event)
-            pendingYield = pending
-            confirmationModifications = ""
-            structuredAnswerDrafts = Dictionary(uniqueKeysWithValues: pending.questions.map { ($0.id, "") })
-            customResumePayload = "{\n  \"choice\": \"approve\"\n}"
-            appendTimeline("Action Required", detail: pending.kind, level: .warning)
-
-        case "warning":
-            if let message = event.message {
-                appendSystemMessage("Warning: \(message)")
-                appendTimeline("Warning", detail: message, level: .warning)
-            }
-
-        case "error":
-            if let message = event.message {
-                if event.recoverable == true {
-                    appendSystemMessage("Recoverable: \(message)")
-                    appendTimeline("Recoverable Error", detail: message, level: .warning)
-                } else {
-                    appendErrorMessage(message)
-                    appendTimeline("Error", detail: message, level: .error)
-                }
-            }
-
-        case "turn_completed":
-            finishAssistantMessage(for: event.turnID)
-            appendTimeline(
-                "Turn Completed",
-                detail: event.summary,
-                level: .info
-            )
-
-        default:
-            appendTimeline(
-                event.type.replacingOccurrences(of: "_", with: " ").capitalized,
-                detail: event.message ?? event.summary,
-                level: .info
-            )
-        }
+    private func reduce(event: SessionEventEnvelope) {
+        var projection = ConsoleEventProjection(
+            messages: messages,
+            timeline: timeline,
+            pendingYield: pendingYield,
+            confirmationModifications: confirmationModifications,
+            structuredAnswerDrafts: structuredAnswerDrafts,
+            customResumePayload: customResumePayload
+        )
+        eventReducer.reduce(event: event, into: &projection)
+        messages = projection.messages
+        timeline = projection.timeline
+        pendingYield = projection.pendingYield
+        confirmationModifications = projection.confirmationModifications
+        structuredAnswerDrafts = projection.structuredAnswerDrafts
+        customResumePayload = projection.customResumePayload
     }
 
     private func appendUserMessage(_ text: String) {
         messages.append(ChatMessage(role: .user, text: text))
-    }
-
-    private func appendSystemMessage(_ text: String) {
-        messages.append(ChatMessage(role: .system, text: text))
-    }
-
-    private func appendErrorMessage(_ text: String) {
-        messages.append(ChatMessage(role: .error, text: text))
-    }
-
-    private func appendAssistantChunk(_ chunk: String, turnID: String, isFinal: Bool) {
-        let messageID: UUID
-        if let existing = assistantMessageByTurnID[turnID] {
-            messageID = existing
-        } else {
-            let id = UUID()
-            assistantMessageByTurnID[turnID] = id
-            messages.append(ChatMessage(id: id, role: .assistant, text: "", turnID: turnID, isStreaming: true))
-            messageID = id
-        }
-
-        guard let index = messages.firstIndex(where: { $0.id == messageID }) else {
-            return
-        }
-
-        messages[index].text.append(chunk)
-        messages[index].isStreaming = !isFinal
-
-        if isFinal {
-            assistantMessageByTurnID.removeValue(forKey: turnID)
-        }
-    }
-
-    private func finishAssistantMessage(for turnID: String?) {
-        guard let turnID else {
-            return
-        }
-        guard let messageID = assistantMessageByTurnID[turnID] else {
-            return
-        }
-        guard let index = messages.firstIndex(where: { $0.id == messageID }) else {
-            assistantMessageByTurnID.removeValue(forKey: turnID)
-            return
-        }
-
-        messages[index].isStreaming = false
-        if messages[index].text.isEmpty {
-            messages[index].text = "No response text returned."
-        }
-        assistantMessageByTurnID.removeValue(forKey: turnID)
     }
 
     private func appendTimeline(_ title: String, detail: String?, level: TimelineEntry.Level) {
@@ -673,15 +567,6 @@ final class AlanConsoleViewModel: ObservableObject {
         return .string(text)
     }
 
-    private func summarize(_ text: String, maxLength: Int) -> String {
-        let compact = text.replacingOccurrences(of: "\n", with: " ")
-        if compact.count <= maxLength {
-            return compact
-        }
-        let end = compact.index(compact.startIndex, offsetBy: maxLength)
-        return "\(compact[..<end])..."
-    }
-
     private func shortID(_ value: String?) -> String {
         guard let value, !value.isEmpty else {
             return "-"
@@ -710,6 +595,16 @@ final class AlanConsoleViewModel: ObservableObject {
         let message = error.localizedDescription
         lastError = message
         appendTimeline(timelineTitle, detail: message, level: .error)
+    }
+
+    private func reportEventPumpError(_ error: Error) {
+        connectionState = .degraded
+        let message = error.localizedDescription
+        if message != lastPumpErrorMessage {
+            lastPumpErrorMessage = message
+            appendTimeline("Event Stream Error", detail: message, level: .warning)
+            lastError = message
+        }
     }
 
     private func client() throws -> AlanAPIClient {
