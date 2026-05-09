@@ -26,6 +26,7 @@ recorded in [`ARCHITECTURE.md`](./ARCHITECTURE.md).
 - `Views/Shell/`: shell sidebar, workspace composition, command palette, and
   other primary macOS shell SwiftUI components
 - `Views/Console/`: legacy/mobile remote-control console surface
+- `Models/Console/`: legacy/mobile console value types
 - `TerminalPaneView.swift` / `TerminalHostView.swift`: current terminal pane and host surfaces
 - `ShellModel.swift` / `ShellHostController.swift`: current shell state and controller
 - `ShellControlPlane.swift`: current file/socket shell control plane
