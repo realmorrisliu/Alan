@@ -698,10 +698,15 @@ require_pattern \
     "private static let maxConcurrentClients" \
     "socket server must keep concurrency limits in the transport owner"
 
+require_pattern \
+    "clients/apple/AlanNative/Services/Shell/ShellPublishedStateMerger.swift" \
+    "enum AlanShellPublishedStateMerger" \
+    "published state merging must live in a dedicated shell service owner"
+
 reject_pattern \
     "clients/apple/AlanNative/ShellControlPlane.swift" \
-    "final class AlanShellSocketServer|SO_RCVTIMEO|SO_SNDTIMEO|maxRequestBytes|command_timeout" \
-    "shell control-plane coordinator must not own socket transport bounds"
+    "final class AlanShellSocketServer|SO_RCVTIMEO|SO_SNDTIMEO|maxRequestBytes|command_timeout|enum AlanShellPublishedStateMerger" \
+    "shell control-plane coordinator must not own socket transport bounds or state merging"
 
 reject_pattern \
     "clients/apple/AlanNative" \
