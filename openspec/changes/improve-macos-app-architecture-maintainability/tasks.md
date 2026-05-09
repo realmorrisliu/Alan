@@ -42,7 +42,7 @@
 
 ## 7. Control Plane And IPC Boundaries
 
-- [ ] 7.1 Split shell control-plane protocol DTOs from socket server, file-polling control plane, local command executor, state merger, event persistence, and diagnostics.
+- [x] 7.1 Split shell control-plane protocol DTOs from socket server, file-polling control plane, local command executor, state merger, event persistence, and diagnostics.
 - [x] 7.2 Keep socket transport behavior bounded by request size, request timeout, response timeout, and concurrency limits during extraction.
 - [x] 7.3 Keep local command execution authoritative against shell/runtime state and separate from transport read/write code.
 - [x] 7.4 Run focused shell control-plane contract scripts after IPC or local executor extraction.
