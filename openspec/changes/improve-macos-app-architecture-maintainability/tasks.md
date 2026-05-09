@@ -37,8 +37,8 @@
 
 - [x] 6.1 Split `TerminalHostView.swift` so `AlanTerminalHostNSView` remains the AppKit bridge while input routing, overlay presentation, window observation, runtime snapshot publication, and Ghostty attachment have explicit collaborators.
 - [x] 6.2 Keep terminal-area event ownership routed through the AppKit terminal host and preserve the weak activation boundary during extraction.
-- [ ] 6.3 Keep terminal runtime identity service-backed and pane-keyed while moving files or collaborators.
-- [ ] 6.4 Run focused terminal surface/runtime scripts after terminal-host or runtime-service extractions.
+- [x] 6.3 Keep terminal runtime identity service-backed and pane-keyed while moving files or collaborators.
+- [x] 6.4 Run focused terminal surface/runtime scripts after terminal-host or runtime-service extractions.
 
 ## 7. Control Plane And IPC Boundaries
 

@@ -15,10 +15,12 @@ struct TerminalRuntimeServiceTestRunner {
 private enum TerminalRuntimeServiceTests {
     static func run() {
         verifiesBootstrapReuseAndPaneHandleIdentity()
+        verifiesPaneScopedHandleIsolation()
         verifiesDeliveryAndMissingRuntimeResults()
         verifiesQueuedAndTimeoutDeliveryStates()
         verifiesControlResponseCarriesDeliveryDiagnostics()
         verifiesTeardownOnce()
+        verifiesFinalizePanesOnlyReleasesStaleHandles()
         verifiesBootstrapFailureDiagnostics()
         print("Terminal runtime service tests passed.")
     }
@@ -41,6 +43,28 @@ private enum TerminalRuntimeServiceTests {
         )
         secondWindow.ensureReady()
         expect(bootstrap.ensureCallCount == 1, "shared bootstrap must not reinitialize per window")
+    }
+
+    private static func verifiesPaneScopedHandleIsolation() {
+        let service = FakeAlanTerminalRuntimeService()
+        let first = service.surfaceHandle(for: "pane_1", bootProfile: nil)
+        let second = service.surfaceHandle(for: "pane_2", bootProfile: nil)
+
+        expect(first !== second, "different panes must receive distinct service-owned handles")
+        expect(first.paneID == "pane_1", "first handle must retain its pane identity")
+        expect(second.paneID == "pane_2", "second handle must retain its pane identity")
+        expect(
+            service.registeredPaneIDs == ["pane_1", "pane_2"],
+            "service must expose registered pane identities"
+        )
+        expect(
+            service.snapshot(for: "pane_1")?.paneID == "pane_1",
+            "snapshots must stay pane keyed"
+        )
+        expect(
+            service.snapshot(for: "pane_2")?.paneID == "pane_2",
+            "snapshots must stay pane keyed"
+        )
     }
 
     private static func verifiesDeliveryAndMissingRuntimeResults() {
@@ -115,6 +139,31 @@ private enum TerminalRuntimeServiceTests {
         expect(handle.teardownCount == 1, "first finalize must tear down exactly once")
         expect(service.finalizePane("pane_1") == .notStarted, "missing second finalize must be stable")
         expect(handle.teardownCount == 1, "second finalize must not repeat teardown")
+    }
+
+    private static func verifiesFinalizePanesOnlyReleasesStaleHandles() {
+        let service = FakeAlanTerminalRuntimeService()
+        let active = service.surfaceHandle(
+            for: "pane_active",
+            bootProfile: nil
+        ) as! FakeAlanTerminalSurfaceHandle
+        let stale = service.surfaceHandle(
+            for: "pane_stale",
+            bootProfile: nil
+        ) as! FakeAlanTerminalSurfaceHandle
+
+        service.finalizePanes(excluding: ["pane_active"])
+
+        expect(active.teardownCount == 0, "active pane handle must not be finalized")
+        expect(stale.teardownCount == 1, "stale pane handle must be finalized")
+        expect(
+            service.existingSurfaceHandle(for: "pane_active") === active,
+            "active pane handle must remain registered"
+        )
+        expect(
+            service.existingSurfaceHandle(for: "pane_stale") == nil,
+            "stale pane handle must be removed"
+        )
     }
 
     private static func verifiesBootstrapFailureDiagnostics() {
