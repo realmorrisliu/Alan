@@ -70,7 +70,8 @@ The accepted target under `clients/apple/AlanNative` is:
 - `Models/`: API DTOs, shell snapshots, shell IDs, enums, value types, and
   current-format decoding.
 - `Controllers/`: observable app and shell controllers that own UI state and
-  delegate IO or domain work to services.
+  delegate IO or domain work to services. This folder currently records the
+  target owner while `ShellHostController.swift` remains tracked migration debt.
 - `Services/`: daemon API clients, event readers/reducers, terminal runtime
   services, Ghostty bootstrap, shell projection services, shell control plane,
   socket server, persistence, and other process or IO code.
@@ -123,7 +124,7 @@ device support was not required for this validation.
 ## Remaining Architecture Debt
 
 `check-architecture-maintainability.sh` currently completes in report mode with
-eight known warnings:
+seven known warnings:
 
 - `ShellHostController.swift` remains large and still imports AppKit outside a
   final narrow controller/service split.
@@ -135,9 +136,6 @@ eight known warnings:
   surface adapter splits.
 - `Views/Console/ContentView.swift` remains large and imports AppKit because the
   legacy/mobile console path is isolated but not fully decomposed.
-- `Controllers/` is documented as the target owner for observable controllers
-  but has not been introduced yet.
-
 The current architecture gate intentionally keeps those warnings non-blocking
 while failing narrower regressions such as new root-level Swift files, project
 membership drift, or reintroduced control-plane ownership in the wrong file.

@@ -15,7 +15,8 @@ services, and support code without reading every file in a flat directory.
 - **WHEN** a developer inspects `clients/apple/AlanNative`
 - **THEN** app entry code, shell views, console views, protocol models,
   observable controllers, service/IO code, and support utilities are grouped by
-  responsibility rather than mixed in one flat source directory
+  responsibility or explicitly documented as migration debt rather than silently
+  mixed in one flat source directory
 
 #### Scenario: README documents source layout
 - **WHEN** the Apple client README describes the directory structure
@@ -136,9 +137,9 @@ is active for macOS shell development.
 
 ### Requirement: Large files have planned ownership boundaries
 The Apple client SHALL avoid large multi-responsibility Swift files as the
-stable end state. When a file remains large during migration, the owning change
-SHALL document the intended split and avoid adding unrelated responsibilities to
-that file.
+stable end state. When a file remains large or in a transitional owner during
+migration, the owning change SHALL document the intended split and avoid adding
+unrelated responsibilities to that file.
 
 #### Scenario: Large file receives new behavior
 - **WHEN** a developer adds behavior to an existing large Apple client file

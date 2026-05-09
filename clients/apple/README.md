@@ -29,6 +29,8 @@ recorded in [`ARCHITECTURE.md`](./ARCHITECTURE.md).
 - `Models/API/`: daemon API response, operation, and JSON value models
 - `Models/Console/`: legacy/mobile console value types
 - `Models/Shell/`: shell command enums, launch targets, snapshots, and shell mutation helpers
+- `Controllers/`: target owner for observable app and shell controllers; current
+  migration debt is tracked in `ARCHITECTURE.md`
 - `Services/Daemon/`: daemon HTTP client, event page reader, and console event reducer ownership
 - `Services/Shell/`: shell projection, persistence, control-plane transport,
   file polling, event store, diagnostics, and command-execution services that
