@@ -39,7 +39,9 @@ Xcode target.
 | `Models/Shell/ShellTreeMutations.swift` | 198 | Foundation | Split-tree resizing, equalization, split, removal, and attachment helpers | `Models/Shell/` |
 | `Models/Shell/ShellStateMutations.swift` | 1034 | Foundation | Shell bootstrap defaults, state mutation result/error types, mutation helpers, and preview fixtures | `Models/Shell/` |
 | `ShellModel.swift` | 169 | Foundation | Shell title, label, and status presentation helpers | `Models/Shell/` or `Support/ShellPresentation/` |
-| `ShellHostController.swift` | 1964 | Foundation, AppKit, SwiftUI; macOS gates | Observable shell controller, persistence, boot profiles, runtime projection, command routing | `Controllers/Shell/` plus service collaborators |
+| `ShellHostController.swift` | 1632 | Foundation, AppKit, SwiftUI; macOS gates | Observable shell controller, runtime update intake, command routing, control-plane command handling | `Controllers/Shell/` plus service collaborators |
+| `Services/Shell/ShellPaneProjectionService.swift` | 266 | Foundation; macOS gates | Pane boot context, runtime metadata, viewport, attention, and Alan binding projection | `Services/Shell/` |
+| `Services/Shell/ShellStatePersistenceStore.swift` | 116 | Foundation; macOS gates | Shell state save/restore, persistence URL selection, and restored window context lookup | `Services/Shell/` |
 | `ShellControlPlane.swift` | 2075 | Foundation, Darwin; macOS gates | Protocol DTOs, socket server, file polling, local executor, state merging, persistence, diagnostics | `Services/ControlPlane/` plus `Models/ControlPlane/` |
 | `Models/API/DaemonAPIModels.swift` | 529 | Foundation | Daemon API response DTOs, operation payloads, JSON values, and API error type | `Models/API/` |
 | `Models/Console/ConsoleModels.swift` | 148 | Foundation | Console chat messages, timeline entries, structured questions, and pending-yield value state | `Models/Console/` |
@@ -62,8 +64,8 @@ The accepted target under `clients/apple/AlanNative` is:
 - `Controllers/`: observable app and shell controllers that own UI state and
   delegate IO or domain work to services.
 - `Services/`: daemon API clients, event readers/reducers, terminal runtime
-  services, Ghostty bootstrap, shell control plane, socket server, persistence,
-  and other process or IO code.
+  services, Ghostty bootstrap, shell projection services, shell control plane,
+  socket server, persistence, and other process or IO code.
 - `Support/`: design tokens, formatting helpers, window placement, AppKit
   adapters, and small utilities.
 

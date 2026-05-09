@@ -62,7 +62,7 @@ struct ShellWindowContext {
     ) -> ShellWindowContext {
         ShellWindowContext(
             windowID: windowID,
-            persistenceURL: ShellHostController.defaultPersistenceURL(
+            persistenceURL: ShellStatePersistenceStore.defaultPersistenceURL(
                 windowID: windowID,
                 fileManager: fileManager
             ),
@@ -79,13 +79,11 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     }
 
     private static let iso8601Formatter = ISO8601DateFormatter()
-    private static let persistenceFilePrefix = "shell-state-"
-    private static let persistenceFileExtension = ".json"
-    private static let defaultRestorationWindowID = "window_main"
-
     private let fileManager: FileManager
     private let windowContext: ShellWindowContext
     private let persistenceURL: URL
+    private let persistenceStore: ShellStatePersistenceStore
+    private let paneProjection: ShellPaneProjectionService
     private lazy var controlPlane = AlanShellControlPlane(windowID: windowContext.windowID) { [weak self] command in
         self?.handleControlPlaneCommand(command)
             ?? AlanShellControlResponse(
@@ -136,9 +134,14 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         terminalRuntimeRegistry: TerminalRuntimeRegistry? = nil
     ) {
         self.fileManager = fileManager
+        self.paneProjection = ShellPaneProjectionService(fileManager: fileManager)
         let resolvedContext = windowContext ?? ShellWindowContext.make(fileManager: fileManager)
         self.windowContext = resolvedContext
         self.persistenceURL = persistenceURL ?? resolvedContext.persistenceURL
+        self.persistenceStore = ShellStatePersistenceStore(
+            fileManager: fileManager,
+            persistenceURL: self.persistenceURL
+        )
         self.shellState = shellState
         self.terminalRuntimeRegistry =
             terminalRuntimeRegistry
@@ -168,8 +171,14 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     ) -> ShellHostController {
         let resolvedWindowContext =
             windowContext
-            ?? restoredWindowContext(fileManager: fileManager, startupMode: startupMode)
-            ?? defaultWindowContext(fileManager: fileManager, startupMode: startupMode)
+            ?? ShellStatePersistenceStore.restoredWindowContext(
+                fileManager: fileManager,
+                restorePrevious: startupMode == .restorePrevious
+            )
+            ?? ShellStatePersistenceStore.defaultWindowContext(
+                fileManager: fileManager,
+                restorePrevious: startupMode == .restorePrevious
+            )
         let persistenceURL = resolvedWindowContext.persistenceURL
         let shellState: ShellStateSnapshot
         switch startupMode {
@@ -177,7 +186,10 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
             shellState = .bootstrapDefault(windowID: resolvedWindowContext.windowID)
         case .restorePrevious:
             shellState =
-                restoreShellState(fileManager: fileManager, persistenceURL: persistenceURL)
+                ShellStatePersistenceStore.restoreShellState(
+                    fileManager: fileManager,
+                    persistenceURL: persistenceURL
+                )
                 ?? .bootstrapDefault(windowID: resolvedWindowContext.windowID)
         }
 
@@ -590,11 +602,11 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
            let pane = pane(paneID: paneID)
         {
             let bootProfile = AlanShellBootProfile.forPane(pane, shellState: shellState)
-            let runtimeProcessExited = projectedProcessExited(
+            let runtimeProcessExited = paneProjection.projectedProcessExited(
                 metadataProcessExited: runtime.paneMetadata.processExited,
                 surfaceState: runtime.surfaceState
             ) ?? runtime.paneMetadata.processExited
-            let projectedContext = projectedContext(
+            let projectedContext = paneProjection.projectedContext(
                 for: pane,
                 bootProfile: bootProfile,
                 workingDirectory: runtime.paneMetadata.workingDirectory ?? pane.cwd,
@@ -606,12 +618,12 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
             )
 
             updatePaneState(paneID: paneID) { current in
-                let projectedBinding = projectedAlanBinding(
+                let projectedBinding = paneProjection.projectedAlanBinding(
                     for: current,
                     binding: current.alanBinding,
                     processExited: runtimeProcessExited
                 )
-                let viewport = projectedViewport(
+                let viewport = paneProjection.projectedViewport(
                     current: current,
                     metadata: runtime.paneMetadata,
                     runtime: runtime
@@ -623,7 +635,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
                     launchTarget: current.launchTarget,
                     cwd: current.cwd ?? bootProfile.workingDirectory,
                     process: current.process,
-                    attention: projectedAttention(
+                    attention: paneProjection.projectedAttention(
                         metadataAttention: runtime.paneMetadata.attention,
                         processExited: runtimeProcessExited,
                         binding: projectedBinding,
@@ -641,11 +653,11 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         guard let pane = pane(paneID: paneID) else { return }
         let bootProfile = AlanShellBootProfile.forPane(pane, shellState: shellState)
         let runtime = runtime(for: pane.paneID)
-        let metadataProcessExited = projectedProcessExited(
+        let metadataProcessExited = paneProjection.projectedProcessExited(
             metadataProcessExited: metadata.processExited,
             surfaceState: runtime.surfaceState
         ) ?? metadata.processExited
-        let projectedContext = projectedContext(
+        let projectedContext = paneProjection.projectedContext(
             for: pane,
             bootProfile: bootProfile,
             workingDirectory: metadata.workingDirectory ?? pane.cwd,
@@ -660,12 +672,12 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
             paneID: pane.paneID,
             tabTitleOverride: metadata.title
         ) { current in
-            let projectedBinding = projectedAlanBinding(
+            let projectedBinding = paneProjection.projectedAlanBinding(
                 for: current,
                 binding: current.alanBinding,
                 processExited: metadataProcessExited
             )
-            let viewport = projectedViewport(
+            let viewport = paneProjection.projectedViewport(
                 current: current,
                 metadata: metadata,
                 runtime: runtime
@@ -678,7 +690,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
                 launchTarget: current.launchTarget,
                 cwd: metadata.workingDirectory ?? current.cwd ?? bootProfile.workingDirectory,
                 process: current.process,
-                attention: projectedAttention(
+                attention: paneProjection.projectedAttention(
                     metadataAttention: metadata.attention,
                     processExited: metadataProcessExited,
                     binding: projectedBinding,
@@ -695,16 +707,16 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         guard let pane = pane(paneID: paneID) else { return }
         let bootProfile = AlanShellBootProfile.forPane(pane, shellState: shellState)
         let runtime = runtime(for: pane.paneID)
-        let runtimeProcessExited = projectedProcessExited(
+        let runtimeProcessExited = paneProjection.projectedProcessExited(
             metadataProcessExited: runtime.paneMetadata.processExited,
             surfaceState: runtime.surfaceState
         ) ?? runtime.paneMetadata.processExited
-        let projectedBinding = projectedAlanBinding(
+        let projectedBinding = paneProjection.projectedAlanBinding(
             for: pane,
             binding: binding,
             processExited: runtimeProcessExited
         )
-        let projectedContext = projectedContext(
+        let projectedContext = paneProjection.projectedContext(
             for: pane,
             bootProfile: bootProfile,
             workingDirectory: pane.cwd,
@@ -751,11 +763,11 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         guard let pane = pane(paneID: paneID) else { return }
         let bootProfile = AlanShellBootProfile.forPane(pane, shellState: shellState)
         let runtime = runtime(for: pane.paneID)
-        let runtimeProcessExited = projectedProcessExited(
+        let runtimeProcessExited = paneProjection.projectedProcessExited(
             metadataProcessExited: nil,
             surfaceState: runtime.surfaceState
         ) ?? false
-        let projectedContext = projectedContext(
+        let projectedContext = paneProjection.projectedContext(
             for: pane,
             bootProfile: bootProfile,
             workingDirectory: pane.cwd ?? bootProfile.workingDirectory,
@@ -767,7 +779,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         )
 
         updatePaneState(paneID: paneID) { current in
-            let projectedBinding = projectedAlanBinding(
+            let projectedBinding = paneProjection.projectedAlanBinding(
                 for: current,
                 binding: current.alanBinding,
                 processExited: runtimeProcessExited
@@ -897,9 +909,9 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         terminalRuntimeRegistry.releaseRuntimes(excluding: paneIDs)
 
         let hydratedPanes = state.panes.map { pane in
-            guard paneNeedsBootContextProjection(pane) else { return pane }
+            guard paneProjection.needsBootContextProjection(pane) else { return pane }
             let bootProfile = AlanShellBootProfile.forPane(pane, shellState: state)
-            let projectedContext = projectedContext(
+            let projectedContext = paneProjection.projectedContext(
                 for: pane,
                 bootProfile: bootProfile,
                 workingDirectory: pane.cwd ?? bootProfile.workingDirectory,
@@ -970,12 +982,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     }
 
     private func persistShellState() {
-        let parentURL = persistenceURL.deletingLastPathComponent()
-        try? fileManager.createDirectory(at: parentURL, withIntermediateDirectories: true)
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        guard let data = try? encoder.encode(shellState) else { return }
-        try? data.write(to: persistenceURL, options: .atomic)
+        persistenceStore.save(shellState)
     }
 
     private func pane(paneID: String) -> ShellPane? {
@@ -1192,256 +1199,6 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
             errorCode: errorCode,
             errorMessage: errorMessage
         )
-    }
-
-    private func paneNeedsBootContextProjection(_ pane: ShellPane) -> Bool {
-        guard let context = pane.context else { return true }
-        return context.controlPath == nil
-            || context.alanBindingFile == nil
-            || context.launchStrategy == nil
-    }
-
-    private func projectedAttention(
-        metadataAttention: ShellAttentionState,
-        processExited: Bool,
-        binding: ShellAlanBinding?,
-        surfaceState: AlanTerminalSurfaceStateSnapshot? = nil
-    ) -> ShellAttentionState {
-        if binding?.pendingYield == true || processExited || surfaceState?.childExited == true {
-            return .awaitingUser
-        }
-
-        if surfaceState?.rendererHealth == "failed"
-            || surfaceState?.readiness == .unready(reason: .rendererFailed)
-        {
-            return .notable
-        }
-
-        return metadataAttention
-    }
-
-    private func projectedViewport(
-        current: ShellPane,
-        metadata: TerminalPaneMetadataSnapshot,
-        runtime: TerminalHostRuntimeSnapshot
-    ) -> ShellViewportSnapshot {
-        ShellViewportSnapshot(
-            title: metadata.title ?? current.viewport?.title,
-            summary: projectedViewportSummary(
-                metadata: metadata,
-                runtime: runtime,
-                fallback: current.viewport?.summary
-            ),
-            visibleExcerpt: current.viewport?.visibleExcerpt,
-            lastActivityAt: metadata.lastUpdatedAt.map(Self.iso8601Formatter.string)
-                ?? current.viewport?.lastActivityAt
-                ?? Self.iso8601Formatter.string(from: runtime.lastUpdatedAt)
-        )
-    }
-
-    private func projectedViewportSummary(
-        metadata: TerminalPaneMetadataSnapshot,
-        runtime: TerminalHostRuntimeSnapshot,
-        fallback: String?
-    ) -> String? {
-        if metadata.processExited || runtime.surfaceState.childExited {
-            if let exitCode = metadata.lastCommandExitCode {
-                return "Exited \(exitCode)"
-            }
-            return "Exited"
-        }
-
-        if runtime.surfaceState.rendererHealth == "failed"
-            || runtime.renderer.phase == .failed
-            || runtime.surfaceState.readiness == .unready(reason: .rendererFailed)
-        {
-            return "Renderer failed"
-        }
-
-        if runtime.surfaceState.readonly {
-            return "Read-only"
-        }
-
-        if runtime.surfaceState.inputReady == false,
-           runtime.surfaceState.readiness == .unready(reason: .inputNotReady)
-        {
-            return "Starting"
-        }
-
-        return metadata.summary ?? fallback
-    }
-
-    private func surfaceReadinessValue(_ readiness: AlanTerminalSurfaceReadiness) -> String {
-        switch readiness {
-        case .ready:
-            return "ready"
-        case .unready(let reason):
-            return reason.rawValue
-        }
-    }
-
-    private func projectedProcessExited(
-        metadataProcessExited: Bool?,
-        surfaceState: AlanTerminalSurfaceStateSnapshot?
-    ) -> Bool? {
-        if metadataProcessExited == true || surfaceState?.childExited == true {
-            return true
-        }
-
-        return metadataProcessExited ?? surfaceState?.childExited
-    }
-
-    private func projectedContext(
-        for pane: ShellPane,
-        bootProfile: AlanShellBootProfile,
-        workingDirectory: String?,
-        processExited: Bool?,
-        lastCommandExitCode: Int?,
-        lastMetadataAt: Date?,
-        existing: ShellContextSnapshot?,
-        runtime: TerminalHostRuntimeSnapshot? = nil
-    ) -> ShellContextSnapshot {
-        let resolvedWorkingDirectory = workingDirectory ?? pane.cwd ?? bootProfile.workingDirectory
-        let repositoryContext = repositoryContext(for: resolvedWorkingDirectory)
-        let projectedProcessExited = projectedProcessExited(
-            metadataProcessExited: processExited,
-            surfaceState: runtime?.surfaceState
-        )
-
-        return ShellContextSnapshot(
-            workingDirectoryName: workingDirectoryName(for: resolvedWorkingDirectory)
-                ?? existing?.workingDirectoryName,
-            repositoryRoot: repositoryContext.repositoryRoot ?? existing?.repositoryRoot,
-            gitBranch: repositoryContext.gitBranch ?? existing?.gitBranch,
-            controlPath: bootProfile.environment["ALAN_SHELL_CONTROL_DIR"] ?? existing?.controlPath,
-            socketPath: bootProfile.environment["ALAN_SHELL_SOCKET"] ?? existing?.socketPath,
-            alanBindingFile: bootProfile.environment["ALAN_SHELL_BINDING_FILE"]
-                ?? existing?.alanBindingFile,
-            launchCommand: bootProfile.launchCommandString,
-            launchStrategy: bootProfile.command.strategy.rawValue,
-            shellIntegrationSource: "ghostty_shell_integration",
-            processState: projectedProcessExited.map { $0 ? "exited" : "running" }
-                ?? existing?.processState,
-            rendererPhase: runtime?.renderer.phase.rawValue ?? existing?.rendererPhase,
-            rendererHealth: runtime?.surfaceState.rendererHealth
-                ?? runtime?.renderer.phase.rawValue
-                ?? existing?.rendererHealth,
-            surfaceReadiness: runtime.map { surfaceReadinessValue($0.surfaceState.readiness) }
-                ?? existing?.surfaceReadiness,
-            inputReady: runtime?.surfaceState.inputReady ?? existing?.inputReady,
-            readonly: runtime?.surfaceState.readonly ?? existing?.readonly,
-            terminalMode: runtime?.surfaceState.terminalMode.rawValue ?? existing?.terminalMode,
-            displayName: runtime?.displayName ?? existing?.displayName,
-            displayID: runtime?.displayID ?? existing?.displayID,
-            windowTitle: runtime?.attachedWindowTitle ?? existing?.windowTitle,
-            lastMetadataAt: lastMetadataAt.map(Self.iso8601Formatter.string) ?? existing?.lastMetadataAt,
-            lastCommandExitCode: lastCommandExitCode ?? existing?.lastCommandExitCode
-        )
-    }
-
-    private func projectedAlanBinding(
-        for pane: ShellPane,
-        binding: ShellAlanBinding?,
-        processExited: Bool
-    ) -> ShellAlanBinding? {
-        if let binding {
-            return binding
-        }
-
-        if let existing = pane.alanBinding {
-            return existing
-        }
-
-        guard pane.resolvedLaunchTarget == .alan, !processExited else {
-            return nil
-        }
-
-        return ShellAlanBinding(
-            sessionID: "pending:\(pane.paneID)",
-            runStatus: "booting",
-            pendingYield: false,
-            source: "alan_shell_boot_projection",
-            lastProjectedAt: Self.iso8601Formatter.string(from: .now)
-        )
-    }
-
-    private func workingDirectoryName(for path: String?) -> String? {
-        guard let path, !path.isEmpty else { return nil }
-        let lastComponent = URL(fileURLWithPath: path).lastPathComponent
-        return lastComponent.isEmpty ? path : lastComponent
-    }
-
-    private func repositoryContext(for workingDirectory: String?) -> (repositoryRoot: String?, gitBranch: String?) {
-        guard let workingDirectory, !workingDirectory.isEmpty else {
-            return (nil, nil)
-        }
-
-        var currentURL = URL(fileURLWithPath: workingDirectory, isDirectory: true).standardizedFileURL
-        var isDirectory: ObjCBool = false
-
-        if !fileManager.fileExists(atPath: currentURL.path, isDirectory: &isDirectory) {
-            return (nil, nil)
-        }
-
-        if !isDirectory.boolValue {
-            currentURL.deleteLastPathComponent()
-        }
-
-        while true {
-            let gitEntryURL = currentURL.appendingPathComponent(".git")
-            if fileManager.fileExists(atPath: gitEntryURL.path) {
-                let gitDirectoryURL = resolveGitDirectory(for: gitEntryURL, repositoryRoot: currentURL)
-                let gitBranch = gitDirectoryURL.flatMap(readGitBranch(from:))
-                return (currentURL.path, gitBranch)
-            }
-
-            let parentURL = currentURL.deletingLastPathComponent()
-            if parentURL.path == currentURL.path {
-                return (nil, nil)
-            }
-            currentURL = parentURL
-        }
-    }
-
-    private func resolveGitDirectory(for gitEntryURL: URL, repositoryRoot: URL) -> URL? {
-        var isDirectory: ObjCBool = false
-        guard fileManager.fileExists(atPath: gitEntryURL.path, isDirectory: &isDirectory) else {
-            return nil
-        }
-
-        if isDirectory.boolValue {
-            return gitEntryURL
-        }
-
-        guard let content = try? String(contentsOf: gitEntryURL, encoding: .utf8) else {
-            return nil
-        }
-
-        let prefix = "gitdir:"
-        guard content.hasPrefix(prefix) else { return nil }
-        let rawPath = content.dropFirst(prefix.count).trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !rawPath.isEmpty else { return nil }
-
-        let pathURL = URL(fileURLWithPath: rawPath, relativeTo: repositoryRoot)
-        return pathURL.standardizedFileURL
-    }
-
-    private func readGitBranch(from gitDirectoryURL: URL) -> String? {
-        let headURL = gitDirectoryURL.appendingPathComponent("HEAD")
-        guard let head = try? String(contentsOf: headURL, encoding: .utf8)
-            .trimmingCharacters(in: .whitespacesAndNewlines),
-            !head.isEmpty
-        else {
-            return nil
-        }
-
-        let refPrefix = "ref: "
-        if head.hasPrefix(refPrefix) {
-            let reference = String(head.dropFirst(refPrefix.count))
-            return reference.split(separator: "/").last.map(String.init)
-        }
-
-        return "detached:\(String(head.prefix(12)))"
     }
 
     private func strongestAttention(in panes: [ShellPane]) -> ShellAttentionState {
@@ -1853,95 +1610,6 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
                     errorMessage: "events.read is handled by the shell control plane."
                 )
         }
-    }
-
-    static func defaultPersistenceURL(windowID: String, fileManager: FileManager) -> URL {
-        let sanitizedWindowID = windowID
-            .replacingOccurrences(of: "/", with: "_")
-            .replacingOccurrences(of: ":", with: "_")
-        return persistenceDirectory(fileManager: fileManager)
-            .appendingPathComponent("\(persistenceFilePrefix)\(sanitizedWindowID)\(persistenceFileExtension)")
-    }
-
-    private static func persistenceDirectory(fileManager: FileManager) -> URL {
-        let appSupportURL =
-            fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
-            ?? fileManager.temporaryDirectory
-        return appSupportURL.appendingPathComponent("AlanNative", isDirectory: true)
-    }
-
-    private static func restoredWindowContext(
-        fileManager: FileManager,
-        startupMode: StartupMode
-    ) -> ShellWindowContext? {
-        guard startupMode == .restorePrevious else { return nil }
-
-        let directory = persistenceDirectory(fileManager: fileManager)
-        guard let urls = try? fileManager.contentsOfDirectory(
-            at: directory,
-            includingPropertiesForKeys: [.contentModificationDateKey],
-            options: [.skipsHiddenFiles]
-        ) else {
-            return nil
-        }
-
-        let candidates = urls.compactMap { url -> (Date, ShellWindowContext)? in
-            guard isShellStatePersistenceURL(url),
-                  let state = restoreShellState(fileManager: fileManager, persistenceURL: url)
-            else {
-                return nil
-            }
-
-            let values = try? url.resourceValues(forKeys: [.contentModificationDateKey])
-            let modifiedAt = values?.contentModificationDate ?? .distantPast
-            return (
-                modifiedAt,
-                ShellWindowContext(
-                    windowID: state.windowID,
-                    persistenceURL: url,
-                    terminalRuntimeRegistry: TerminalRuntimeRegistry()
-                )
-            )
-        }
-
-        return candidates.max { lhs, rhs in lhs.0 < rhs.0 }?.1
-    }
-
-    private static func defaultWindowContext(
-        fileManager: FileManager,
-        startupMode: StartupMode
-    ) -> ShellWindowContext {
-        switch startupMode {
-        case .fresh:
-            return ShellWindowContext.make(fileManager: fileManager)
-        case .restorePrevious:
-            return ShellWindowContext.make(
-                fileManager: fileManager,
-                windowID: defaultRestorationWindowID
-            )
-        }
-    }
-
-    private static func isShellStatePersistenceURL(_ url: URL) -> Bool {
-        let fileName = url.lastPathComponent
-        return fileName.hasPrefix(persistenceFilePrefix)
-            && fileName.hasSuffix(persistenceFileExtension)
-            && fileName != "shell-state-v0.1.json"
-    }
-
-    private static func restoreShellState(
-        fileManager: FileManager,
-        persistenceURL: URL
-    ) -> ShellStateSnapshot? {
-        guard fileManager.fileExists(atPath: persistenceURL.path),
-              let data = try? Data(contentsOf: persistenceURL),
-              let state = try? JSONDecoder().decode(ShellStateSnapshot.self, from: data),
-              !state.spaces.isEmpty,
-              !state.panes.isEmpty
-        else {
-            return nil
-        }
-        return state
     }
 
     private static func attentionRank(for attention: ShellAttentionState) -> Int {
