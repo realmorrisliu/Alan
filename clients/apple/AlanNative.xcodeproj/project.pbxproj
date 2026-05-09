@@ -41,6 +41,8 @@
 		000000000000000000000020 /* ConsoleEventReducer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000120 /* ConsoleEventReducer.swift */; };
 		000000000000000000000021 /* ShellValueTypes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000121 /* ShellValueTypes.swift */; };
 		000000000000000000000022 /* ShellSnapshots.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000122 /* ShellSnapshots.swift */; };
+		000000000000000000000023 /* ShellTreeMutations.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000123 /* ShellTreeMutations.swift */; };
+		000000000000000000000024 /* ShellStateMutations.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000124 /* ShellStateMutations.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -79,6 +81,8 @@
 		000000000000000000000120 /* ConsoleEventReducer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/Daemon/ConsoleEventReducer.swift; sourceTree = "<group>"; };
 		000000000000000000000121 /* ShellValueTypes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models/Shell/ShellValueTypes.swift; sourceTree = "<group>"; };
 		000000000000000000000122 /* ShellSnapshots.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models/Shell/ShellSnapshots.swift; sourceTree = "<group>"; };
+		000000000000000000000123 /* ShellTreeMutations.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models/Shell/ShellTreeMutations.swift; sourceTree = "<group>"; };
+		000000000000000000000124 /* ShellStateMutations.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models/Shell/ShellStateMutations.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -202,6 +206,8 @@
 			children = (
 				000000000000000000000121 /* ShellValueTypes.swift */,
 				000000000000000000000122 /* ShellSnapshots.swift */,
+				000000000000000000000123 /* ShellTreeMutations.swift */,
+				000000000000000000000124 /* ShellStateMutations.swift */,
 			);
 			name = Models/Shell;
 			sourceTree = "<group>";
@@ -337,6 +343,8 @@
 				000000000000000000000020 /* ConsoleEventReducer.swift in Sources */,
 				000000000000000000000021 /* ShellValueTypes.swift in Sources */,
 				000000000000000000000022 /* ShellSnapshots.swift in Sources */,
+				000000000000000000000023 /* ShellTreeMutations.swift in Sources */,
+				000000000000000000000024 /* ShellStateMutations.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
