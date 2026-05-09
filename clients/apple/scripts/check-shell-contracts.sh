@@ -708,10 +708,20 @@ require_pattern \
     "final class AlanShellControlFilePoller" \
     "file-polling control plane must live in a dedicated shell service owner"
 
+require_pattern \
+    "clients/apple/AlanNative/Services/Shell/ShellEventStore.swift" \
+    "final class AlanShellEventStore" \
+    "shell event persistence must live in a dedicated shell service owner"
+
+require_pattern \
+    "clients/apple/AlanNative/Services/Shell/ShellDiagnostics.swift" \
+    "final class AlanShellDiagnostics" \
+    "shell diagnostics routing must live in a dedicated shell service owner"
+
 reject_pattern \
     "clients/apple/AlanNative/ShellControlPlane.swift" \
-    "final class AlanShellSocketServer|SO_RCVTIMEO|SO_SNDTIMEO|maxRequestBytes|command_timeout|enum AlanShellPublishedStateMerger|pollCommands\\(|pollBindings\\(|handleCommandFile\\(" \
-    "shell control-plane coordinator must not own socket transport bounds, state merging, or file polling"
+    "final class AlanShellSocketServer|SO_RCVTIMEO|SO_SNDTIMEO|maxRequestBytes|command_timeout|enum AlanShellPublishedStateMerger|pollCommands\\(|pollBindings\\(|handleCommandFile\\(|appendEvent\\(|readEvents\\(|recordEvents\\(|recordDiagnostic\\(" \
+    "shell control-plane coordinator must not own socket transport bounds, state merging, file polling, event persistence, or diagnostic routing"
 
 reject_pattern \
     "clients/apple/AlanNative" \
