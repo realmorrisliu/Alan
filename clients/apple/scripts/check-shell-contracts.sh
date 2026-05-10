@@ -479,7 +479,7 @@ require_pattern \
     "terminal teardown must be idempotent"
 
 require_pattern \
-    "clients/apple/AlanNative/TerminalHostView.swift" \
+    "clients/apple/AlanNative/Services/Terminal/TerminalHostViewSupport.swift" \
     "let isSelected: Bool" \
     "terminal hosts must know whether their pane is selected"
 
@@ -489,12 +489,12 @@ require_pattern \
     "terminal auto-focus must be gated to the selected pane"
 
 require_pattern \
-    "clients/apple/AlanNative/TerminalHostView.swift" \
-    "shouldAutoFocusAfterConfigure" \
+    "clients/apple/AlanNative/Services/Terminal/TerminalHostViewSupport.swift" \
+    "terminalHostShouldAutoFocusAfterConfigure" \
     "terminal auto-focus must only be requested on initial attachment or selected-pane transitions"
 
 require_pattern \
-    "clients/apple/AlanNative/TerminalHostView.swift" \
+    "clients/apple/AlanNative/Services/Terminal/TerminalHostViewSupport.swift" \
     "previousPaneID != paneID \\|\\| !wasSelected" \
     "terminal auto-focus must not refocus the same selected pane on every SwiftUI update"
 
@@ -504,7 +504,7 @@ require_pattern \
     "terminal auto-focus must coalesce pending first-responder requests"
 
 require_pattern \
-    "clients/apple/AlanNative/TerminalHostView.swift" \
+    "clients/apple/AlanNative/Services/Terminal/TerminalHostViewSupport.swift" \
     "protocol TerminalHostActivationDelegate: AnyObject" \
     "terminal activation must use a narrow class-bound delegate"
 
@@ -564,8 +564,8 @@ require_pattern \
     "terminal workspace shortcuts must leave the AppKit host through the shared command callback"
 
 require_pattern \
-    "clients/apple/AlanNative/TerminalHostView.swift" \
-    "private let overlayCard = AlanTerminalPassiveOverlayView\\(\\)" \
+    "clients/apple/AlanNative/Services/Terminal/TerminalHostOverlayPresenter.swift" \
+    "let overlayCard = AlanTerminalPassiveOverlayView\\(\\)" \
     "passive terminal overlays must use a non-interactive overlay view"
 
 reject_pattern \
@@ -584,12 +584,12 @@ require_pattern \
     "terminal host views must not allow terminal pane clicks to drag the shell window"
 
 require_pattern \
-    "clients/apple/AlanNative/TerminalHostView.swift" \
+    "clients/apple/AlanNative/Services/Terminal/TerminalHostViewSupport.swift" \
     "final class AlanTerminalFallbackCanvasView" \
     "fallback terminal canvas views must explicitly opt out of background window dragging"
 
 require_pattern \
-    "clients/apple/AlanNative/TerminalHostView.swift" \
+    "clients/apple/AlanNative/Services/Terminal/TerminalHostViewSupport.swift" \
     "override func hitTest\\(_ point: NSPoint\\) -> NSView\\? \\{ nil \\}" \
     "fallback terminal canvas views must be transparent to AppKit hit-testing"
 
