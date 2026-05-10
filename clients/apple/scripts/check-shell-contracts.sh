@@ -134,7 +134,7 @@ require_pattern \
     "terminal scrollback behavior must be normalized through a scrollback adapter"
 
 require_pattern \
-    "clients/apple/AlanNative/TerminalSurfaceController.swift" \
+    "clients/apple/AlanNative/Services/Terminal/TerminalNativeScrollViewAdapter.swift" \
     "final class AlanTerminalNativeScrollViewAdapter" \
     "terminal scrollback must have an AppKit scroll view adapter"
 
