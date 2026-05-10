@@ -41,7 +41,8 @@ Xcode target.
 | `Models/Shell/ShellTreeMutations.swift` | 198 | Foundation | Split-tree resizing, equalization, split, removal, and attachment helpers | `Models/Shell/` |
 | `Models/Shell/ShellStateMutations.swift` | 1034 | Foundation | Shell bootstrap defaults, state mutation result/error types, mutation helpers, and preview fixtures | `Models/Shell/` |
 | `ShellModel.swift` | 169 | Foundation | Shell title, label, and status presentation helpers | `Models/Shell/` or `Support/ShellPresentation/` |
-| `ShellHostController.swift` | 1632 | Foundation, AppKit, SwiftUI; macOS gates | Observable shell controller, runtime update intake, command routing, control-plane command handling | `Controllers/Shell/` plus service collaborators |
+| `ShellHostController.swift` | 1100 | Foundation, SwiftUI; macOS gates | Observable shell controller, runtime update intake, command routing, and shell state mutation coordination | `Controllers/Shell/` plus service collaborators |
+| `Controllers/Shell/ShellHostControlCommandHandling.swift` | 538 | Foundation; macOS gates | Shell control-plane command response handling and routing/list helpers | `Controllers/Shell/` |
 | `Services/Shell/ShellControlFilePoller.swift` | 182 | Foundation; macOS gates | File-backed command/result polling and Alan binding-file projection | `Services/Shell/` |
 | `Services/Shell/ShellDiagnostics.swift` | 16 | Foundation; macOS gates | Shell service diagnostic routing | `Services/Shell/` |
 | `Services/Shell/ShellEventStore.swift` | 298 | Foundation; macOS gates | Shell event buffering, diffing, `events.read`, and jsonl persistence | `Services/Shell/` |
@@ -127,12 +128,11 @@ device support was not required for this validation.
 ## Remaining Architecture Debt
 
 `check-architecture-maintainability.sh` currently completes in report mode with
-one known warning:
+zero known warnings.
 
-- `ShellHostController.swift` remains large pending additional controller,
-  store, and projection splits.
-The current architecture gate intentionally keeps those warnings non-blocking
-while failing narrower regressions such as new root-level Swift files, project
-membership drift, or reintroduced control-plane ownership in the wrong file.
+The current architecture gate remains non-blocking for future documented
+warnings while failing narrower regressions such as new root-level Swift files,
+project membership drift, or reintroduced control-plane ownership in the wrong
+file.
 The `macos-app-architecture-maintainability` spec requires this debt record to
 stay current whenever warnings are introduced, broadened, or resolved.

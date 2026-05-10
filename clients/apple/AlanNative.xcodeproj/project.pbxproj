@@ -61,6 +61,7 @@
 		000000000000000000000034 /* AlanConsoleViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000134 /* AlanConsoleViewModel.swift */; };
 		000000000000000000000035 /* ConsoleSupportViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000135 /* ConsoleSupportViews.swift */; };
 		000000000000000000000036 /* ConsoleAdaptiveColor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000136 /* ConsoleAdaptiveColor.swift */; };
+		000000000000000000000037 /* ShellHostControlCommandHandling.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000137 /* ShellHostControlCommandHandling.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -119,6 +120,7 @@
 		000000000000000000000134 /* AlanConsoleViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Controllers/Console/AlanConsoleViewModel.swift; sourceTree = "<group>"; };
 		000000000000000000000135 /* ConsoleSupportViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/Console/ConsoleSupportViews.swift; sourceTree = "<group>"; };
 		000000000000000000000136 /* ConsoleAdaptiveColor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Support/ConsoleAdaptiveColor.swift; sourceTree = "<group>"; };
+		000000000000000000000137 /* ShellHostControlCommandHandling.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Controllers/Shell/ShellHostControlCommandHandling.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -149,6 +151,7 @@
 			children = (
 				000000000000000000000304 /* App */,
 				00000000000000000000030E /* Controllers/Console */,
+				00000000000000000000030F /* Controllers/Shell */,
 				000000000000000000000306 /* Views/Shell */,
 				000000000000000000000307 /* Views/Console */,
 				000000000000000000000309 /* Models/API */,
@@ -223,6 +226,14 @@
 				000000000000000000000134 /* AlanConsoleViewModel.swift */,
 			);
 			name = Controllers/Console;
+			sourceTree = "<group>";
+		};
+		00000000000000000000030F /* Controllers/Shell */ = {
+			isa = PBXGroup;
+			children = (
+				000000000000000000000137 /* ShellHostControlCommandHandling.swift */,
+			);
+			name = Controllers/Shell;
 			sourceTree = "<group>";
 		};
 		000000000000000000000308 /* Models/Console */ = {
@@ -441,6 +452,7 @@
 				000000000000000000000034 /* AlanConsoleViewModel.swift in Sources */,
 				000000000000000000000035 /* ConsoleSupportViews.swift in Sources */,
 				000000000000000000000036 /* ConsoleAdaptiveColor.swift in Sources */,
+				000000000000000000000037 /* ShellHostControlCommandHandling.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

@@ -239,7 +239,7 @@ reject_pattern \
     "shell control plane transport must not own local command execution"
 
 require_pattern \
-    "clients/apple/AlanNative/ShellHostController.swift" \
+    "clients/apple/AlanNative/Controllers/Shell/ShellHostControlCommandHandling.swift" \
     "runtimePhase: delivery.runtimePhase" \
     "pane.send_text responses must expose the service runtime phase"
 
@@ -254,7 +254,7 @@ require_pattern \
     "terminal text delivery must go through the runtime registry"
 
 require_pattern \
-    "clients/apple/AlanNative/ShellHostController.swift" \
+    "clients/apple/AlanNative/Controllers/Shell/ShellHostControlCommandHandling.swift" \
     "terminalRuntimeRegistry\\.sendText\\(to: paneID, text: text\\)" \
     "pane.send_text must use the registry delivery result"
 
@@ -414,8 +414,8 @@ require_pattern \
     "terminal workspace shortcut routing must enter the shared shell workspace command handler"
 
 require_pattern \
-    "clients/apple/AlanNative/ShellHostController.swift" \
-    "private func handleControlPlaneCommand\\(_ command: AlanShellControlCommand\\)" \
+    "clients/apple/AlanNative/Controllers/Shell/ShellHostControlCommandHandling.swift" \
+    "func handleControlPlaneCommand\\(_ command: AlanShellControlCommand\\)" \
     "control-plane protocol commands must stay separate from UI command vocabulary while sharing shell mutation authority"
 
 require_pattern \

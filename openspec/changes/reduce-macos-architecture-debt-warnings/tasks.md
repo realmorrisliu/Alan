@@ -42,5 +42,5 @@
 - [x] 6.1 Run `openspec validate reduce-macos-architecture-debt-warnings --type change --strict --json`.
 - [x] 6.2 Run `openspec validate --all --strict --json`.
 - [x] 6.3 Run `git diff --check`.
-- [ ] 6.4 Before archive, sync the accepted requirements into `openspec/specs/macos-app-architecture-maintainability/spec.md`.
+- [x] 6.4 Before archive, sync the accepted requirements into `openspec/specs/macos-app-architecture-maintainability/spec.md`.
 - [ ] 6.5 Archive the change after all selected warning-reduction slices are merged and the debt ledger is current.
