@@ -1,8 +1,6 @@
 import SwiftUI
 
 #if os(macOS)
-import AppKit
-
 @MainActor
 protocol TerminalRuntimeHandle: AnyObject {
     func sendControlText(_ text: String) -> TerminalRuntimeDeliveryResult

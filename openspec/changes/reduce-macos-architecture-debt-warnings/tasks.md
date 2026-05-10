@@ -1,16 +1,16 @@
 ## 1. Baseline And Sequencing
 
-- [ ] 1.1 Run `bash clients/apple/scripts/check-architecture-maintainability.sh` and record the current seven-warning baseline.
-- [ ] 1.2 Confirm `clients/apple/ARCHITECTURE.md` names each current warning class and explains why it is non-blocking migration debt.
-- [ ] 1.3 Confirm the first implementation slice targets the smallest AppKit-leak warning unless discovery shows a lower-risk dependency order.
+- [x] 1.1 Run `bash clients/apple/scripts/check-architecture-maintainability.sh` and record the current seven-warning baseline.
+- [x] 1.2 Confirm `clients/apple/ARCHITECTURE.md` names each current warning class and explains why it is non-blocking migration debt.
+- [x] 1.3 Confirm the first implementation slice targets the smallest AppKit-leak warning unless discovery shows a lower-risk dependency order.
 
 ## 2. Terminal Runtime Registry AppKit Warning
 
-- [ ] 2.1 Inspect why `TerminalRuntimeRegistry.swift` imports AppKit and identify the durable owner for that dependency.
-- [ ] 2.2 Move or isolate the AppKit dependency so `TerminalRuntimeRegistry.swift` no longer triggers the architecture warning.
-- [ ] 2.3 Run the architecture report and focused terminal runtime validation.
-- [ ] 2.4 Update `clients/apple/ARCHITECTURE.md` to remove or narrow the `TerminalRuntimeRegistry.swift` debt entry and record the new warning count.
-- [ ] 2.5 Commit and open the first stacked PR for the resolved warning.
+- [x] 2.1 Inspect why `TerminalRuntimeRegistry.swift` imports AppKit and identify the durable owner for that dependency.
+- [x] 2.2 Move or isolate the AppKit dependency so `TerminalRuntimeRegistry.swift` no longer triggers the architecture warning.
+- [x] 2.3 Run the architecture report and focused terminal runtime validation.
+- [x] 2.4 Update `clients/apple/ARCHITECTURE.md` to remove or narrow the `TerminalRuntimeRegistry.swift` debt entry and record the new warning count.
+- [x] 2.5 Commit and open the first stacked PR for the resolved warning.
 
 ## 3. Shell Host Controller Debt
 
