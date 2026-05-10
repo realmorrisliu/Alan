@@ -14,11 +14,11 @@
 
 ## 3. Shell Host Controller Debt
 
-- [ ] 3.1 Identify the next `ShellHostController.swift` controller, store, projection, or command-routing boundary that can move without changing behavior.
-- [ ] 3.2 Extract the selected boundary into a named owner while preserving `ShellWorkspaceCommand` as the shared command vocabulary.
-- [ ] 3.3 Run shell contract validation and the architecture report.
-- [ ] 3.4 Update the debt ledger and warning expectation if the `ShellHostController.swift` warning count is reduced.
-- [ ] 3.5 Commit and open the next stacked PR.
+- [x] 3.1 Identify the next `ShellHostController.swift` controller, store, projection, or command-routing boundary that can move without changing behavior.
+- [x] 3.2 Extract the selected boundary into a named owner while preserving `ShellWorkspaceCommand` as the shared command vocabulary.
+- [x] 3.3 Run shell contract validation and the architecture report.
+- [x] 3.4 Update the debt ledger and warning expectation if the `ShellHostController.swift` warning count is reduced.
+- [x] 3.5 Commit and open the next stacked PR.
 
 ## 4. Terminal Surface And Host Debt
 
