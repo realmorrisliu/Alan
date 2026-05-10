@@ -124,10 +124,10 @@ device support was not required for this validation.
 ## Remaining Architecture Debt
 
 `check-architecture-maintainability.sh` currently completes in report mode with
-six known warnings:
+five known warnings:
 
-- `ShellHostController.swift` remains large and still imports AppKit outside a
-  final narrow controller/service split.
+- `ShellHostController.swift` remains large pending additional controller,
+  store, and projection splits.
 - `TerminalHostView.swift` remains large pending additional terminal-host
   collaborator extraction.
 - `TerminalSurfaceController.swift` remains large pending deeper terminal

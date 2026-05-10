@@ -1,7 +1,6 @@
 import Foundation
 
 #if os(macOS)
-import AppKit
 import SwiftUI
 
 struct ShellAttentionItem: Identifiable, Equatable {
@@ -84,6 +83,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     private let persistenceURL: URL
     private let persistenceStore: ShellStatePersistenceStore
     private let paneProjection: ShellPaneProjectionService
+    private let clipboardWriter: ShellClipboardWriter
     private lazy var controlPlane = AlanShellControlPlane(windowID: windowContext.windowID) { [weak self] command in
         self?.handleControlPlaneCommand(command)
             ?? AlanShellControlResponse(
@@ -142,6 +142,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
             fileManager: fileManager,
             persistenceURL: self.persistenceURL
         )
+        self.clipboardWriter = ShellClipboardWriter()
         self.shellState = shellState
         self.terminalRuntimeRegistry =
             terminalRuntimeRegistry
@@ -577,9 +578,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     }
 
     func copySnapshotJSON() {
-        let pasteboard = NSPasteboard.general
-        pasteboard.clearContents()
-        pasteboard.setString(snapshotJSON, forType: .string)
+        clipboardWriter.writeString(snapshotJSON)
         lastCopiedAt = .now
     }
 

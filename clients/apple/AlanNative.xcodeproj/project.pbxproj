@@ -54,6 +54,7 @@
 		00000000000000000000002D /* ShellControlFilePoller.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000012D /* ShellControlFilePoller.swift */; };
 		00000000000000000000002E /* ShellEventStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000012E /* ShellEventStore.swift */; };
 		00000000000000000000002F /* ShellDiagnostics.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000012F /* ShellDiagnostics.swift */; };
+		000000000000000000000030 /* ShellClipboardWriter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000130 /* ShellClipboardWriter.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -105,6 +106,7 @@
 		00000000000000000000012D /* ShellControlFilePoller.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/Shell/ShellControlFilePoller.swift; sourceTree = "<group>"; };
 		00000000000000000000012E /* ShellEventStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/Shell/ShellEventStore.swift; sourceTree = "<group>"; };
 		00000000000000000000012F /* ShellDiagnostics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/Shell/ShellDiagnostics.swift; sourceTree = "<group>"; };
+		000000000000000000000130 /* ShellClipboardWriter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/Shell/ShellClipboardWriter.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -241,6 +243,7 @@
 			isa = PBXGroup;
 			children = (
 				000000000000000000000125 /* ShellPaneProjectionService.swift */,
+				000000000000000000000130 /* ShellClipboardWriter.swift */,
 				00000000000000000000012D /* ShellControlFilePoller.swift */,
 				00000000000000000000012F /* ShellDiagnostics.swift */,
 				00000000000000000000012E /* ShellEventStore.swift */,
@@ -405,6 +408,7 @@
 				00000000000000000000002D /* ShellControlFilePoller.swift in Sources */,
 				00000000000000000000002E /* ShellEventStore.swift in Sources */,
 				00000000000000000000002F /* ShellDiagnostics.swift in Sources */,
+				000000000000000000000030 /* ShellClipboardWriter.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
