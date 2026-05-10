@@ -1,5 +1,3 @@
-import SwiftUI
-
 #if os(macOS)
 import AppKit
 #if canImport(QuartzCore)
@@ -9,56 +7,9 @@ import QuartzCore
 import GhosttyKit
 #endif
 
-struct TerminalHostView: NSViewRepresentable {
-    let pane: ShellPane?
-    let bootProfile: AlanShellBootProfile?
-    let isSelected: Bool
-    let runtimeRegistry: TerminalRuntimeRegistry
-    let activationDelegate: TerminalHostActivationDelegate?
-    let onWorkspaceCommand: ((ShellWorkspaceCommand) -> Void)?
-    let onRuntimeUpdate: (TerminalHostRuntimeSnapshot) -> Void
-    let onMetadataUpdate: (TerminalPaneMetadataSnapshot) -> Void
-
-    func makeNSView(context: Context) -> AlanTerminalHostNSView {
-        runtimeRegistry.hostView(
-            for: pane,
-            bootProfile: bootProfile,
-            isSelected: isSelected,
-            activationDelegate: activationDelegate,
-            onWorkspaceCommand: onWorkspaceCommand,
-            onRuntimeUpdate: onRuntimeUpdate,
-            onMetadataUpdate: onMetadataUpdate
-        )
-    }
-
-    func updateNSView(_ nsView: AlanTerminalHostNSView, context: Context) {
-        nsView.configure(
-            pane: pane,
-            bootProfile: bootProfile,
-            isSelected: isSelected,
-            surfaceHandle: runtimeRegistry.surfaceHandle(for: pane, bootProfile: bootProfile),
-            activationDelegate: activationDelegate,
-            onWorkspaceCommand: onWorkspaceCommand,
-            onRuntimeUpdate: onRuntimeUpdate,
-            onMetadataUpdate: onMetadataUpdate
-        )
-    }
-}
-
-@MainActor
-protocol TerminalHostActivationDelegate: AnyObject {
-    func terminalHostDidRequestActivation(paneID: String)
-}
-
 final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHandle {
     private let canvasView = makeCanvasView()
-    private let overlayCard = AlanTerminalPassiveOverlayView()
-    private let bodyStack = NSStackView()
-    private let titleLabel = NSTextField(labelWithString: "")
-    private let subtitleLabel = NSTextField(wrappingLabelWithString: "")
-    private let commandLabel = NSTextField(wrappingLabelWithString: "")
-    private let footerLabel = NSTextField(wrappingLabelWithString: "")
-    private let statusBadge = NSTextField(labelWithString: "")
+    private let overlayPresenter = TerminalHostOverlayPresenter()
     private let surfaceController = AlanTerminalSurfaceController()
     private let runtimeReporter = TerminalHostRuntimeReporter()
     private let windowObserver = TerminalHostWindowObserver()
@@ -196,37 +147,15 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
         runtimeObserver = onRuntimeUpdate
         metadataObserver = onMetadataUpdate
 
-        let title = pane?.viewport?.title ?? pane?.process?.program ?? "Terminal"
-        titleLabel.stringValue = title
-        subtitleLabel.stringValue = pane?.viewport?.summary ?? "Preparing the native terminal view."
-
-        if let bootProfile {
-            commandLabel.stringValue = "$ \(bootProfile.launchCommandString)"
-
-            let envSummary = bootProfile.environmentPreview
-                .prefix(4)
-                .map { "\($0.key)=\($0.value)" }
-                .joined(separator: "\n")
-            footerLabel.stringValue = [
-                "launch: \(bootProfile.command.strategy.rawValue)",
-                bootProfile.command.detail,
-                "cwd: \(bootProfile.workingDirectory)",
-                envSummary.isEmpty ? nil : envSummary,
-                "setup: \(bootProfile.ghostty.setupCommand)",
-            ]
-            .compactMap { $0 }
-            .joined(separator: "\n")
-        } else {
-            commandLabel.stringValue = "$ /bin/zsh -l"
-            footerLabel.stringValue = "Select a pane to prepare a terminal boot profile."
-        }
+        overlayPresenter.configure(pane: pane, bootProfile: bootProfile)
 
         synchronizeRendererSnapshot(with: bootProfile)
         syncStatusBadge()
         syncOverlayVisibility()
         synchronizeLiveHost()
         syncNativeScrollback()
-        if shouldAutoFocusAfterConfigure(
+        if terminalHostShouldAutoFocusAfterConfigure(
+            isSelected: isSelected,
             previousPaneID: previousPaneID,
             paneID: pane?.paneID,
             wasSelected: wasSelected
@@ -261,51 +190,6 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
 
         translatesAutoresizingMaskIntoConstraints = false
 
-        bodyStack.orientation = .vertical
-        bodyStack.alignment = .leading
-        bodyStack.spacing = 10
-        bodyStack.translatesAutoresizingMaskIntoConstraints = false
-
-        overlayCard.material = .hudWindow
-        overlayCard.blendingMode = .withinWindow
-        overlayCard.state = .active
-        overlayCard.translatesAutoresizingMaskIntoConstraints = false
-        overlayCard.wantsLayer = true
-        overlayCard.layer?.cornerRadius = ShellRadii.overlay
-        overlayCard.layer?.borderWidth = 1
-        overlayCard.layer?.borderColor = NSColor.white.withAlphaComponent(0.12).cgColor
-
-        statusBadge.font = .systemFont(ofSize: 11, weight: .semibold)
-        statusBadge.textColor = NSColor.white.withAlphaComponent(0.92)
-        statusBadge.drawsBackground = true
-        statusBadge.backgroundColor = NSColor.white.withAlphaComponent(0.10)
-        statusBadge.isBezeled = false
-        statusBadge.isEditable = false
-        statusBadge.isSelectable = false
-        statusBadge.alignment = .center
-        statusBadge.lineBreakMode = .byTruncatingTail
-        statusBadge.maximumNumberOfLines = 1
-        statusBadge.cell?.usesSingleLineMode = true
-        statusBadge.cell?.wraps = false
-        statusBadge.cell?.backgroundStyle = .raised
-
-        titleLabel.font = .systemFont(ofSize: 18, weight: .semibold)
-        titleLabel.textColor = .white
-
-        subtitleLabel.font = .systemFont(ofSize: 12, weight: .medium)
-        subtitleLabel.textColor = NSColor.white.withAlphaComponent(0.64)
-        subtitleLabel.maximumNumberOfLines = 2
-
-        commandLabel.font = .monospacedSystemFont(ofSize: 12, weight: .medium)
-        commandLabel.textColor = NSColor(calibratedRed: 0.81, green: 0.90, blue: 0.98, alpha: 1)
-        commandLabel.maximumNumberOfLines = 3
-
-        footerLabel.font = .systemFont(ofSize: 11, weight: .regular)
-        footerLabel.textColor = NSColor.white.withAlphaComponent(0.52)
-        footerLabel.maximumNumberOfLines = 4
-
-        [statusBadge, titleLabel, subtitleLabel, commandLabel, footerLabel].forEach(bodyStack.addArrangedSubview)
-
         let nativeScrollView = surfaceController.nativeScrollViewAdapter.scrollView
         surfaceController.nativeScrollViewAdapter.onScrollWheel = { [weak self] event in
             self?.routeScrollWheel(event) ?? false
@@ -315,8 +199,7 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
         }
         surfaceController.nativeScrollViewAdapter.attachCanvasView(canvasView)
         addSubview(nativeScrollView)
-        addSubview(overlayCard)
-        overlayCard.addSubview(bodyStack)
+        overlayPresenter.install(in: self)
 
         NSLayoutConstraint.activate([
             nativeScrollView.topAnchor.constraint(equalTo: topAnchor),
@@ -324,16 +207,6 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
             nativeScrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
             nativeScrollView.bottomAnchor.constraint(equalTo: bottomAnchor),
 
-            overlayCard.centerXAnchor.constraint(equalTo: centerXAnchor),
-            overlayCard.centerYAnchor.constraint(equalTo: centerYAnchor),
-            overlayCard.widthAnchor.constraint(lessThanOrEqualToConstant: 460),
-            overlayCard.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: 24),
-            overlayCard.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -24),
-
-            bodyStack.topAnchor.constraint(equalTo: overlayCard.topAnchor, constant: 18),
-            bodyStack.leadingAnchor.constraint(equalTo: overlayCard.leadingAnchor, constant: 18),
-            bodyStack.trailingAnchor.constraint(equalTo: overlayCard.trailingAnchor, constant: -18),
-            bodyStack.bottomAnchor.constraint(equalTo: overlayCard.bottomAnchor, constant: -18),
         ])
     }
 
@@ -427,7 +300,7 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
                 guard let self else { return }
                 paneMetadata = snapshot
                 surfaceController.updateMetadata(snapshot)
-                subtitleLabel.stringValue = snapshot.summary ?? subtitleLabel.stringValue
+                overlayPresenter.updateSubtitle(snapshot.summary)
                 reportMetadataIfNeeded(snapshot)
                 syncOverlayVisibility()
                 publishRuntimeSnapshot()
@@ -469,40 +342,16 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
     }
 
     private func syncStatusBadge() {
-        if bootProfile == nil {
-            statusBadge.stringValue = "Select a pane"
-            return
-        }
-
-        if let bootProfile, !bootProfile.ghostty.isReady {
-            statusBadge.stringValue = "GhosttyKit pending"
-            return
-        }
-
-        statusBadge.stringValue = rendererSnapshot.kind == .ghosttyLive
-            ? "Ghostty live · \(rendererSnapshot.phaseLabel)"
-            : "GhosttyKit ready"
+        overlayPresenter.syncStatusBadge(bootProfile: bootProfile, renderer: rendererSnapshot)
     }
 
     private func syncOverlayVisibility() {
-        if let overlayState = surfaceController.overlayState(
+        let overlayState = surfaceController.overlayState(
             renderer: rendererSnapshot,
             metadata: paneMetadata,
             bootProfile: bootProfile
-        ) {
-            statusBadge.stringValue = overlayState.badge
-            titleLabel.stringValue = overlayState.title
-            subtitleLabel.stringValue = overlayState.message
-            if let action = overlayState.action {
-                commandLabel.stringValue = action
-            }
-            footerLabel.stringValue = bootProfile.map { "launch: \($0.command.strategy.rawValue)\ncwd: \($0.workingDirectory)" }
-                ?? "Select a pane to prepare a terminal boot profile."
-            overlayCard.isHidden = false
-            return
-        }
-
-        overlayCard.isHidden = true
+        )
+        overlayPresenter.syncOverlay(overlayState: overlayState, bootProfile: bootProfile)
     }
 
     private var isFocused: Bool {
@@ -523,15 +372,6 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
             guard isSelected, pane != nil, window != nil else { return }
             requestTerminalFocus()
         }
-    }
-
-    private func shouldAutoFocusAfterConfigure(
-        previousPaneID: String?,
-        paneID: String?,
-        wasSelected: Bool
-    ) -> Bool {
-        guard isSelected, paneID != nil else { return false }
-        return previousPaneID != paneID || !wasSelected
     }
 
     private func requestTerminalFocus() {
@@ -1350,27 +1190,4 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
     }
 }
 
-private func makeCanvasView() -> NSView {
-#if canImport(GhosttyKit)
-    let view = AlanGhosttyCanvasView(frame: .zero)
-#else
-    let view = AlanTerminalFallbackCanvasView(frame: .zero)
-    view.wantsLayer = true
-    view.layer?.backgroundColor = NSColor.clear.cgColor
-#endif
-    view.translatesAutoresizingMaskIntoConstraints = false
-    return view
-}
-
-final class AlanTerminalFallbackCanvasView: NSView {
-    override var mouseDownCanMoveWindow: Bool { false }
-
-    override func hitTest(_ point: NSPoint) -> NSView? { nil }
-}
-
-final class AlanTerminalPassiveOverlayView: NSVisualEffectView {
-    override var mouseDownCanMoveWindow: Bool { false }
-
-    override func hitTest(_ point: NSPoint) -> NSView? { nil }
-}
 #endif

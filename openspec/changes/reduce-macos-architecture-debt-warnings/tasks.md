@@ -24,10 +24,10 @@
 
 - [x] 4.1 Identify the next `TerminalSurfaceController.swift` adapter or input/surface boundary that can move without changing behavior.
 - [x] 4.2 Extract the selected terminal surface boundary and run focused terminal surface validation.
-- [ ] 4.3 Identify the next `TerminalHostView.swift` collaborator boundary for runtime attachment, overlay presentation, input routing, window observation, metadata publishing, or surface coordination.
-- [ ] 4.4 Extract the selected terminal host boundary and run focused terminal host/runtime validation.
+- [x] 4.3 Identify the next `TerminalHostView.swift` collaborator boundary for runtime attachment, overlay presentation, input routing, window observation, metadata publishing, or surface coordination.
+- [x] 4.4 Extract the selected terminal host boundary and run focused terminal host/runtime validation.
 - [x] 4.5 Update `clients/apple/ARCHITECTURE.md` and script expectations after each reduced warning.
-- [ ] 4.6 Commit and open stacked PRs for each reduced terminal warning.
+- [x] 4.6 Commit and open stacked PRs for each reduced terminal warning.
 
 ## 5. Console Content View Debt
 
