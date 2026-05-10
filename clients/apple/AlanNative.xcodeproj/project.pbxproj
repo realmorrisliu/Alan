@@ -58,6 +58,9 @@
 		000000000000000000000031 /* TerminalNativeScrollViewAdapter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000131 /* TerminalNativeScrollViewAdapter.swift */; };
 		000000000000000000000032 /* TerminalHostOverlayPresenter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000132 /* TerminalHostOverlayPresenter.swift */; };
 		000000000000000000000033 /* TerminalHostViewSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000133 /* TerminalHostViewSupport.swift */; };
+		000000000000000000000034 /* AlanConsoleViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000134 /* AlanConsoleViewModel.swift */; };
+		000000000000000000000035 /* ConsoleSupportViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000135 /* ConsoleSupportViews.swift */; };
+		000000000000000000000036 /* ConsoleAdaptiveColor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000136 /* ConsoleAdaptiveColor.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -113,6 +116,9 @@
 		000000000000000000000131 /* TerminalNativeScrollViewAdapter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/Terminal/TerminalNativeScrollViewAdapter.swift; sourceTree = "<group>"; };
 		000000000000000000000132 /* TerminalHostOverlayPresenter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/Terminal/TerminalHostOverlayPresenter.swift; sourceTree = "<group>"; };
 		000000000000000000000133 /* TerminalHostViewSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/Terminal/TerminalHostViewSupport.swift; sourceTree = "<group>"; };
+		000000000000000000000134 /* AlanConsoleViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Controllers/Console/AlanConsoleViewModel.swift; sourceTree = "<group>"; };
+		000000000000000000000135 /* ConsoleSupportViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/Console/ConsoleSupportViews.swift; sourceTree = "<group>"; };
+		000000000000000000000136 /* ConsoleAdaptiveColor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Support/ConsoleAdaptiveColor.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -142,6 +148,7 @@
 			isa = PBXGroup;
 			children = (
 				000000000000000000000304 /* App */,
+				00000000000000000000030E /* Controllers/Console */,
 				000000000000000000000306 /* Views/Shell */,
 				000000000000000000000307 /* Views/Console */,
 				000000000000000000000309 /* Models/API */,
@@ -184,6 +191,7 @@
 			isa = PBXGroup;
 			children = (
 				000000000000000000000118 /* ShellDesignTokens.swift */,
+				000000000000000000000136 /* ConsoleAdaptiveColor.swift */,
 				000000000000000000000119 /* ShellWindowPlacement.swift */,
 				00000000000000000000011D /* ShellVoiceCommandController.swift */,
 			);
@@ -204,8 +212,17 @@
 			isa = PBXGroup;
 			children = (
 				000000000000000000000102 /* ContentView.swift */,
+				000000000000000000000135 /* ConsoleSupportViews.swift */,
 			);
 			name = Views/Console;
+			sourceTree = "<group>";
+		};
+		00000000000000000000030E /* Controllers/Console */ = {
+			isa = PBXGroup;
+			children = (
+				000000000000000000000134 /* AlanConsoleViewModel.swift */,
+			);
+			name = Controllers/Console;
 			sourceTree = "<group>";
 		};
 		000000000000000000000308 /* Models/Console */ = {
@@ -421,6 +438,9 @@
 				000000000000000000000031 /* TerminalNativeScrollViewAdapter.swift in Sources */,
 				000000000000000000000032 /* TerminalHostOverlayPresenter.swift in Sources */,
 				000000000000000000000033 /* TerminalHostViewSupport.swift in Sources */,
+				000000000000000000000034 /* AlanConsoleViewModel.swift in Sources */,
+				000000000000000000000035 /* ConsoleSupportViews.swift in Sources */,
+				000000000000000000000036 /* ConsoleAdaptiveColor.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

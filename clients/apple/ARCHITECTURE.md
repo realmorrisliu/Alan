@@ -55,7 +55,10 @@ Xcode target.
 | `Models/Console/ConsoleModels.swift` | 148 | Foundation | Console chat messages, timeline entries, structured questions, and pending-yield value state | `Models/Console/` |
 | `Services/Daemon/AlanAPIClient.swift` | 236 | Foundation | Daemon HTTP client, request construction, endpoint routing, and response validation | `Services/Daemon/` |
 | `Services/Daemon/ConsoleEventReducer.swift` | 195 | Foundation | Console event page reader and event-to-message/timeline/pending-yield projection reducer | `Services/Daemon/` |
-| `Views/Console/ContentView.swift` | 1708 | SwiftUI, AppKit; iOS/macOS gates | Legacy/mobile console UI, console view model state, and event pump coordination | `Views/Console/` and `Controllers/Console/` |
+| `Controllers/Console/AlanConsoleViewModel.swift` | 609 | Foundation, SwiftUI | Legacy/mobile console observable state, action coordination, and event pump ownership | `Controllers/Console/` |
+| `Views/Console/ContentView.swift` | 808 | SwiftUI | Legacy/mobile console UI composition | `Views/Console/` |
+| `Views/Console/ConsoleSupportViews.swift` | 262 | SwiftUI | Console theme tokens, button styles, message bubbles, and timeline rows | `Views/Console/` |
+| `Support/ConsoleAdaptiveColor.swift` | 33 | SwiftUI, AppKit; iOS/macOS gates | Platform-adaptive console color bridge | `Support/` |
 
 ## Target Layout
 
@@ -65,8 +68,8 @@ The accepted target under `clients/apple/AlanNative` is:
   shell owner creation, app commands, and primary window coordination.
 - `Views/Shell/`: the default macOS shell composition, sidebar, workspace,
   command palette, pane title/search UI, and shell-specific SwiftUI components.
-- `Views/Console/`: mobile or legacy remote-control console screens and view
-  models that are not the primary macOS shell path.
+- `Views/Console/`: mobile or legacy remote-control console screens and local
+  console view support that are not the primary macOS shell path.
 - `Models/`: API DTOs, shell snapshots, shell IDs, enums, value types, and
   current-format decoding.
 - `Controllers/`: observable app and shell controllers that own UI state and
@@ -124,12 +127,10 @@ device support was not required for this validation.
 ## Remaining Architecture Debt
 
 `check-architecture-maintainability.sh` currently completes in report mode with
-three known warnings:
+one known warning:
 
 - `ShellHostController.swift` remains large pending additional controller,
   store, and projection splits.
-- `Views/Console/ContentView.swift` remains large and imports AppKit because the
-  legacy/mobile console path is isolated but not fully decomposed.
 The current architecture gate intentionally keeps those warnings non-blocking
 while failing narrower regressions such as new root-level Swift files, project
 membership drift, or reintroduced control-plane ownership in the wrong file.

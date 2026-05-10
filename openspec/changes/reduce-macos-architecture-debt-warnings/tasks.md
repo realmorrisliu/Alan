@@ -31,16 +31,16 @@
 
 ## 5. Console Content View Debt
 
-- [ ] 5.1 Inspect `Views/Console/ContentView.swift` and identify the lowest-risk console/mobile boundary to extract first.
-- [ ] 5.2 Move the selected console view, model projection, or platform bridge code into a named console owner while preserving primary macOS shell separation.
-- [ ] 5.3 Run the architecture report and relevant Apple build or focused validation for the touched console path.
-- [ ] 5.4 Update `clients/apple/ARCHITECTURE.md` and script expectations if the console warning count is reduced.
-- [ ] 5.5 Commit and open the final stacked PR for this change's planned console debt reduction.
+- [x] 5.1 Inspect `Views/Console/ContentView.swift` and identify the lowest-risk console/mobile boundary to extract first.
+- [x] 5.2 Move the selected console view, model projection, or platform bridge code into a named console owner while preserving primary macOS shell separation.
+- [x] 5.3 Run the architecture report and relevant Apple build or focused validation for the touched console path.
+- [x] 5.4 Update `clients/apple/ARCHITECTURE.md` and script expectations if the console warning count is reduced.
+- [x] 5.5 Commit and open the final stacked PR for this change's planned console debt reduction.
 
 ## 6. Verification And Archive Readiness
 
-- [ ] 6.1 Run `openspec validate reduce-macos-architecture-debt-warnings --type change --strict --json`.
-- [ ] 6.2 Run `openspec validate --all --strict --json`.
-- [ ] 6.3 Run `git diff --check`.
+- [x] 6.1 Run `openspec validate reduce-macos-architecture-debt-warnings --type change --strict --json`.
+- [x] 6.2 Run `openspec validate --all --strict --json`.
+- [x] 6.3 Run `git diff --check`.
 - [ ] 6.4 Before archive, sync the accepted requirements into `openspec/specs/macos-app-architecture-maintainability/spec.md`.
 - [ ] 6.5 Archive the change after all selected warning-reduction slices are merged and the debt ledger is current.
