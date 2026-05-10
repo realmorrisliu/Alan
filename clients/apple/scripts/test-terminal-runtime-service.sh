@@ -24,6 +24,7 @@ CLANG_MODULE_CACHE_PATH="$MODULE_CACHE_DIR" swiftc \
     "$REPO_ROOT/clients/apple/AlanNative/Services/Shell/ShellSocketServer.swift" \
     "$REPO_ROOT/clients/apple/AlanNative/ShellControlPlane.swift" \
     "$REPO_ROOT/clients/apple/AlanNative/TerminalHostRuntime.swift" \
+    "$REPO_ROOT/clients/apple/AlanNative/Services/Terminal/TerminalNativeScrollViewAdapter.swift" \
     "$REPO_ROOT/clients/apple/AlanNative/TerminalSurfaceController.swift" \
     "$REPO_ROOT/clients/apple/AlanNative/TerminalRuntimeService.swift" \
     "$REPO_ROOT/clients/apple/scripts/test-terminal-runtime-service.swift" \
