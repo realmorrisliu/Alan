@@ -1,6 +1,6 @@
 ## MODIFIED Requirements
 
-### Requirement: Sidebar matches vertical Arc-like space switching
+### Requirement: Sidebar matches space rail plus tab list
 The default macOS sidebar SHALL remain a single vertical navigation column that
 aligns cleanly around the macOS traffic-light area. Spaces SHALL be switched
 through a compact bottom borderless icon switcher and horizontal sidebar swipe
