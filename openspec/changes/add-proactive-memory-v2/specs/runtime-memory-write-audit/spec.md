@@ -129,8 +129,14 @@ revert cannot be proven.
 #### Scenario: Revert succeeds
 - **WHEN** a user reverts a memory write whose anchored content still matches
   the target memory file
-- **THEN** Alan removes or marks the inserted stable memory content and updates
-  the ledger revert status
+- **THEN** Alan removes the inserted stable memory content or marks it with a
+  machine-readable reverted state that prompt-facing memory surfaces must filter
+- **AND** Alan updates the ledger revert status
+
+#### Scenario: Reverted write is not prompt-visible
+- **WHEN** a memory write has been reverted successfully
+- **THEN** its inserted stable memory content is not eligible for future
+  prompt-facing recall, handoff, session-summary, or daily-note surfaces
 
 #### Scenario: Revert cannot be proven
 - **WHEN** the target memory file has changed so that Alan cannot identify the

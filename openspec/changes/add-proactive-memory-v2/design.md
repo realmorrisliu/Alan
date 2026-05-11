@@ -140,6 +140,22 @@ Alternatives considered:
 - Rely on user review after the fact. This violates the low-disturbance model
   because bad writes may sit unnoticed.
 
+### Decision: Reverted memory must disappear from prompt-facing surfaces
+
+Revert must not leave a bad fact available for future recall just because it is
+visibly marked as reverted in `USER.md`, `MEMORY.md`, or a topic page. The
+preferred path is to remove the inserted stable-memory block when the ledger
+anchor still matches. If a target file keeps a tombstone or reverted marker for
+human auditability, every prompt-facing memory renderer must exclude that block
+from recall, handoff, session-summary, and daily-note surfaces.
+
+Alternatives considered:
+
+- Only mark reverted content inline. This is readable to humans, but prompt
+  assembly reads pure text and could re-inject the bad fact.
+- Store reverted content only in the ledger. This is safer for prompts and is
+  acceptable as long as the stable memory target no longer exposes it.
+
 ## Risks / Trade-offs
 
 - Incorrect stable memory write -> Mitigate with provenance, confidence,
@@ -152,6 +168,9 @@ Alternatives considered:
 - Revert becomes hard after manual edits -> Mitigate with anchored blocks and
   fallback status that marks a write as requiring manual resolution instead of
   applying a risky patch.
+- Reverted content leaks back into prompts -> Mitigate by removing reverted
+  stable-memory content or requiring prompt-facing surface renderers to filter
+  reverted blocks.
 - Proactive writes reveal hidden reasoning -> Mitigate by storing observations,
   evidence, and rationale, not private reasoning traces.
 - Proactive writes capture secrets -> Mitigate by scanning candidates and

@@ -14,6 +14,8 @@ keeping every write inspectable and reversible.
   rationale, target file, and revert state for every stable memory mutation.
 - Add low-disturbance review and revert surfaces through CLI and daemon APIs;
   normal turns should not be interrupted by memory write confirmations.
+- Ensure reverted memory writes cannot be reintroduced into prompt-facing
+  recall, handoff, session-summary, or daily-note surfaces.
 - Extend memory validation so invalid, over-broad, duplicate, or unsafe write
   plans are rejected or downgraded before they mutate stable memory.
 - Add sensitive-data guardrails so secrets, credentials, and private tokens are

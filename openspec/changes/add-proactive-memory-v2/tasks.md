@@ -17,18 +17,19 @@
 
 - [ ] 3.1 Add CLI commands for recent write listing, single-write inspection, and revert.
 - [ ] 3.2 Add daemon memory endpoints and endpoint-contract metadata for recent, show, and revert operations.
-- [ ] 3.3 Add precise revert mechanics with safe failure when the target content no longer matches the ledger anchor.
+- [ ] 3.3 Add precise revert mechanics that remove matched stable-memory content or mark it with a machine-readable reverted state, with safe failure when the target content no longer matches the ledger anchor.
 
 ## 4. Memory Surface Integration
 
 - [ ] 4.1 Update recall, handoff, session-summary, and daily-note surfaces to keep provenance references bounded.
 - [ ] 4.2 Ensure prompt-facing memory surfaces do not duplicate full ledger content.
-- [ ] 4.3 Preserve legacy memory entries that do not have reversible ledger metadata.
+- [ ] 4.3 Ensure prompt-facing memory surfaces exclude reverted blocks and never reintroduce reverted content from ledger records.
+- [ ] 4.4 Preserve legacy memory entries that do not have reversible ledger metadata.
 
 ## 5. Verification
 
 - [ ] 5.1 Add unit tests for write-plan normalization, evidence validation, provenance persistence, secret redaction, dedupe, path rejection, and confidence downgrades.
-- [ ] 5.2 Add storage tests for ledger creation, target updates, successful revert, already-reverted writes, and manual-resolution-required failures.
+- [ ] 5.2 Add storage tests for ledger creation, target updates, successful revert, already-reverted writes, reverted prompt-surface exclusion, and manual-resolution-required failures.
 - [ ] 5.3 Add daemon and CLI integration tests for recent, show, and revert surfaces.
 - [ ] 5.4 Run `cargo test --workspace` or the narrower documented Rust test suites covering runtime and daemon memory behavior.
 - [ ] 5.5 Run `openspec validate add-proactive-memory-v2 --strict`.

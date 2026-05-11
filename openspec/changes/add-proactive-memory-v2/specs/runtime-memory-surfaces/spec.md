@@ -15,3 +15,18 @@ stable-memory detail is omitted.
 - **WHEN** runtime renders a memory surface after proactive memory writes
 - **THEN** the surface does not duplicate the full write ledger content inside
   prompt-facing memory text
+
+### Requirement: Reverted Memory Is Excluded From Prompt Surfaces
+Memory, recall, handoff, session-summary, and daily-note surfaces SHALL exclude
+stable memory content from reverted memory writes.
+
+#### Scenario: Reverted content remains marked in target file
+- **WHEN** a stable memory target contains a machine-readable reverted block for
+  a previously inserted write
+- **THEN** prompt-facing memory renderers exclude that reverted block from
+  generated memory surfaces
+
+#### Scenario: Reverted content was removed
+- **WHEN** a reverted memory write was removed from the stable memory target
+- **THEN** prompt-facing memory renderers do not reintroduce the removed content
+  from the ledger
