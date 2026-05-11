@@ -12,7 +12,8 @@ routing.
   layered above provider/credential configuration and optional reasoning-effort
   intent.
 - Add a runtime-owned `CognitiveRouter` that applies explicit overrides,
-  deterministic gates, and System 1 self-escalation before provider dispatch.
+  deterministic safety gates, and System 1 self-escalation before provider
+  dispatch, with safety gates able to supersede forced System 1 intent.
 - Add an internal-only escalation action that lets the System 1 model request a
   System 2 rerun without exposing the fast draft to the user.
 - Record routing decisions in turn/session metadata, rollout entries, logs, and

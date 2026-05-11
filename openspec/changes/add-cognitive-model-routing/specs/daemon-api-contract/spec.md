@@ -25,6 +25,12 @@ and request-control boundaries.
 - **THEN** runtime receives turn-scoped routing intent and applies it before
   provider dispatch
 
+#### Scenario: Turn requests System 1 in gated context
+- **WHEN** a client submits a turn with a System 1 override
+- **AND** runtime detects a configured high-risk or high-complexity gate
+- **THEN** runtime rejects or supersedes the forced System 1 override and
+  reports the routing decision in metadata
+
 #### Scenario: Invalid override is rejected
 - **WHEN** a client requests an unknown cognitive system or a cognitive system
   whose model binding is not configured

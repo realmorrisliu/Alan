@@ -19,7 +19,7 @@ fast system is overconfident and the slow system fails to engage.
 - Let `agent.toml` configure System 1 and System 2 as model bindings layered
   above provider/credential configuration, with optional reasoning-effort intent.
 - Default to System 1 when safe, with explicit override and deterministic
-  runtime gates.
+  runtime gates that can force System 2 for safety.
 - Let the System 1 model self-escalate through an internal-only runtime action.
 - Suppress fast drafts when escalation occurs and rerun the original task on
   System 2 with bounded triage notes.
@@ -72,21 +72,27 @@ Alternatives considered:
 - Put routing entirely in daemon/client code. This prevents runtime from
   auditing decisions consistently and makes CLI/TUI/macOS behavior diverge.
 
-### Decision: Use deterministic gates plus System 1 self-escalation
+### Decision: Use safety-first routing gates plus System 1 self-escalation
 
 Routing has three layers:
 
-1. explicit turn/session/config overrides,
+1. explicit System 2 override, which can always choose the deeper route,
 2. deterministic gates for known high-risk or high-complexity cases,
-3. a System 1 attempt that can call internal `escalate_to_system2`.
+3. explicit System 1 override, which is honored only when no deterministic gate
+   requires System 2,
+4. default System 1 attempt that can call internal `escalate_to_system2`.
 
 This avoids a separate router LLM call on every turn while still letting the
 fast model recognize when a task should not be answered quickly.
+It also prevents clients from forcing the fast route through conditions the
+runtime already knows require System 2.
 
 Alternatives considered:
 
 - Always call a small classifier model first. This is simple but adds latency to
   every turn and makes the classifier another hidden model path.
+- Let System 1 overrides outrank deterministic gates. This makes manual control
+  simple but undercuts the safety boundary.
 - Hard-code all routing rules. This is predictable but will feel brittle and
   miss semantic complexity.
 
@@ -159,8 +165,8 @@ Alternatives considered:
 
 ## Risks / Trade-offs
 
-- System 1 fails to escalate -> Mitigate with deterministic gates and response
-  guardrails that can force System 2 on contradiction or retry.
+- System 1 fails to escalate -> Mitigate with safety-first deterministic gates
+  and response guardrails that can force System 2 on contradiction or retry.
 - Routing adds latency -> Mitigate by using System 1 by default and avoiding a
   separate classifier call.
 - Model binding switching complicates provider state -> Mitigate by resolving
@@ -176,7 +182,8 @@ Alternatives considered:
 1. Add cognition config parsing while preserving existing `connection_profile`
    behavior as the default single-system path.
 2. Add routing metadata types and persistence with no behavior change.
-3. Add deterministic routing gates and explicit overrides.
+3. Add deterministic routing gates and explicit overrides, with System 2 gates
+   superseding forced System 1 intent.
 4. Add System 1 model binding dispatch.
 5. Add internal System 1 escalation and System 2 rerun.
 6. Expose metadata in daemon/client DTOs.

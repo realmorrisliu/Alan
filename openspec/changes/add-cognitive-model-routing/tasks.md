@@ -8,7 +8,7 @@
 ## 2. Runtime Routing Core
 
 - [ ] 2.1 Add routing intent and metadata types for cognitive system, routing source, provider/model binding id, model, effort, and bounded reason.
-- [ ] 2.2 Implement `CognitiveRouter` precedence for turn override, session override, config default, deterministic gates, and System 1 default route.
+- [ ] 2.2 Implement `CognitiveRouter` precedence for explicit System 2 override, deterministic safety gates, eligible System 1 override, config default, and System 1 default route.
 - [ ] 2.3 Compose selected cognitive model binding with existing request-control resolution before provider dispatch.
 - [ ] 2.4 Keep provider adapters unaware of cognitive routing decisions beyond the normalized generation request.
 - [ ] 2.5 Partition, clear, or replay provider-native continuation when cognitive routing switches provider/model bindings.
@@ -30,7 +30,7 @@
 
 ## 5. Verification
 
-- [ ] 5.1 Add unit tests for cognition config parsing, fallback behavior, invalid model binding diagnostics, and override precedence.
+- [ ] 5.1 Add unit tests for cognition config parsing, fallback behavior, invalid model binding diagnostics, override precedence, and gated System 1 override rejection/supersession.
 - [ ] 5.2 Add runtime tests for deterministic System 2 gates, System 1 default route, System 1 escalation, fast-draft suppression, side-effect boundaries, and continuation partitioning.
 - [ ] 5.3 Add request-control tests proving selected cognitive model binding effort composes with existing turn/session/model precedence.
 - [ ] 5.4 Add daemon/API tests for routing metadata and override validation.
