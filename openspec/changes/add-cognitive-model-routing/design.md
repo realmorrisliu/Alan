@@ -2,7 +2,7 @@
 
 Alan already has connection profiles, model catalog metadata, and runtime-owned
 reasoning-effort resolution for a selected model. That lets an operator choose a
-model and effort, but it does not let the agent behave like a two-speed system:
+provider-backed model and effort, but it does not let the agent behave like a two-speed system:
 normally quick and inexpensive, while able to recognize when a task deserves
 deeper reasoning.
 
@@ -16,8 +16,8 @@ fast system is overconfident and the slow system fails to engage.
 
 **Goals:**
 
-- Let `agent.toml` configure System 1 and System 2 using existing connection
-  profile IDs and optional reasoning-effort intent.
+- Let `agent.toml` configure System 1 and System 2 as model bindings layered
+  above provider/credential configuration, with optional reasoning-effort intent.
 - Default to System 1 when safe, with explicit override and deterministic
   runtime gates.
 - Let the System 1 model self-escalate through an internal-only runtime action.
@@ -35,11 +35,33 @@ fast system is overconfident and the slow system fails to engage.
 
 ## Decisions
 
+### Decision: Split provider availability from cognitive model binding
+
+Configuration should have two conceptual layers:
+
+1. provider/credential availability, which describes authenticated AI providers
+   and the models Alan can use through them,
+2. cognitive model binding, which selects which available model acts as System 1
+   and which acts as System 2.
+
+This keeps System 1/System 2 out of provider auth and avoids copying provider
+credentials into the cognition block. Existing connection profiles can remain a
+compatibility path and can feed the provider/model availability layer, but
+cognitive routing should resolve to a concrete provider, credential scope,
+model, and request-control intent before dispatch.
+
+Alternatives considered:
+
+- Make System 1/System 2 reference full connection profiles directly. This is
+  simple but keeps model selection tangled with credential/profile ownership.
+- Create separate provider config for each system. This duplicates credentials
+  and makes model swaps harder to reason about.
+
 ### Decision: CognitiveRouter manages routing, not provider adapters
 
 `CognitiveRouter` runs in runtime before provider dispatch. It selects a
-cognitive system and connection profile, then delegates reasoning-effort
-resolution to the existing request-control resolver for the selected profile.
+cognitive system and concrete model binding, then delegates reasoning-effort
+resolution to the existing request-control resolver for the selected binding.
 Provider adapters receive a normal `GenerationRequest` and do not know why the
 runtime selected it.
 
@@ -68,12 +90,21 @@ Alternatives considered:
 - Hard-code all routing rules. This is predictable but will feel brittle and
   miss semantic complexity.
 
-### Decision: Escalation is an internal virtual action
+### Decision: Escalation is an internal virtual action with a side-effect boundary
 
 System 1 receives an internal-only action such as
 `escalate_to_system2(reason, needed_context)`. When runtime captures it, the
 fast draft is not accepted or streamed to the user. Runtime reruns System 2 with
 the original task and bounded triage notes.
+
+For V1, System 1's auto route should behave like human fast cognition in a
+controlled environment: it can form an impression, gather read-only context, or
+ask to escalate, but it should not perform irreversible external side effects
+before System 2 has taken over or the runtime has accepted the System 1 plan.
+If a read-only tool was used before escalation, System 2 receives those results
+as part of the rerun context. If any side effect already happened, System 2 must
+continue from the observed post-side-effect state rather than replaying the
+original task as if nothing changed.
 
 Alternatives considered:
 
@@ -84,9 +115,9 @@ Alternatives considered:
 
 ### Decision: Routing metadata is visible but bounded
 
-Turn/session metadata includes selected cognitive system, profile id, model,
-reasoning effort, routing source, and a short routing reason. It does not expose
-private reasoning traces.
+Turn/session metadata includes selected cognitive system, model binding id,
+provider, model, reasoning effort, routing source, and a short routing reason.
+It does not expose private reasoning traces.
 
 Alternatives considered:
 
@@ -106,15 +137,35 @@ Alternatives considered:
 - Run both systems and compare. This is expensive and creates answer selection
   complexity.
 
+### Decision: Treat provider-native continuation as an optimization partitioned by model binding
+
+Alan's tape-level continuation remains compatible across System 1 and System 2
+because runtime can project the accepted tape into whichever model binding is
+selected. Provider-native continuation state, such as a Responses
+`previous_response_id`, is not assumed to be portable across different cognitive
+model bindings.
+
+Runtime must partition, clear, or replay provider-native continuation when the
+selected cognitive binding changes provider family, credential scope, model, or
+other continuation-affecting settings. Reuse is allowed only inside a proven
+compatible binding boundary.
+
+Alternatives considered:
+
+- Assume all configured System 1/System 2 models can share provider continuation.
+  This is too provider-specific and risks invalid request chains.
+- Disable provider-native continuation whenever cognition is enabled. This is
+  safe but gives up useful stateful-provider efficiency.
+
 ## Risks / Trade-offs
 
 - System 1 fails to escalate -> Mitigate with deterministic gates and response
   guardrails that can force System 2 on contradiction or retry.
 - Routing adds latency -> Mitigate by using System 1 by default and avoiding a
   separate classifier call.
-- Profile switching complicates provider state -> Mitigate by resolving profile
-  selection before constructing the request and by keeping provider continuation
-  scoped to compatible profile/model boundaries.
+- Model binding switching complicates provider state -> Mitigate by resolving
+  the binding before constructing the request and by partitioning provider
+  continuation by compatible provider/model/credential boundaries.
 - Metadata becomes noisy -> Mitigate with compact routing reasons and stable
   enum fields.
 - Config ambiguity -> Mitigate by keeping `connection_profile` as the fallback
@@ -126,17 +177,14 @@ Alternatives considered:
    behavior as the default single-system path.
 2. Add routing metadata types and persistence with no behavior change.
 3. Add deterministic routing gates and explicit overrides.
-4. Add System 1 profile dispatch.
+4. Add System 1 model binding dispatch.
 5. Add internal System 1 escalation and System 2 rerun.
 6. Expose metadata in daemon/client DTOs.
 
 Existing agents without a cognition block continue to use their current single
-profile and request-control behavior.
+profile and request-control behavior. When cognition is enabled, both System 1
+and System 2 model bindings must resolve successfully.
 
 ## Open Questions
 
 - Which deterministic gates belong in V1 versus later policy configuration.
-- Whether `system2` should default to the same profile with higher effort when
-  no explicit System 2 profile is configured.
-- How much routing state can safely coexist with provider-managed continuation
-  for stateful Responses profiles.

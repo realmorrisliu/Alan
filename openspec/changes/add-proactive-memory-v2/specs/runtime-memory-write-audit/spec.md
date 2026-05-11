@@ -66,6 +66,47 @@ session or turn metadata, and revert status.
 - **THEN** Alan treats it as legacy memory and does not claim it is
   automatically reversible
 
+#### Scenario: Ledger is one file per write
+- **WHEN** runtime records a stable memory mutation
+- **THEN** it writes a dedicated Markdown ledger file for that
+  `memory_write_id` under the memory ledger directory
+
+### Requirement: Reviewable Evidence Provenance
+Alan SHALL persist enough provenance for each stable memory write to let a user
+review why the fact was written without storing large raw artifacts or hidden
+reasoning.
+
+#### Scenario: File evidence is recorded
+- **WHEN** a stable memory write is based on repository or local file evidence
+- **THEN** the ledger records the source kind, path, and a bounded line range,
+  excerpt, or content hash for the evidence
+
+#### Scenario: Command evidence is recorded
+- **WHEN** a stable memory write is based on command output
+- **THEN** the ledger records the command identity, observed-at time, and a
+  bounded non-secret excerpt or summary of the output
+
+#### Scenario: External evidence is recorded
+- **WHEN** a stable memory write is based on a URL, issue, PR, or other external
+  source
+- **THEN** the ledger records the source locator, observed-at time, and a
+  bounded excerpt or summary sufficient for later review
+
+### Requirement: Sensitive Data Memory Guardrail
+Alan SHALL reject or redact stable memory candidates and ledger evidence that
+contain secret-like or credential-like material.
+
+#### Scenario: Secret-like candidate is rejected
+- **WHEN** a memory candidate observation contains an API key, token, password,
+  private credential, or secret-like value
+- **THEN** runtime rejects the stable memory write or rewrites it into a
+  redacted non-secret observation before durable persistence
+
+#### Scenario: Secret-like evidence is redacted
+- **WHEN** evidence for a memory write contains secret-like material
+- **THEN** the ledger omits or redacts the secret-like material while preserving
+  enough non-secret provenance to explain the write
+
 ### Requirement: Recent Memory Write Inspection
 Alan SHALL expose low-disturbance recent-write inspection surfaces for stable
 memory writes without interrupting normal agent turns.

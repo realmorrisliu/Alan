@@ -7,13 +7,13 @@ and reconnect surfaces where request-control metadata is already reported.
 #### Scenario: Session response includes routing metadata
 - **WHEN** a session is created with cognitive routing enabled
 - **THEN** the daemon response includes the configured routing mode and the
-  active cognitive profile metadata available at startup
+  active cognitive model binding metadata available at startup
 
 #### Scenario: Turn read includes selected system
 - **WHEN** a client reads session history or reconnect state after a routed turn
 - **THEN** the response includes selected cognitive system, routing source,
-  profile id, model, effective reasoning effort, and bounded routing reason
-  when available
+  model binding id, provider, model, effective reasoning effort, and bounded
+  routing reason when available
 
 ### Requirement: Cognitive Routing API Overrides
 The daemon SHALL accept explicit cognitive-system override intent on session,
@@ -26,8 +26,8 @@ and request-control boundaries.
   provider dispatch
 
 #### Scenario: Invalid override is rejected
-- **WHEN** a client requests an unknown cognitive system or a system that is not
-  configured
+- **WHEN** a client requests an unknown cognitive system or a cognitive system
+  whose model binding is not configured
 - **THEN** the daemon or runtime rejects the request with a diagnostic rather
   than silently using the default route
 

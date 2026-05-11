@@ -48,6 +48,25 @@ Alternatives considered:
 - Rollout-only provenance. This preserves audit data but makes recent write
   review and revert too expensive.
 
+### Decision: Use one Markdown ledger file per stable write
+
+V1 should store each stable write as a separate Markdown file, grouped by date,
+for example `.alan/memory/ledger/YYYY/MM/<memory_write_id>.md`. This makes each
+write easy to inspect with normal tools, gives revert code a stable record to
+load, and avoids rewriting a large append-only JSONL file when revert status
+changes.
+
+Recent-write listing can scan the dated ledger directories or maintain a small
+derived index, but the per-write Markdown ledger file remains the durable source
+of truth.
+
+Alternatives considered:
+
+- Monthly JSONL. This is compact and append-friendly, but precise revert status
+  updates either rewrite a shared file or require secondary tombstones.
+- Inline Markdown blocks only. This is easy to read in target files but weak for
+  bounded prompt recall and audit filtering.
+
 ### Decision: Keep runtime as the only memory writer
 
 Model-mediated write planning remains useful for semantic judgment, but runtime
@@ -82,6 +101,11 @@ statements can promote immediately at high confidence. Repeated behavior needs
 multiple evidence points or an existing stable-memory update. External evidence
 must include source paths, URLs, commands, or issue/PR references.
 
+Evidence must also be reviewable later. Ledger records should store the source
+kind, stable source locator, observed-at timestamp when relevant, and either a
+bounded excerpt, line/range, command summary, or content hash sufficient to
+explain why the fact was written without preserving large raw artifacts.
+
 Alternatives considered:
 
 - Single confidence field only. This is too weak for review and future policy.
@@ -101,6 +125,21 @@ Alternatives considered:
   interactions.
 - Never consolidate automatically. This allows inbox and daily notes to drift.
 
+### Decision: Reject or redact sensitive material before stable writes
+
+The memory writer must treat API keys, access tokens, passwords, private
+credentials, and secret-like values as unsafe memory material. A useful fact may
+still be recorded after redaction, for example "the project uses a GitHub token
+from the host secret store," but plaintext secrets must not be written to stable
+memory or ledger evidence.
+
+Alternatives considered:
+
+- Let provenance store exact command output. This is useful for debugging but
+  makes memory a secret sink.
+- Rely on user review after the fact. This violates the low-disturbance model
+  because bad writes may sit unnoticed.
+
 ## Risks / Trade-offs
 
 - Incorrect stable memory write -> Mitigate with provenance, confidence,
@@ -115,6 +154,9 @@ Alternatives considered:
   applying a risky patch.
 - Proactive writes reveal hidden reasoning -> Mitigate by storing observations,
   evidence, and rationale, not private reasoning traces.
+- Proactive writes capture secrets -> Mitigate by scanning candidates and
+  evidence for secret-like material and rejecting or redacting before durable
+  write.
 
 ## Migration Plan
 
@@ -131,7 +173,5 @@ entries are treated as legacy memory and are not automatically reversible.
 
 ## Open Questions
 
-- Whether ledger files should be one file per write or monthly JSONL plus a
-  generated recent Markdown view.
 - Whether the first implementation should expose `alan memory revert --dry-run`.
 - How much macOS UI should be included after the CLI/API surfaces are stable.

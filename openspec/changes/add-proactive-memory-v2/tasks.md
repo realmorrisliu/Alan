@@ -1,15 +1,17 @@
 ## 1. Ledger And Storage
 
 - [ ] 1.1 Define memory write ledger record types with `memory_write_id`, target, anchor, confidence, evidence, rationale, source session/turn, timestamps, and revert status.
-- [ ] 1.2 Add pure-text ledger layout helpers under `.alan/memory/ledger/` and preserve compatibility with existing memory files.
+- [ ] 1.2 Add one-file-per-write Markdown ledger layout helpers under `.alan/memory/ledger/YYYY/MM/` and preserve compatibility with existing memory files.
 - [ ] 1.3 Add runtime validation for ledger-target path containment and allowed stable memory targets.
 
 ## 2. Write Planning And Validation
 
 - [ ] 2.1 Extend turn-end memory promotion output parsing to carry evidence class, source references, confidence, and consolidation disposition.
 - [ ] 2.2 Add validation and canonicalization for direct statements, repeated behavior, and external/repository evidence.
-- [ ] 2.3 Route stable memory mutations through a single runtime writer that creates ledger entries and target-file updates together.
-- [ ] 2.4 Stage ambiguous, conflicting, or low-confidence observations for consolidation instead of stable promotion.
+- [ ] 2.3 Add provenance normalization for file, command, issue/PR, URL, and repeated-behavior evidence with bounded excerpts, ranges, hashes, or summaries.
+- [ ] 2.4 Add sensitive-data rejection/redaction for candidate observations and evidence before durable writes.
+- [ ] 2.5 Route stable memory mutations through a single runtime writer that creates ledger entries and target-file updates together.
+- [ ] 2.6 Stage ambiguous, conflicting, or low-confidence observations for consolidation instead of stable promotion.
 
 ## 3. Inspection And Revert Surfaces
 
@@ -25,7 +27,7 @@
 
 ## 5. Verification
 
-- [ ] 5.1 Add unit tests for write-plan normalization, evidence validation, dedupe, path rejection, and confidence downgrades.
+- [ ] 5.1 Add unit tests for write-plan normalization, evidence validation, provenance persistence, secret redaction, dedupe, path rejection, and confidence downgrades.
 - [ ] 5.2 Add storage tests for ledger creation, target updates, successful revert, already-reverted writes, and manual-resolution-required failures.
 - [ ] 5.3 Add daemon and CLI integration tests for recent, show, and revert surfaces.
 - [ ] 5.4 Run `cargo test --workspace` or the narrower documented Rust test suites covering runtime and daemon memory behavior.
