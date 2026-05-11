@@ -1,0 +1,112 @@
+## ADDED Requirements
+
+### Requirement: Proactive Memory Write Planning
+Alan SHALL run bounded runtime-owned memory write planning for eligible turns,
+session finalization, and consolidation passes, and SHALL allow durable facts
+from direct user statements, repeated behavior, and external or repository
+evidence to become candidate stable memory writes.
+
+#### Scenario: Direct stable user statement is eligible
+- **WHEN** a user directly states a stable identity, preference, constraint, or
+  workspace rule
+- **THEN** the write planner can produce a candidate stable memory write with
+  direct-statement evidence
+
+#### Scenario: Repeated behavior is eligible
+- **WHEN** Alan observes the same durable user preference or workspace operating
+  pattern across multiple source turns or sessions
+- **THEN** the write planner can produce a candidate stable memory write with
+  repeated-behavior evidence
+
+#### Scenario: External evidence is eligible
+- **WHEN** Alan inspects files, issue or PR threads, command output, or
+  user-authorized external sources that directly support a durable fact
+- **THEN** the write planner can produce a candidate stable memory write with
+  source references for that evidence
+
+### Requirement: Runtime-Validated Memory Mutations
+Alan SHALL validate and canonicalize every memory write plan before mutating
+stable memory files. The model SHALL NOT directly mutate stable memory files as
+the authority for proactive memory writes.
+
+#### Scenario: Invalid target is rejected
+- **WHEN** a write plan names a target outside the allowed memory layout
+- **THEN** runtime rejects the candidate before any stable memory file is
+  mutated
+
+#### Scenario: Over-broad candidate is downgraded
+- **WHEN** a candidate has useful evidence but insufficient confidence for
+  stable memory
+- **THEN** runtime records or keeps it as staged memory rather than promoting it
+  into stable memory
+
+#### Scenario: Duplicate stable fact is deduped
+- **WHEN** a write plan repeats an existing stable memory observation without
+  materially updating it
+- **THEN** runtime avoids adding a duplicate stable memory entry
+
+### Requirement: Durable Memory Write Ledger
+Alan SHALL record every stable memory mutation in a durable ledger entry with a
+stable `memory_write_id`, target, provenance, confidence, rationale, source
+session or turn metadata, and revert status.
+
+#### Scenario: Stable write creates ledger entry
+- **WHEN** runtime promotes a candidate into `USER.md`, `MEMORY.md`, or a topic
+  page
+- **THEN** it records a ledger entry that identifies the inserted stable memory
+  content and its source evidence
+
+#### Scenario: Ledger omits hidden reasoning
+- **WHEN** runtime records a ledger entry produced by model-mediated planning
+- **THEN** the ledger stores observation, evidence, confidence, and rationale
+  without storing hidden chain-of-thought or provider-private reasoning content
+
+#### Scenario: Legacy memory lacks reversible ledger
+- **WHEN** a stable memory entry predates the ledger
+- **THEN** Alan treats it as legacy memory and does not claim it is
+  automatically reversible
+
+### Requirement: Recent Memory Write Inspection
+Alan SHALL expose low-disturbance recent-write inspection surfaces for stable
+memory writes without interrupting normal agent turns.
+
+#### Scenario: Recent writes are listed
+- **WHEN** a user asks for recent memory writes through CLI or daemon API
+- **THEN** Alan returns bounded write metadata including id, timestamp, target,
+  observation, confidence, and revert status
+
+#### Scenario: Write detail is shown
+- **WHEN** a user requests a single memory write by id
+- **THEN** Alan returns the write detail, provenance, target location, and
+  revert eligibility
+
+### Requirement: Reversible Stable Memory Writes
+Alan SHALL support precise revert for stable memory writes when the ledger entry
+still matches the target memory content, and SHALL fail safely when precise
+revert cannot be proven.
+
+#### Scenario: Revert succeeds
+- **WHEN** a user reverts a memory write whose anchored content still matches
+  the target memory file
+- **THEN** Alan removes or marks the inserted stable memory content and updates
+  the ledger revert status
+
+#### Scenario: Revert cannot be proven
+- **WHEN** the target memory file has changed so that Alan cannot identify the
+  inserted content safely
+- **THEN** Alan leaves the file unchanged and marks the write as requiring
+  manual resolution
+
+### Requirement: Ambiguous Memory Consolidation
+Alan SHALL stage ambiguous, conflicting, or cross-session memory observations
+for consolidation instead of forcing immediate stable-memory promotion.
+
+#### Scenario: Conflicting observation is staged
+- **WHEN** a candidate conflicts with existing stable memory
+- **THEN** Alan records the observation for consolidation and does not silently
+  overwrite the stable memory entry
+
+#### Scenario: Consolidation promotes resolved observation
+- **WHEN** a consolidation pass resolves staged observations into a stable fact
+- **THEN** Alan writes the stable memory through the same validated mutation and
+  ledger path as turn-end promotion
