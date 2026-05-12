@@ -123,6 +123,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     @Published private(set) var lastCopiedAt: Date?
     @Published private(set) var terminalRuntime: TerminalHostRuntimeSnapshot = .placeholder
     @Published private(set) var controlPlaneDiagnostics: [String] = []
+    @Published private(set) var commandInputRequestID = 0
 
     let terminalRuntimeRegistry: TerminalRuntimeRegistry
 
@@ -344,6 +345,15 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     func focus(paneID: String) {
         guard let result = try? shellState.focusingPane(paneID) else { return }
         applyMutationResult(result)
+    }
+
+    func requestCommandInput() {
+        commandInputRequestID += 1
+    }
+
+    func refocusSelectedTerminalPane() {
+        guard let paneID = selectedPane?.paneID else { return }
+        terminalRuntimeRegistry.requestFocus(for: paneID)
     }
 
     func terminalHostDidRequestActivation(paneID: String) {

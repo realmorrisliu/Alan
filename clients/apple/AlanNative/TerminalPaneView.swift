@@ -113,8 +113,10 @@ struct TerminalPaneView: View {
         .padding(.horizontal, 9)
         .padding(.vertical, 6)
         .background(
-            RoundedRectangle(cornerRadius: ShellRadii.row, style: .continuous)
-                .fill(Color.white.opacity(0.62))
+            ShellMaterialShape(
+                role: .terminalChrome,
+                shape: RoundedRectangle(cornerRadius: ShellRadii.row, style: .continuous)
+            )
         )
         .overlay {
             RoundedRectangle(cornerRadius: ShellRadii.row, style: .continuous)
@@ -454,7 +456,12 @@ private struct ShellTerminalSurfaceFrame: ViewModifier {
 
     func body(content: Content) -> some View {
         content
-            .background(ShellPalette.terminal)
+            .background(
+                ShellMaterialShape(
+                    role: .terminalSurround,
+                    shape: shape
+                )
+            )
             .clipShape(shape)
             .overlay {
                 shape.stroke(
@@ -487,6 +494,9 @@ private struct ShellPaneTreeLayoutView: View {
                     activationDelegate: host,
                     onWorkspaceCommand: { command in
                         host.performShellWorkspaceCommand(command)
+                    },
+                    onCommandInput: {
+                        host.requestCommandInput()
                     },
                     onClosePane: {
                         host.closePaneByID(pane.paneID)
@@ -646,6 +656,7 @@ private struct ShellTerminalLeafView: View {
     let runtimeRegistry: TerminalRuntimeRegistry
     let activationDelegate: TerminalHostActivationDelegate?
     let onWorkspaceCommand: (ShellWorkspaceCommand) -> Void
+    let onCommandInput: () -> Void
     let onClosePane: () -> Void
     let onRuntimeUpdate: (TerminalHostRuntimeSnapshot) -> Void
     let onMetadataUpdate: (TerminalPaneMetadataSnapshot) -> Void
@@ -669,6 +680,7 @@ private struct ShellTerminalLeafView: View {
                     runtimeRegistry: runtimeRegistry,
                     activationDelegate: activationDelegate,
                     onWorkspaceCommand: onWorkspaceCommand,
+                    onCommandInput: onCommandInput,
                     onRuntimeUpdate: onRuntimeUpdate,
                     onMetadataUpdate: onMetadataUpdate
                 )
@@ -739,7 +751,11 @@ private struct ShellPaneTitleBarView: View {
         .frame(height: 28)
         .background(
             Rectangle()
-                .fill(isSelected ? ShellPalette.terminalSoft.opacity(0.52) : Color.black.opacity(0.08))
+                .fill(
+                    isSelected
+                        ? ShellMaterialRole.terminalChromeSelected.fill
+                        : ShellMaterialRole.terminalChrome.fill
+                )
         )
         .overlay(alignment: .bottom) {
             Rectangle()
@@ -837,8 +853,10 @@ private struct ShellFindBarView: View {
         .padding(.horizontal, 10)
         .padding(.vertical, 7)
         .background(
-            RoundedRectangle(cornerRadius: ShellRadii.surface, style: .continuous)
-                .fill(ShellPalette.panel.opacity(0.96))
+            ShellMaterialShape(
+                role: .floatingInput,
+                shape: RoundedRectangle(cornerRadius: ShellRadii.surface, style: .continuous)
+            )
         )
         .overlay {
             RoundedRectangle(cornerRadius: ShellRadii.surface, style: .continuous)
@@ -909,8 +927,10 @@ private struct TerminalActionLabel: View {
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
         .background(
-            RoundedRectangle(cornerRadius: ShellRadii.row, style: .continuous)
-                .fill(Color.white.opacity(0.8))
+            ShellMaterialShape(
+                role: .controlGlass,
+                shape: RoundedRectangle(cornerRadius: ShellRadii.row, style: .continuous)
+            )
         )
     }
 }
@@ -953,8 +973,10 @@ private struct TerminalInfoCard<Content: View>: View {
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
-            RoundedRectangle(cornerRadius: ShellRadii.overlay, style: .continuous)
-                .fill(Color.white.opacity(0.76))
+            ShellMaterialShape(
+                role: .panel,
+                shape: RoundedRectangle(cornerRadius: ShellRadii.overlay, style: .continuous)
+            )
         )
         .overlay {
             RoundedRectangle(cornerRadius: ShellRadii.overlay, style: .continuous)
@@ -993,8 +1015,10 @@ private struct TerminalMonoLine: View {
             .padding(.horizontal, 10)
             .padding(.vertical, 8)
             .background(
-                RoundedRectangle(cornerRadius: ShellRadii.surface, style: .continuous)
-                    .fill(ShellPalette.canvas.opacity(0.78))
+                ShellMaterialShape(
+                    role: .panelSoft,
+                    shape: RoundedRectangle(cornerRadius: ShellRadii.surface, style: .continuous)
+                )
             )
     }
 }
