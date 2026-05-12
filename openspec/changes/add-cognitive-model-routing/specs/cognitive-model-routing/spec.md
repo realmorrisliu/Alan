@@ -44,13 +44,23 @@ Alan SHALL keep provider and credential availability separate from System
 ### Requirement: Runtime-Owned Cognitive Routing
 Alan SHALL select the cognitive system in runtime before provider dispatch by
 applying explicit overrides, deterministic safety gates, configured defaults,
-System 1 fallback, and System 1 self-escalation. Deterministic safety gates
-SHALL supersede any explicit System 1 routing intent.
+System 1 fallback, and System 1 self-escalation. Turn-scoped explicit routing
+intent SHALL supersede session-scoped explicit routing intent for that turn.
+Deterministic safety gates SHALL supersede any effective explicit System 1
+routing intent.
 
-#### Scenario: Explicit System 2 override wins
-- **WHEN** a session or turn explicitly requests System 2
+#### Scenario: Effective System 2 intent wins
+- **WHEN** the effective routing intent after turn-over-session resolution
+  explicitly requests System 2
 - **THEN** Alan routes the turn to System 2 regardless of the default routing
   mode
+
+#### Scenario: Turn override supersedes session override
+- **WHEN** a session explicitly requests System 2
+- **AND** the current turn explicitly requests System 1
+- **AND** no deterministic gate requires System 2
+- **THEN** Alan honors the turn-scoped System 1 intent for that turn
+- **AND** routing metadata records the turn-scoped routing source
 
 #### Scenario: Deterministic gate forces System 2
 - **WHEN** runtime detects a configured high-risk or high-complexity condition
@@ -58,7 +68,8 @@ SHALL supersede any explicit System 1 routing intent.
 - **THEN** Alan routes the turn to System 2 before generating a fast draft
 
 #### Scenario: System 1 override is superseded by gate
-- **WHEN** a session or turn explicitly requests System 1
+- **WHEN** the effective routing intent after turn-over-session resolution
+  explicitly requests System 1
 - **AND** runtime detects a configured high-risk or high-complexity condition
   that requires deep reasoning
 - **THEN** Alan ignores or rejects the forced System 1 intent and routes the

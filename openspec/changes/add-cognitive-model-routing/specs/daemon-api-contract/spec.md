@@ -20,6 +20,12 @@ The daemon SHALL accept explicit cognitive-system override intent on session,
 fork, and turn submission surfaces where doing so preserves existing governance
 and request-control boundaries.
 
+#### Scenario: Turn override supersedes session override
+- **WHEN** a session was created with a cognitive-system override
+- **AND** a submitted turn includes its own cognitive-system override
+- **THEN** runtime treats the turn override as the effective routing intent for
+  that turn before applying deterministic gates
+
 #### Scenario: Turn requests System 2
 - **WHEN** a client submits a turn with a System 2 override
 - **THEN** runtime receives turn-scoped routing intent and applies it before

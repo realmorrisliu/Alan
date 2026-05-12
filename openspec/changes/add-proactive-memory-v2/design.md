@@ -72,6 +72,9 @@ Alternatives considered:
 Model-mediated write planning remains useful for semantic judgment, but runtime
 owns target canonicalization, dedupe, confidence downgrades, text bounds,
 path-safety checks, ledger creation, and file mutation.
+When `[memory].enabled = false`, runtime must treat all proactive memory write
+targets as ineligible and skip stable, staged, inbox, daily-note, consolidation,
+and ledger persistence.
 
 Alternatives considered:
 
@@ -86,7 +89,10 @@ Alan writes eligible stable memory without interrupting the user. Review happens
 through `alan memory recent`, `alan memory show`, `alan memory revert`, and
 daemon equivalents. Daemon memory write APIs must bind every recent, show, and
 revert request to an explicit workspace or session scope before reading or
-mutating a ledger.
+mutating a ledger. Session-scoped requests use the authorized session as the
+workspace authority. Workspace-scoped requests require host/admin authorization
+or an authorized session for that workspace with the read or admin authority
+needed by the operation.
 
 Alternatives considered:
 

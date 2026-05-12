@@ -3,6 +3,7 @@
 - [ ] 1.1 Define memory write ledger record types with `memory_write_id`, target, anchor, confidence, evidence, rationale, source session/turn, timestamps, and revert status.
 - [ ] 1.2 Add one-file-per-write Markdown ledger layout helpers under `.alan/memory/ledger/YYYY/MM/` and preserve compatibility with existing memory files.
 - [ ] 1.3 Add runtime validation for ledger-target path containment and allowed stable memory targets.
+- [ ] 1.4 Ensure `[memory].enabled = false` makes proactive stable, staged, inbox, daily-note, consolidation, and ledger writes ineligible.
 
 ## 2. Write Planning And Validation
 
@@ -16,7 +17,7 @@
 ## 3. Inspection And Revert Surfaces
 
 - [ ] 3.1 Add CLI commands for recent write listing, single-write inspection, and revert.
-- [ ] 3.2 Add daemon memory endpoints and endpoint-contract metadata for workspace/session-scoped recent, show, and revert operations.
+- [ ] 3.2 Add daemon memory endpoints and endpoint-contract metadata for session-scoped recent/show/revert operations and authorized workspace-scoped recent/show/revert operations.
 - [ ] 3.3 Add precise revert mechanics that remove matched stable-memory content or mark it with a machine-readable reverted state, with safe failure when the target content no longer matches the ledger anchor.
 
 ## 4. Memory Surface Integration
@@ -28,9 +29,9 @@
 
 ## 5. Verification
 
-- [ ] 5.1 Add unit tests for write-plan normalization, evidence validation, provenance persistence, stable and staged secret redaction, dedupe, path rejection, and confidence downgrades.
+- [ ] 5.1 Add unit tests for write-plan normalization, evidence validation, provenance persistence, disabled-memory write suppression, stable and staged secret redaction, dedupe, path rejection, and confidence downgrades.
 - [ ] 5.2 Add storage tests for ledger creation, target updates, successful revert, already-reverted writes, reverted prompt-surface exclusion, and manual-resolution-required failures.
-- [ ] 5.3 Add daemon and CLI integration tests for recent, show, revert, workspace/session scoping, and unscoped request rejection.
+- [ ] 5.3 Add daemon and CLI integration tests for recent, show, revert, session scoping, authorized workspace scoping, unscoped request rejection, and unauthorized workspace-scope rejection.
 - [ ] 5.4 Run `cargo test --workspace` or the narrower documented Rust test suites covering runtime and daemon memory behavior.
 - [ ] 5.5 Run `openspec validate add-proactive-memory-v2 --strict`.
 

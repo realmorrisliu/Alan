@@ -74,12 +74,15 @@ Alternatives considered:
 
 ### Decision: Use safety-first routing gates plus System 1 self-escalation
 
-Routing has five layers:
+Routing first resolves explicit cognitive-system intent by scope: a turn-scoped
+intent applies only to that turn and supersedes any session-scoped intent, while
+session-scoped intent applies only when the turn did not supply its own intent.
+After resolving that effective explicit intent, routing has five layers:
 
-1. explicit System 2 override, which can always choose the deeper route,
+1. effective explicit System 2 intent, which can always choose the deeper route,
 2. deterministic gates for known high-risk or high-complexity cases,
-3. explicit System 1 override, which is honored only when no deterministic gate
-   requires System 2,
+3. effective explicit System 1 intent, which is honored only when no
+   deterministic gate requires System 2,
 4. configured default route, which may select System 1 or System 2,
 5. System 1 fallback attempt that can call internal `escalate_to_system2`.
 

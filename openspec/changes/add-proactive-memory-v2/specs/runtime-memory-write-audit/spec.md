@@ -6,6 +6,13 @@ session finalization, and consolidation passes, and SHALL allow durable facts
 from direct user statements, repeated behavior, and external or repository
 evidence to become candidate stable memory writes.
 
+#### Scenario: Disabled memory suppresses proactive writes
+- **WHEN** the resolved runtime config has `[memory].enabled = false`
+- **THEN** runtime does not run proactive memory write planning for turns,
+  session finalization, or consolidation passes
+- **AND** runtime does not create stable, staged, inbox, daily-note,
+  consolidation, or ledger memory writes
+
 #### Scenario: Direct stable user statement is eligible
 - **WHEN** a user directly states a stable identity, preference, constraint, or
   workspace rule

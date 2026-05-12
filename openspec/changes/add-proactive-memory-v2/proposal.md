@@ -18,6 +18,8 @@ keeping every write inspectable and reversible.
   recall, handoff, session-summary, or daily-note surfaces.
 - Extend memory validation so invalid, over-broad, duplicate, or unsafe write
   plans are rejected or downgraded before they mutate stable memory.
+- Honor disabled memory configuration so proactive planning and durable memory
+  writes do not run for workspaces that opt out of memory.
 - Add sensitive-data guardrails so secrets, credentials, and private tokens are
   not written into stable memory, staged/inbox/daily memory, or ledger evidence
   in plaintext.
@@ -38,9 +40,9 @@ keeping every write inspectable and reversible.
 - `runtime-memory-surfaces`: Memory and handoff surfaces must reference
   proactive write provenance and remain compact continuation aids rather than
   becoming the write ledger.
-- `daemon-api-contract`: Daemon APIs must expose workspace/session-scoped recent
-  memory writes, write inspection, and revert operations without leaking hidden
-  model reasoning.
+- `daemon-api-contract`: Daemon APIs must expose authorized workspace/session-
+  scoped recent memory writes, write inspection, and revert operations without
+  leaking hidden model reasoning.
 
 ## Impact
 
