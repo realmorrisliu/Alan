@@ -38,8 +38,9 @@ keeping every write inspectable and reversible.
 ### Modified Capabilities
 
 - `runtime-memory-surfaces`: Memory and handoff surfaces must reference
-  proactive write provenance and remain compact continuation aids rather than
-  becoming the write ledger.
+  proactive write provenance, replace the prior ordinary-tool memory-skill write
+  contract with the runtime writer or compatibility bridge, and remain compact
+  continuation aids rather than becoming the write ledger.
 - `daemon-api-contract`: Daemon APIs must expose authorized workspace/session-
   scoped recent memory writes, write inspection, and revert operations without
   leaking hidden model reasoning.

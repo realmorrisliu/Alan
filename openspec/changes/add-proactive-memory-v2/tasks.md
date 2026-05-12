@@ -26,7 +26,7 @@
 - [ ] 4.2 Ensure prompt-facing memory surfaces do not duplicate full ledger content.
 - [ ] 4.3 Ensure prompt-facing memory surfaces exclude reverted blocks and never reintroduce reverted content from ledger records.
 - [ ] 4.4 Preserve legacy memory entries that do not have reversible ledger metadata.
-- [ ] 4.5 Update the built-in memory skill and session-end prompt guidance so stable, staged, inbox, daily-note, and ledger writes go through the runtime writer or a compatibility bridge instead of direct file mutation.
+- [ ] 4.5 Update the built-in memory skill, session-end prompt guidance, and `runtime-memory-surfaces` semantic-summary contract so stable, staged, inbox, daily-note, and ledger writes go through the runtime writer or a compatibility bridge instead of direct file mutation.
 
 ## 5. Verification
 

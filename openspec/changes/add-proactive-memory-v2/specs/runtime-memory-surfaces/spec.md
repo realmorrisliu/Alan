@@ -30,3 +30,27 @@ stable memory content from reverted memory writes.
 - **WHEN** a reverted memory write was removed from the stable memory target
 - **THEN** prompt-facing memory renderers do not reintroduce the removed content
   from the ledger
+
+## MODIFIED Requirements
+
+### Requirement: Skill-Authored Semantic Memory Surfaces
+Memory and handoff surfaces SHALL prefer bounded semantic summaries authored by
+the active agent through the memory skill or another explicit agent-visible
+memory workflow. When that workflow causes stable, staged, inbox, daily-note, or
+ledger memory writes after the runtime memory writer is enabled, the durable
+write SHALL go through the runtime writer or its compatibility bridge rather
+than direct file mutation by ordinary tools.
+
+#### Scenario: Agent wraps significant work
+- **WHEN** a turn or session changes durable project state, decisions,
+  constraints, open loops, or next steps
+- **AND** the runtime memory writer is enabled
+- **THEN** the memory skill instructs the agent to produce a bounded semantic
+  continuation summary through an explicit agent-visible memory workflow
+- **AND** any stable, staged, inbox, daily-note, or ledger memory write caused
+  by that workflow goes through the runtime writer or compatibility bridge
+
+#### Scenario: Runtime refreshes memory surfaces
+- **WHEN** runtime refreshes generated memory surfaces at turn end
+- **THEN** it SHALL NOT initiate an extra hidden model request solely to
+  summarize memory state
