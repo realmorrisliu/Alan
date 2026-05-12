@@ -84,7 +84,9 @@ Alternatives considered:
 
 Alan writes eligible stable memory without interrupting the user. Review happens
 through `alan memory recent`, `alan memory show`, `alan memory revert`, and
-daemon equivalents.
+daemon equivalents. Daemon memory write APIs must bind every recent, show, and
+revert request to an explicit workspace or session scope before reading or
+mutating a ledger.
 
 Alternatives considered:
 

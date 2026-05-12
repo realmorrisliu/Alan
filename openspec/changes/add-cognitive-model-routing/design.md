@@ -18,8 +18,8 @@ fast system is overconfident and the slow system fails to engage.
 
 - Let `agent.toml` configure System 1 and System 2 as model bindings layered
   above provider/credential configuration, with optional reasoning-effort intent.
-- Default to System 1 when safe, with explicit override and deterministic
-  runtime gates that can force System 2 for safety.
+- Honor the configured default route when no override or deterministic gate
+  applies, falling back to System 1 when no default is configured.
 - Let the System 1 model self-escalate through an internal-only runtime action.
 - Suppress fast drafts when escalation occurs and rerun the original task on
   System 2 with bounded triage notes.
@@ -74,13 +74,14 @@ Alternatives considered:
 
 ### Decision: Use safety-first routing gates plus System 1 self-escalation
 
-Routing has four layers:
+Routing has five layers:
 
 1. explicit System 2 override, which can always choose the deeper route,
 2. deterministic gates for known high-risk or high-complexity cases,
 3. explicit System 1 override, which is honored only when no deterministic gate
    requires System 2,
-4. default System 1 attempt that can call internal `escalate_to_system2`.
+4. configured default route, which may select System 1 or System 2,
+5. System 1 fallback attempt that can call internal `escalate_to_system2`.
 
 This avoids a separate router LLM call on every turn while still letting the
 fast model recognize when a task should not be answered quickly.

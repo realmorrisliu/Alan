@@ -38,8 +38,9 @@ keeping every write inspectable and reversible.
 - `runtime-memory-surfaces`: Memory and handoff surfaces must reference
   proactive write provenance and remain compact continuation aids rather than
   becoming the write ledger.
-- `daemon-api-contract`: Daemon APIs must expose recent memory writes, write
-  inspection, and revert operations without leaking hidden model reasoning.
+- `daemon-api-contract`: Daemon APIs must expose workspace/session-scoped recent
+  memory writes, write inspection, and revert operations without leaking hidden
+  model reasoning.
 
 ## Impact
 

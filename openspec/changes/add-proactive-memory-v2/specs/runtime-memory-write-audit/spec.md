@@ -120,12 +120,14 @@ Alan SHALL expose low-disturbance recent-write inspection surfaces for stable
 memory writes without interrupting normal agent turns.
 
 #### Scenario: Recent writes are listed
-- **WHEN** a user asks for recent memory writes through CLI or daemon API
+- **WHEN** a user asks for recent memory writes through CLI or daemon API for a
+  workspace or session
 - **THEN** Alan returns bounded write metadata including id, timestamp, target,
   observation, confidence, and revert status
 
 #### Scenario: Write detail is shown
-- **WHEN** a user requests a single memory write by id
+- **WHEN** a user requests a single memory write by id for a workspace or
+  session
 - **THEN** Alan returns the write detail, provenance, target location, and
   revert eligibility
 

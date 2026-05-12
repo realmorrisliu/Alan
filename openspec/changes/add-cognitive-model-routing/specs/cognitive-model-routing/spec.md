@@ -43,9 +43,9 @@ Alan SHALL keep provider and credential availability separate from System
 
 ### Requirement: Runtime-Owned Cognitive Routing
 Alan SHALL select the cognitive system in runtime before provider dispatch by
-applying explicit overrides, deterministic safety gates, and System 1
-self-escalation. Deterministic safety gates SHALL supersede any explicit
-System 1 routing intent.
+applying explicit overrides, deterministic safety gates, configured defaults,
+System 1 fallback, and System 1 self-escalation. Deterministic safety gates
+SHALL supersede any explicit System 1 routing intent.
 
 #### Scenario: Explicit System 2 override wins
 - **WHEN** a session or turn explicitly requests System 2
@@ -66,8 +66,13 @@ System 1 routing intent.
 - **AND** the routing metadata records that the deterministic gate superseded
   the override
 
-#### Scenario: Default route uses System 1
+#### Scenario: Configured default route is honored
 - **WHEN** no override or deterministic gate applies
+- **AND** the resolved cognition config declares a default cognitive system
+- **THEN** Alan routes the turn to the configured default cognitive system
+
+#### Scenario: Missing default falls back to System 1
+- **WHEN** no override, deterministic gate, or configured default applies
 - **THEN** Alan starts the turn on System 1
 
 ### Requirement: System 1 Self-Escalation
