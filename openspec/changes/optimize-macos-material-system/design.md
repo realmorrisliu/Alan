@@ -29,7 +29,7 @@ the terminal itself remains stable, high contrast, and readable.
 
 - Do not redesign sidebar information architecture; that is owned by
   `streamline-macos-sidebar-ia`.
-- Do not redesign `Command-K` behavior; that is owned by
+- Do not redesign command input behavior; that is owned by
   `polish-macos-command-input`.
 - Do not introduce dark-mode completeness as part of this pass.
 - Do not change shell runtime, terminal protocol, or command routing behavior.

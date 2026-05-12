@@ -26,7 +26,7 @@ instructional copy, and make the bottom space switcher feel intentional.
   inline.
 - Make split tabs legible at a glance by showing a compact topology indicator
   that communicates pane count, dominant split direction, and focused pane.
-- Keep `Command-K` entry available from the sidebar, but do not redesign its
+- Keep the command input entry available from the sidebar, but do not redesign its
   overlay in this change.
 
 **Non-Goals:**

@@ -25,6 +25,11 @@ struct AlanMacShellCommands: Commands {
             }
             .keyboardShortcut("t", modifiers: [.command, .option])
 
+            Button("Go to or Command...") {
+                host.requestCommandInput()
+            }
+            .keyboardShortcut("p", modifiers: .command)
+
             Divider()
 
             Button("Split Right") {

@@ -4,7 +4,7 @@
 Workspace actions SHALL be available through native menu/command routing,
 keyboard shortcuts, command input, and any restrained toolbar affordances that
 call the same shell controller mutations where the action is shared. The default
-`Command-K` command input SHALL accept typed commands without showing persistent
+`Command-P` command input SHALL accept typed commands without showing persistent
 candidate action lists.
 
 #### Scenario: Menu command

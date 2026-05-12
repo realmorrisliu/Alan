@@ -19,17 +19,15 @@ struct ShellSidebarView: View {
         .padding(.top, chromeMetrics.trafficLightsTopInset)
         .padding(.bottom, 15)
         .frame(maxHeight: .infinity, alignment: .top)
-        .background {
-            ShellMaterialBackgroundView()
-                .ignoresSafeArea(edges: .top)
-        }
     }
 
     private var sidebarHeader: some View {
         HStack(alignment: .center, spacing: 10) {
             ZStack {
-                RoundedRectangle(cornerRadius: ShellRadii.row, style: .continuous)
-                    .fill(ShellPalette.sidebarControlStrong)
+                ShellMaterialShape(
+                    role: .controlGlassStrong,
+                    shape: RoundedRectangle(cornerRadius: ShellRadii.row, style: .continuous)
+                )
                 Text("A")
                     .font(.system(size: 12.5, weight: .bold, design: .rounded))
                     .foregroundStyle(ShellPalette.accent)
@@ -63,8 +61,10 @@ struct ShellSidebarView: View {
                     .foregroundStyle(.primary)
                     .frame(width: 26, height: 26)
                     .background(
-                        RoundedRectangle(cornerRadius: ShellRadii.control, style: .continuous)
-                            .fill(ShellPalette.sidebarControl)
+                        ShellMaterialShape(
+                            role: .controlGlass,
+                            shape: RoundedRectangle(cornerRadius: ShellRadii.control, style: .continuous)
+                        )
                     )
             }
             .menuStyle(.borderlessButton)
@@ -84,19 +84,20 @@ struct ShellSidebarView: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                 Spacer(minLength: 0)
-                Text("⌘K")
+                Text("⌘P")
                     .font(.system(size: 11, weight: .semibold, design: .monospaced))
                     .foregroundStyle(.tertiary)
             }
             .padding(.horizontal, 11)
             .padding(.vertical, 10)
             .background(
-                RoundedRectangle(cornerRadius: ShellRadii.row, style: .continuous)
-                    .fill(ShellPalette.sidebarControl)
+                ShellMaterialShape(
+                    role: .controlGlass,
+                    shape: RoundedRectangle(cornerRadius: ShellRadii.row, style: .continuous)
+                )
             )
         }
         .buttonStyle(.plain)
-        .keyboardShortcut("k", modifiers: [.command])
     }
 
     private var tabSection: some View {
@@ -171,8 +172,10 @@ struct ShellSidebarView: View {
                         .foregroundStyle(.primary)
                         .frame(width: 30, height: 30)
                         .background(
-                            RoundedRectangle(cornerRadius: ShellRadii.control, style: .continuous)
-                                .fill(ShellPalette.sidebarControl)
+                            ShellMaterialShape(
+                                role: .controlGlass,
+                                shape: RoundedRectangle(cornerRadius: ShellRadii.control, style: .continuous)
+                            )
                         )
                 }
                 .menuStyle(.borderlessButton)
@@ -358,12 +361,12 @@ private struct ShellSpaceRailItem: View {
     var body: some View {
         ZStack(alignment: .topTrailing) {
             ZStack {
-                RoundedRectangle(cornerRadius: ShellRadii.row, style: .continuous)
-                    .fill(
-                        isSelected
-                            ? ShellPalette.railSelection
-                            : (isHovered ? ShellPalette.railHover : ShellPalette.railBase)
-                    )
+                ShellMaterialShape(
+                    role: isSelected
+                        ? .controlGlassSelected
+                        : (isHovered ? .controlGlassHover : .controlGlass),
+                    shape: RoundedRectangle(cornerRadius: ShellRadii.row, style: .continuous)
+                )
                 Image(systemName: symbolName)
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(isSelected ? ShellPalette.accent : .primary)
@@ -463,12 +466,14 @@ private struct ShellTabSidebarRow: View {
         .padding(.horizontal, 10)
         .padding(.vertical, 7)
         .background(
-            RoundedRectangle(cornerRadius: ShellRadii.row, style: .continuous)
-                .fill(
-                    isSelected
-                        ? ShellPalette.sidebarSelection
-                        : (isHovered ? ShellPalette.sidebarHover : Color.clear)
-                )
+            Group {
+                if isSelected || isHovered {
+                    ShellMaterialShape(
+                        role: isSelected ? .controlGlassSelected : .controlGlassHover,
+                        shape: RoundedRectangle(cornerRadius: ShellRadii.row, style: .continuous)
+                    )
+                }
+            }
         )
         .scaleEffect(isHovered && !isSelected ? 1.005 : 1)
         .animation(reduceMotion ? nil : .easeOut(duration: 0.16), value: isHovered)
@@ -530,8 +535,10 @@ private struct ShellEmptyStateRow: View {
         .padding(.vertical, 10)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
-            RoundedRectangle(cornerRadius: ShellRadii.row, style: .continuous)
-                .fill(ShellPalette.panelSoft)
+            ShellMaterialShape(
+                role: .panelSoft,
+                shape: RoundedRectangle(cornerRadius: ShellRadii.row, style: .continuous)
+            )
         )
     }
 }

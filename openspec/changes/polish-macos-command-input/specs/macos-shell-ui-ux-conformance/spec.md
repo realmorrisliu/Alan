@@ -1,12 +1,12 @@
 ## ADDED Requirements
 
-### Requirement: Command-K opens a Liquid Glass input
-The macOS shell SHALL present `Command-K` as a single floating Liquid
+### Requirement: Command input opens as a Liquid Glass input
+The macOS shell SHALL present `Command-P` as a single floating Liquid
 Glass-style input layer that captures text entry without rendering default
 candidate sections below the input.
 
 #### Scenario: Command input opens
-- **WHEN** the user presses `Command-K` or activates the sidebar command entry
+- **WHEN** the user presses `Command-P` or activates the sidebar command entry
 - **THEN** Alan opens a floating material-backed input field, focuses the text field, and does not show action, routing, attention, or best-match lists below it
 
 #### Scenario: Command input is visually restrained
@@ -18,7 +18,7 @@ candidate sections below the input.
 - **THEN** Alan dismisses the input and returns keyboard focus to the previously focused terminal pane when available
 
 #### Scenario: No default voice affordance
-- **WHEN** the `Command-K` input is visible
+- **WHEN** the command input is visible
 - **THEN** the input does not show a microphone or voice-listening affordance unless a future voice-specific requirement explicitly adds one
 
 #### Scenario: Unresolved command stays input-only
