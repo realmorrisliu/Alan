@@ -18,9 +18,11 @@
 - [ ] 3.1 Add an internal-only `escalate_to_system2` virtual action with bounded reason and needed-context fields.
 - [ ] 3.2 Inject the escalation contract only for System 1 attempts where auto routing allows escalation.
 - [ ] 3.3 Suppress System 1 visible output when escalation is captured.
-- [ ] 3.4 Gate side-effecting tools during unaccepted System 1 attempts until runtime accepts the fast route or routes the turn to System 2.
-- [ ] 3.5 Rerun the original logical turn on System 2 with bounded System 1 triage notes when only read-only tools have executed.
-- [ ] 3.6 Continue from observed post-side-effect state when escalation happens after an accepted execution phase or external state change has already completed side effects.
+- [ ] 3.4 Allow speculative System 1 reasoning, calculation, unaccepted draft generation, and read-only tools before route acceptance.
+- [ ] 3.5 Treat System 1 route acceptance as a runtime-owned commit point rather than user confirmation.
+- [ ] 3.6 Gate side-effecting tools during unaccepted System 1 attempts until runtime accepts the fast route or routes the turn to System 2.
+- [ ] 3.7 Rerun the original logical turn on System 2 with bounded System 1 triage notes when only read-only tools have executed.
+- [ ] 3.8 Continue from observed post-side-effect state when escalation happens after an accepted execution phase or external state change has already completed side effects.
 
 ## 4. Metadata And API Surfaces
 
@@ -32,7 +34,7 @@
 ## 5. Verification
 
 - [ ] 5.1 Add unit tests for cognition config parsing, fallback behavior, invalid model binding diagnostics, override precedence, and gated System 1 override rejection/supersession.
-- [ ] 5.2 Add runtime tests for deterministic System 2 gates, configured default routing, System 1 fallback route, System 1 escalation, fast-draft suppression, unaccepted System 1 side-effect gating, accepted side-effect continuation, and continuation partitioning.
+- [ ] 5.2 Add runtime tests for deterministic System 2 gates, configured default routing, System 1 fallback route, System 1 escalation, fast-draft suppression, speculative read-only System 1 observation, unaccepted System 1 side-effect gating, autonomous System 1 acceptance without user yield, accepted side-effect continuation, and continuation partitioning.
 - [ ] 5.3 Add request-control tests proving selected cognitive model binding effort composes with existing turn/session/model precedence.
 - [ ] 5.4 Add daemon/API tests for routing metadata and override validation.
 - [ ] 5.5 Run `cargo test --workspace` or the narrower documented Rust test suites covering runtime and daemon routing behavior.

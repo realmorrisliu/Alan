@@ -115,12 +115,22 @@ after runtime accepted a System 1 execution phase, or due to an external client
 state change, System 2 must continue from the observed post-side-effect state
 rather than replaying the original task as if nothing changed.
 
+This acceptance is a runtime-owned commit point, not a user-confirmation prompt.
+Before that commit point, System 1 may perform model-internal reasoning,
+calculation, planning, draft generation that is not streamed as accepted output,
+and read-only tool use. After runtime accepts the fast route, System 1 can
+execute permitted side-effecting tools under the same governance and policy
+rules as any other routed turn. Human confirmation is still required only when
+the active governance or tool policy would have required it anyway.
+
 Alternatives considered:
 
 - Ask System 1 to emit a JSON preamble. This is easier to parse but less aligned
   with Alan's action-oriented machine model.
 - Let System 1 answer and append a note that deeper reasoning is needed. This
   leaks low-confidence output and weakens the user experience.
+- Treat runtime acceptance as human approval. This would preserve safety but
+  would add unnecessary interruptions and undercut autonomous operation.
 
 ### Decision: Routing metadata is visible but bounded
 

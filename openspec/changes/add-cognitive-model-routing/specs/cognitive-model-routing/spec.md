@@ -80,6 +80,9 @@ Alan SHALL provide an internal-only escalation action that lets System 1 request
 a System 2 rerun with a bounded reason and needed-context summary. Alan SHALL
 withhold side-effecting tools from unaccepted System 1 attempts until runtime
 accepts the System 1 route for execution or routes the turn to System 2.
+Runtime acceptance of a System 1 route is an internal commit point and SHALL NOT
+itself require user confirmation unless the active governance or tool policy
+requires confirmation.
 
 #### Scenario: System 1 escalates
 - **WHEN** System 1 emits the internal escalation action
@@ -104,6 +107,13 @@ accepts the System 1 route for execution or routes the turn to System 2.
 - **THEN** runtime provides the read-only tool results to System 2 as observed
   context instead of discarding them
 
+#### Scenario: Speculative System 1 thinking and observation is allowed
+- **WHEN** runtime starts an automatic System 1 attempt
+- **THEN** System 1 can perform model-internal reasoning, calculation, planning,
+  unaccepted draft generation, and read-only tool use before route acceptance
+- **AND** runtime does not treat that speculative thinking or read-only
+  observation as an external side effect
+
 #### Scenario: Side-effecting tool is blocked before System 1 acceptance
 - **WHEN** runtime starts an automatic System 1 attempt
 - **AND** System 1 requests a side-effecting tool before runtime has accepted
@@ -112,6 +122,14 @@ accepts the System 1 route for execution or routes the turn to System 2.
   System 1 phase
 - **AND** runtime routes to System 2 or defers the side effect until the System
   1 route is accepted
+
+#### Scenario: Autonomous System 1 route can be accepted without user yield
+- **WHEN** runtime starts an automatic System 1 attempt under governance that
+  allows autonomous execution
+- **AND** no deterministic gate or policy rule requires System 2 or user
+  confirmation
+- **THEN** runtime can accept the System 1 route for execution without emitting
+  a user-confirmation yield
 
 #### Scenario: Accepted side effect already happened before escalation
 - **WHEN** a side-effecting tool has already completed after runtime accepted
