@@ -11,7 +11,7 @@
 - [ ] 2.2 Implement `CognitiveRouter` precedence for turn-scoped override, session-scoped override, deterministic safety gates, eligible System 1 override, config default, and System 1 fallback route.
 - [ ] 2.3 Compose selected cognitive model binding with existing request-control resolution before provider dispatch.
 - [ ] 2.4 Keep provider adapters unaware of cognitive routing decisions beyond the normalized generation request.
-- [ ] 2.5 Partition, clear, or replay provider-native continuation when cognitive routing switches provider/model bindings.
+- [ ] 2.5 Partition, clear, or replay provider-native continuation when cognitive routing switches provider/model bindings, prompt fingerprints, tool fingerprints, or other continuation-affecting settings.
 
 ## 3. System 1 Escalation
 
@@ -34,7 +34,7 @@
 ## 5. Verification
 
 - [ ] 5.1 Add unit tests for cognition config parsing, fallback behavior, invalid model binding diagnostics, turn-over-session override precedence, and gated System 1 override rejection/supersession.
-- [ ] 5.2 Add runtime tests for deterministic System 2 gates, configured default routing, System 1 fallback route, System 1 escalation, fast-draft suppression, speculative read-only System 1 observation, unaccepted System 1 side-effect gating, autonomous System 1 acceptance without user yield, accepted side-effect continuation, and continuation partitioning.
+- [ ] 5.2 Add runtime tests for deterministic System 2 gates, configured default routing, System 1 fallback route, System 1 escalation, fast-draft suppression, speculative read-only System 1 observation, unaccepted System 1 side-effect gating, autonomous System 1 acceptance without user yield, accepted side-effect continuation, and prompt/tool continuation partitioning.
 - [ ] 5.3 Add request-control tests proving selected cognitive model binding effort composes with existing turn/session/model precedence.
 - [ ] 5.4 Add daemon/API tests for routing metadata and override validation.
 - [ ] 5.5 Run `cargo test --workspace` or the narrower documented Rust test suites covering runtime and daemon routing behavior.

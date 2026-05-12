@@ -26,10 +26,11 @@
 - [ ] 4.2 Ensure prompt-facing memory surfaces do not duplicate full ledger content.
 - [ ] 4.3 Ensure prompt-facing memory surfaces exclude reverted blocks and never reintroduce reverted content from ledger records.
 - [ ] 4.4 Preserve legacy memory entries that do not have reversible ledger metadata.
+- [ ] 4.5 Update the built-in memory skill and session-end prompt guidance so stable, staged, inbox, daily-note, and ledger writes go through the runtime writer or a compatibility bridge instead of direct file mutation.
 
 ## 5. Verification
 
-- [ ] 5.1 Add unit tests for write-plan normalization, evidence validation, provenance persistence, disabled-memory write suppression, stable and staged secret redaction, dedupe, path rejection, and confidence downgrades.
+- [ ] 5.1 Add unit tests for write-plan normalization, evidence validation, provenance persistence, disabled-memory write suppression, stable and staged secret redaction, dedupe, path rejection, skill/prompt compatibility routing, and confidence downgrades.
 - [ ] 5.2 Add storage tests for ledger creation, target updates, successful revert, already-reverted writes, reverted prompt-surface exclusion, and manual-resolution-required failures.
 - [ ] 5.3 Add daemon and CLI integration tests for recent, show, revert, session scoping, authorized workspace scoping, unscoped request rejection, and unauthorized workspace-scope rejection.
 - [ ] 5.4 Run `cargo test --workspace` or the narrower documented Rust test suites covering runtime and daemon memory behavior.

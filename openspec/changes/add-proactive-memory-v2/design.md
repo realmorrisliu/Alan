@@ -179,6 +179,10 @@ permission expansion.
 - Skills may suggest candidate observations or explain memory behavior, but they
   must not directly mutate stable memory, staged memory, inbox entries, daily
   notes, or ledger files outside the runtime writer.
+- The built-in memory skill and any session-end prompt guidance must be updated
+  before this runtime writer is enabled so existing wrap-up flows either call
+  the runtime writer or pass through a compatibility bridge that creates ledger
+  entries, applies redaction, and preserves revert semantics.
 - Daemon and CLI APIs expose recent/show/revert review surfaces with explicit
   workspace or session scope; they do not choose memory targets without runtime
   validation.

@@ -181,15 +181,25 @@ across System 1 and System 2.
 
 #### Scenario: Compatible binding reuses native continuation
 - **WHEN** the selected cognitive model binding has the same provider family,
-  credential scope, model, and continuation-affecting settings as the current
+  credential scope, model, cognitive-system prompt fingerprint, tool definition
+  fingerprint, and continuation-affecting settings as the current
   provider-native continuation state
 - **THEN** runtime can reuse that provider-native continuation state
 
 #### Scenario: Incompatible binding clears native continuation
 - **WHEN** cognitive routing selects a model binding with a different provider
-  family, credential scope, model, or continuation-affecting setting
+  family, credential scope, model, cognitive-system prompt fingerprint, tool
+  definition fingerprint, or continuation-affecting setting
 - **THEN** runtime clears or isolates provider-native continuation and projects
   the accepted tape into the selected provider request instead
+
+#### Scenario: System 1-only tools do not leak to System 2
+- **WHEN** a System 1 attempt used provider-native continuation with
+  System-1-only prompt text or tools such as the internal escalation action
+- **AND** the turn routes or escalates to System 2 with a different prompt or
+  tool fingerprint
+- **THEN** runtime does not reuse the System 1 provider-native continuation for
+  the System 2 request
 
 #### Scenario: Tape continuation remains authoritative
 - **WHEN** provider-native continuation cannot be reused after a cognitive

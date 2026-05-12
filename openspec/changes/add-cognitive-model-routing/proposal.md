@@ -22,6 +22,9 @@ routing.
   daemon/client DTOs.
 - Preserve existing provider adapter boundaries: adapters only project the
   normalized request they receive and do not decide routing.
+- Partition provider-native continuation by compatible prompt and tool state so
+  System 1-only escalation tools or speculative prompt context cannot leak into
+  System 2.
 - Keep first implementation single-runtime and single-active-turn; this is not
   parallel multi-agent execution.
 
@@ -52,5 +55,5 @@ routing.
 - Affected daemon/clients: session create/fork/submit DTOs and read/list
   responses expose selected cognitive system and routing reason.
 - Affected tests: routing precedence, deterministic gates, System 1 escalation,
-  side-effect gating, hidden fast-draft suppression, metadata persistence, and
-  provider-boundary contract tests.
+  side-effect gating, hidden fast-draft suppression, metadata persistence,
+  prompt/tool continuation partitioning, and provider-boundary contract tests.

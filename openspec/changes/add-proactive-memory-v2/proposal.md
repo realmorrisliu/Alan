@@ -49,6 +49,9 @@ keeping every write inspectable and reversible.
 - Affected runtime modules: `memory_promotion`, `memory_flush`,
   `memory_recall`, prompt assets, session/rollout metadata, and memory layout
   helpers.
+- Affected built-in skills: the memory skill and session-end guidance must route
+  stable, staged, inbox, daily-note, and ledger writes through the runtime writer
+  or a compatibility bridge once the writer exists.
 - Affected CLI/daemon areas: memory inspection commands and daemon memory
   endpoints.
 - Affected storage: `.alan/memory/` gains ledger/recent-write metadata while

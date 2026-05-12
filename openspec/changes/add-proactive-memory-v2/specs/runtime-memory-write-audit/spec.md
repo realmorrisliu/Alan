@@ -52,6 +52,16 @@ the authority for proactive memory writes.
   materially updating it
 - **THEN** runtime avoids adding a duplicate stable memory entry
 
+#### Scenario: Built-in memory skill uses runtime writer
+- **WHEN** built-in memory skill guidance or session-end prompt guidance causes
+  a stable, staged, inbox, daily-note, or ledger memory write after the runtime
+  writer is enabled
+- **THEN** the write goes through the runtime writer or a compatibility bridge
+  that creates ledger metadata, applies validation, and preserves revert
+  semantics
+- **AND** direct file mutation by the skill is not the authority for the memory
+  write
+
 ### Requirement: Durable Memory Write Ledger
 Alan SHALL record every stable memory mutation in a durable ledger entry with a
 stable `memory_write_id`, target, provenance, confidence, rationale, source

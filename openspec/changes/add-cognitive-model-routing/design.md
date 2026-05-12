@@ -169,13 +169,17 @@ model bindings.
 
 Runtime must partition, clear, or replay provider-native continuation when the
 selected cognitive binding changes provider family, credential scope, model, or
-other continuation-affecting settings. Reuse is allowed only inside a proven
-compatible binding boundary.
+other continuation-affecting settings. The compatibility boundary includes the
+cognitive-system prompt fingerprint and tool definition fingerprint, because
+System 1 may receive internal-only tools or speculative instructions that System
+2 must not inherit through provider-native state. Reuse is allowed only inside a
+proven compatible binding boundary.
 
 Alternatives considered:
 
 - Assume all configured System 1/System 2 models can share provider continuation.
-  This is too provider-specific and risks invalid request chains.
+  This is too provider-specific and risks invalid request chains or prompt/tool
+  leakage across cognitive phases.
 - Disable provider-native continuation whenever cognition is enabled. This is
   safe but gives up useful stateful-provider efficiency.
 
