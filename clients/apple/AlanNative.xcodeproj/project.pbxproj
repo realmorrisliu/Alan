@@ -62,6 +62,7 @@
 		000000000000000000000035 /* ConsoleSupportViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000135 /* ConsoleSupportViews.swift */; };
 		000000000000000000000036 /* ConsoleAdaptiveColor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000136 /* ConsoleAdaptiveColor.swift */; };
 		000000000000000000000037 /* ShellHostControlCommandHandling.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000137 /* ShellHostControlCommandHandling.swift */; };
+		000000000000000000000038 /* ShellSidebarSwipeMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000138 /* ShellSidebarSwipeMonitor.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -121,6 +122,7 @@
 		000000000000000000000135 /* ConsoleSupportViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/Console/ConsoleSupportViews.swift; sourceTree = "<group>"; };
 		000000000000000000000136 /* ConsoleAdaptiveColor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Support/ConsoleAdaptiveColor.swift; sourceTree = "<group>"; };
 		000000000000000000000137 /* ShellHostControlCommandHandling.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Controllers/Shell/ShellHostControlCommandHandling.swift; sourceTree = "<group>"; };
+		000000000000000000000138 /* ShellSidebarSwipeMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Support/ShellSidebarSwipeMonitor.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -195,6 +197,7 @@
 			children = (
 				000000000000000000000118 /* ShellDesignTokens.swift */,
 				000000000000000000000136 /* ConsoleAdaptiveColor.swift */,
+				000000000000000000000138 /* ShellSidebarSwipeMonitor.swift */,
 				000000000000000000000119 /* ShellWindowPlacement.swift */,
 				00000000000000000000011D /* ShellVoiceCommandController.swift */,
 			);
@@ -453,6 +456,7 @@
 				000000000000000000000035 /* ConsoleSupportViews.swift in Sources */,
 				000000000000000000000036 /* ConsoleAdaptiveColor.swift in Sources */,
 				000000000000000000000037 /* ShellHostControlCommandHandling.swift in Sources */,
+				000000000000000000000038 /* ShellSidebarSwipeMonitor.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
