@@ -10,11 +10,26 @@ struct MacShellRootView: View {
         self.host = host
     }
 
+    private func presentCommandInput() {
+        withAnimation(.easeOut(duration: 0.18)) {
+            isCommandTabPresented = true
+        }
+    }
+
+    private func dismissCommandInput() {
+        withAnimation(.easeOut(duration: 0.18)) {
+            isCommandTabPresented = false
+        }
+        DispatchQueue.main.async {
+            host.refocusSelectedTerminalPane()
+        }
+    }
+
     var body: some View {
         ZStack {
             ShellSpaceKeyboardShortcuts(host: host)
 
-            ShellPalette.canvas
+            ShellMaterialBackgroundView(.windowBackdrop)
                 .ignoresSafeArea()
 
             HStack(spacing: 0) {
@@ -22,30 +37,21 @@ struct MacShellRootView: View {
                     host: host,
                     chromeMetrics: windowChromeMetrics
                 ) {
-                    withAnimation(.easeOut(duration: 0.18)) {
-                        isCommandTabPresented = true
-                    }
+                    presentCommandInput()
                 }
                 .frame(width: 286)
 
                 ShellWorkspaceView(host: host)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .ignoresSafeArea(edges: .top)
-                    .background {
-                        ShellMaterialBackgroundView()
-                            .ignoresSafeArea(edges: .top)
-                    }
             }
             .frame(minWidth: 1260, minHeight: 800)
-            .background(ShellPalette.window)
 
             if isCommandTabPresented {
-                Color.black.opacity(0.16)
+                ShellPalette.overlayScrim
                     .ignoresSafeArea()
                     .onTapGesture {
-                        withAnimation(.easeOut(duration: 0.18)) {
-                            isCommandTabPresented = false
-                        }
+                        dismissCommandInput()
                     }
 
                 ShellCommandTabView(
@@ -57,6 +63,9 @@ struct MacShellRootView: View {
             }
         }
         .animation(.easeOut(duration: 0.18), value: isCommandTabPresented)
+        .onChange(of: host.commandInputRequestID) { _, _ in
+            presentCommandInput()
+        }
         .background(ShellWindowPlacementView(metrics: $windowChromeMetrics))
     }
 }

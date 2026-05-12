@@ -56,6 +56,7 @@ final class TerminalRuntimeRegistry: ObservableObject {
         isSelected: Bool,
         activationDelegate: TerminalHostActivationDelegate?,
         onWorkspaceCommand: ((ShellWorkspaceCommand) -> Void)?,
+        onCommandInput: (() -> Void)?,
         onRuntimeUpdate: @escaping (TerminalHostRuntimeSnapshot) -> Void,
         onMetadataUpdate: @escaping (TerminalPaneMetadataSnapshot) -> Void
     ) -> AlanTerminalHostNSView {
@@ -86,6 +87,7 @@ final class TerminalRuntimeRegistry: ObservableObject {
             surfaceHandle: surfaceHandle,
             activationDelegate: activationDelegate,
             onWorkspaceCommand: onWorkspaceCommand,
+            onCommandInput: onCommandInput,
             onRuntimeUpdate: onRuntimeUpdate,
             onMetadataUpdate: onMetadataUpdate
         )
@@ -154,6 +156,10 @@ final class TerminalRuntimeRegistry: ObservableObject {
 
     func dismissFindInteraction(for paneID: String, refocusTerminal: Bool = true) {
         hostViewsByPaneID[paneID]?.dismissFindInteraction(refocusTerminal: refocusTerminal)
+    }
+
+    func requestFocus(for paneID: String) {
+        hostViewsByPaneID[paneID]?.focusTerminal()
     }
 
     var registeredPaneIDs: Set<String> {

@@ -138,6 +138,12 @@ enum ShellPalette {
         dark: (0.125, 0.140, 0.170),
         darkAlpha: 0.64
     )
+    static let overlayScrim = Color.shellAdaptive(
+        light: (0.10, 0.11, 0.15),
+        lightAlpha: 0.16,
+        dark: (0.0, 0.0, 0.0),
+        darkAlpha: 0.34
+    )
     static let materialScrim = Color.shellAdaptive(
         light: (0.922, 0.924, 0.953),
         lightAlpha: 0.35,
@@ -169,24 +175,124 @@ enum ShellRadii {
     static let overlay: CGFloat = 12
 }
 
-private struct SidebarMaterialView: NSViewRepresentable {
-    func makeNSView(context: Context) -> NSVisualEffectView {
-        let view = NSVisualEffectView()
-        view.material = .sidebar
-        view.blendingMode = .behindWindow
-        view.state = .followsWindowActiveState
-        return view
+enum ShellMaterialRole {
+    case windowBackdrop
+    case sidebarGlass
+    case workspaceBackdrop
+    case terminalSurround
+    case terminalChrome
+    case terminalChromeSelected
+    case floatingOverlay
+    case floatingInput
+    case controlGlass
+    case controlGlassStrong
+    case controlGlassHover
+    case controlGlassSelected
+    case panel
+    case panelSoft
+
+    var visualEffectMaterial: NSVisualEffectView.Material? {
+        switch self {
+        case .windowBackdrop:
+            return .windowBackground
+        case .sidebarGlass:
+            return .sidebar
+        case .workspaceBackdrop:
+            return .contentBackground
+        case .floatingOverlay, .floatingInput:
+            return .popover
+        case .terminalSurround,
+             .terminalChrome,
+             .terminalChromeSelected,
+             .controlGlass,
+             .controlGlassStrong,
+             .controlGlassHover,
+             .controlGlassSelected,
+             .panel,
+             .panelSoft:
+            return nil
+        }
     }
 
-    func updateNSView(_ nsView: NSVisualEffectView, context: Context) {}
-}
+    var blendingMode: NSVisualEffectView.BlendingMode {
+        switch self {
+        case .windowBackdrop, .sidebarGlass:
+            return .behindWindow
+        case .workspaceBackdrop,
+             .floatingOverlay,
+             .floatingInput,
+             .terminalSurround,
+             .terminalChrome,
+             .terminalChromeSelected,
+             .controlGlass,
+             .controlGlassStrong,
+             .controlGlassHover,
+             .controlGlassSelected,
+             .panel,
+             .panelSoft:
+            return .withinWindow
+        }
+    }
 
-struct ShellMaterialBackgroundView: View {
-    var body: some View {
-        ZStack {
-            SidebarMaterialView()
-            ShellPalette.materialScrim
-            LinearGradient(
+    var fill: Color {
+        switch self {
+        case .windowBackdrop:
+            return ShellPalette.window
+        case .sidebarGlass:
+            return ShellPalette.materialScrim
+        case .workspaceBackdrop:
+            return ShellPalette.workspace.opacity(0.74)
+        case .terminalSurround:
+            return ShellPalette.terminal
+        case .terminalChrome:
+            return ShellPalette.terminalSoft.opacity(0.34)
+        case .terminalChromeSelected:
+            return ShellPalette.terminalSoft.opacity(0.52)
+        case .floatingOverlay:
+            return ShellPalette.window.opacity(0.86)
+        case .floatingInput:
+            return ShellPalette.panel.opacity(0.92)
+        case .controlGlass:
+            return ShellPalette.sidebarControl
+        case .controlGlassStrong:
+            return ShellPalette.sidebarControlStrong
+        case .controlGlassHover:
+            return ShellPalette.sidebarHover
+        case .controlGlassSelected:
+            return ShellPalette.sidebarSelection
+        case .panel:
+            return ShellPalette.panel
+        case .panelSoft:
+            return ShellPalette.panelSoft
+        }
+    }
+
+    var stroke: Color {
+        switch self {
+        case .terminalSurround:
+            return ShellPalette.line.opacity(0.18)
+        case .floatingOverlay:
+            return ShellPalette.line.opacity(0.42)
+        case .floatingInput:
+            return ShellPalette.line.opacity(0.32)
+        case .controlGlass,
+             .controlGlassStrong,
+             .controlGlassHover,
+             .controlGlassSelected:
+            return ShellPalette.line.opacity(0.18)
+        case .terminalChrome, .terminalChromeSelected:
+            return ShellPalette.line.opacity(0.16)
+        case .panel, .panelSoft:
+            return ShellPalette.line.opacity(0.22)
+        case .windowBackdrop, .sidebarGlass, .workspaceBackdrop:
+            return ShellPalette.line.opacity(0.0)
+        }
+    }
+
+    var gradientOverlay: LinearGradient? {
+        switch self {
+        case .windowBackdrop, .sidebarGlass, .workspaceBackdrop:
+            return LinearGradient(
                 colors: [
                     ShellPalette.materialTopWash,
                     ShellPalette.materialBottomShade,
@@ -194,7 +300,184 @@ struct ShellMaterialBackgroundView: View {
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
             )
+        case .floatingOverlay, .floatingInput:
+            return LinearGradient(
+                colors: [
+                    Color.white.opacity(0.10),
+                    ShellPalette.materialBottomShade,
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+        case .terminalSurround,
+             .terminalChrome,
+             .terminalChromeSelected,
+             .controlGlass,
+             .controlGlassStrong,
+             .controlGlassHover,
+             .controlGlassSelected,
+             .panel,
+             .panelSoft:
+            return nil
         }
+    }
+
+    func resolvedFill(reduceTransparency: Bool, increasedContrast: Bool) -> Color {
+        if reduceTransparency {
+            switch self {
+            case .windowBackdrop, .sidebarGlass, .workspaceBackdrop:
+                return ShellPalette.window
+            case .floatingOverlay:
+                return ShellPalette.window.opacity(increasedContrast ? 0.98 : 0.94)
+            case .floatingInput, .panel, .panelSoft:
+                return ShellPalette.panel
+            case .controlGlass, .controlGlassHover:
+                return increasedContrast ? ShellPalette.sidebarControlStrong : ShellPalette.panelSoft
+            case .controlGlassStrong, .controlGlassSelected:
+                return ShellPalette.sidebarControlStrong
+            case .terminalSurround:
+                return ShellPalette.terminal
+            case .terminalChrome:
+                return ShellPalette.terminalSoft.opacity(increasedContrast ? 0.50 : 0.40)
+            case .terminalChromeSelected:
+                return ShellPalette.terminalSoft.opacity(increasedContrast ? 0.68 : 0.56)
+            }
+        }
+
+        if increasedContrast {
+            switch self {
+            case .floatingOverlay:
+                return ShellPalette.window.opacity(0.94)
+            case .floatingInput, .panelSoft:
+                return ShellPalette.panel
+            case .controlGlass, .controlGlassHover:
+                return ShellPalette.sidebarControlStrong
+            case .controlGlassSelected:
+                return ShellPalette.sidebarControlStrong
+            case .terminalChrome:
+                return ShellPalette.terminalSoft.opacity(0.48)
+            case .terminalChromeSelected:
+                return ShellPalette.terminalSoft.opacity(0.66)
+            case .windowBackdrop,
+                 .sidebarGlass,
+                 .workspaceBackdrop,
+                 .terminalSurround,
+                 .controlGlassStrong,
+                 .panel:
+                break
+            }
+        }
+
+        return fill
+    }
+
+    func resolvedStroke(increasedContrast: Bool) -> Color {
+        guard increasedContrast else {
+            return stroke
+        }
+
+        switch self {
+        case .windowBackdrop, .sidebarGlass, .workspaceBackdrop:
+            return ShellPalette.line.opacity(0.0)
+        case .terminalSurround,
+             .terminalChrome,
+             .terminalChromeSelected,
+             .controlGlass,
+             .controlGlassStrong,
+             .controlGlassHover,
+             .controlGlassSelected,
+             .panel,
+             .panelSoft:
+            return ShellPalette.line.opacity(0.34)
+        case .floatingOverlay, .floatingInput:
+            return ShellPalette.line.opacity(0.52)
+        }
+    }
+}
+
+private struct ShellVisualEffectView: NSViewRepresentable {
+    let role: ShellMaterialRole
+
+    func makeNSView(context: Context) -> NSVisualEffectView {
+        let view = NSVisualEffectView()
+        view.material = role.visualEffectMaterial ?? .contentBackground
+        view.blendingMode = role.blendingMode
+        view.state = .followsWindowActiveState
+        return view
+    }
+
+    func updateNSView(_ nsView: NSVisualEffectView, context: Context) {
+        nsView.material = role.visualEffectMaterial ?? .contentBackground
+        nsView.blendingMode = role.blendingMode
+    }
+}
+
+struct ShellMaterialBackgroundView: View {
+    let role: ShellMaterialRole
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+
+    init(_ role: ShellMaterialRole = .sidebarGlass) {
+        self.role = role
+    }
+
+    var body: some View {
+        ZStack {
+            if role.visualEffectMaterial != nil && !reduceTransparency {
+                ShellVisualEffectView(role: role)
+            }
+            role.resolvedFill(
+                reduceTransparency: reduceTransparency,
+                increasedContrast: NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast
+            )
+            if !reduceTransparency, let gradient = role.gradientOverlay {
+                gradient
+            }
+        }
+    }
+}
+
+struct ShellMaterialTintView: View {
+    let role: ShellMaterialRole
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+
+    init(_ role: ShellMaterialRole) {
+        self.role = role
+    }
+
+    var body: some View {
+        ZStack {
+            role.resolvedFill(
+                reduceTransparency: reduceTransparency,
+                increasedContrast: NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast
+            )
+            if !reduceTransparency, let gradient = role.gradientOverlay {
+                gradient
+            }
+        }
+    }
+}
+
+struct ShellMaterialShape<MaterialShape: InsettableShape>: View {
+    let role: ShellMaterialRole
+    let shape: MaterialShape
+    var showsStroke = false
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+
+    var body: some View {
+        let increasedContrast = NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast
+
+        shape
+            .fill(
+                role.resolvedFill(
+                    reduceTransparency: reduceTransparency,
+                    increasedContrast: increasedContrast
+                )
+            )
+            .overlay {
+                if showsStroke || increasedContrast {
+                    shape.stroke(role.resolvedStroke(increasedContrast: increasedContrast), lineWidth: 1)
+                }
+            }
     }
 }
 #endif

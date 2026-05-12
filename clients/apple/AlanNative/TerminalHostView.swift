@@ -19,6 +19,7 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
     private var isSelected = false
     private weak var activationDelegate: TerminalHostActivationDelegate?
     private var workspaceCommandHandler: ((ShellWorkspaceCommand) -> Void)?
+    private var commandInputHandler: (() -> Void)?
     private var runtimeObserver: ((TerminalHostRuntimeSnapshot) -> Void)?
     private var metadataObserver: ((TerminalPaneMetadataSnapshot) -> Void)?
     private var rendererSnapshot: TerminalRendererSnapshot = .placeholder
@@ -132,6 +133,7 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
         surfaceHandle: AlanTerminalSurfaceHandle?,
         activationDelegate: TerminalHostActivationDelegate?,
         onWorkspaceCommand: ((ShellWorkspaceCommand) -> Void)?,
+        onCommandInput: (() -> Void)?,
         onRuntimeUpdate: @escaping (TerminalHostRuntimeSnapshot) -> Void,
         onMetadataUpdate: @escaping (TerminalPaneMetadataSnapshot) -> Void
     ) {
@@ -144,6 +146,7 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
         surfaceController.bind(surfaceHandle: surfaceHandle, paneID: pane?.paneID)
         self.activationDelegate = activationDelegate
         workspaceCommandHandler = onWorkspaceCommand
+        commandInputHandler = onCommandInput
         runtimeObserver = onRuntimeUpdate
         metadataObserver = onMetadataUpdate
 
@@ -378,6 +381,10 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
         window?.makeFirstResponder(self)
         synchronizeLiveHost()
         publishRuntimeSnapshot()
+    }
+
+    func focusTerminal() {
+        requestTerminalFocus()
     }
 
     private func activateTerminalHostForMouseEvent() {
@@ -733,6 +740,9 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
 #endif
 
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if routeCommandInputKeyIfNeeded(event) {
+            return true
+        }
         if routeWorkspaceKeyCommandIfNeeded(event) {
             return true
         }
@@ -761,6 +771,9 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
     }
 
     override func keyDown(with event: NSEvent) {
+        if routeCommandInputKeyIfNeeded(event) {
+            return
+        }
         if routeWorkspaceKeyCommandIfNeeded(event) {
             return
         }
@@ -999,6 +1012,19 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
             return false
         }
         workspaceCommandHandler?(command)
+        return true
+    }
+
+    private func routeCommandInputKeyIfNeeded(_ event: NSEvent) -> Bool {
+        guard event.type == .keyDown, !event.isARepeat else { return false }
+
+        let flags = event.modifierFlags
+            .intersection(.deviceIndependentFlagsMask)
+            .subtracting([.capsLock, .numericPad, .function])
+        guard flags == [.command] else { return false }
+        guard event.charactersIgnoringModifiers?.lowercased() == "p" else { return false }
+
+        commandInputHandler?()
         return true
     }
 

@@ -9,7 +9,7 @@
 - voice controller affordance,
 - rows grouped under visible sections.
 
-The user direction is narrower: `Command-K` should summon a beautiful Liquid
+The user direction is narrower: the command shortcut should summon a beautiful Liquid
 Glass input box and should not show the candidate actions underneath. That makes
 this change mostly a surface simplification and interaction reset, not a command
 vocabulary expansion.
@@ -18,7 +18,7 @@ vocabulary expansion.
 
 **Goals:**
 
-- Make `Command-K` feel like a native, premium floating input rather than a
+- Make `Command-P` feel like a native, premium floating input rather than a
   dashboard-like command palette.
 - Remove default candidate/action/routing/attention lists from the overlay.
 - Keep keyboard and focus behavior crisp: open, type, submit, dismiss, restore
@@ -31,7 +31,7 @@ vocabulary expansion.
   this change.
 - Do not expand command vocabulary beyond the existing workspace actions needed
   for typed submission.
-- Do not add voice input to `Command-K`; voice MVP work owns voice interaction.
+- Do not add voice input to the command input; voice MVP work owns voice interaction.
 - Do not change terminal `Command-F` Find behavior.
 
 ## Decisions
