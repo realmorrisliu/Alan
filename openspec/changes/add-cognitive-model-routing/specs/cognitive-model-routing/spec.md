@@ -72,7 +72,9 @@ System 1 routing intent.
 
 ### Requirement: System 1 Self-Escalation
 Alan SHALL provide an internal-only escalation action that lets System 1 request
-a System 2 rerun with a bounded reason and needed-context summary.
+a System 2 rerun with a bounded reason and needed-context summary. Alan SHALL
+withhold side-effecting tools from unaccepted System 1 attempts until runtime
+accepts the System 1 route for execution or routes the turn to System 2.
 
 #### Scenario: System 1 escalates
 - **WHEN** System 1 emits the internal escalation action
@@ -97,9 +99,18 @@ a System 2 rerun with a bounded reason and needed-context summary.
 - **THEN** runtime provides the read-only tool results to System 2 as observed
   context instead of discarding them
 
-#### Scenario: Side effect already happened before escalation
-- **WHEN** a side-effecting tool has already completed before escalation is
-  requested or forced
+#### Scenario: Side-effecting tool is blocked before System 1 acceptance
+- **WHEN** runtime starts an automatic System 1 attempt
+- **AND** System 1 requests a side-effecting tool before runtime has accepted
+  the System 1 route for execution
+- **THEN** runtime does not execute the side-effecting tool in the unaccepted
+  System 1 phase
+- **AND** runtime routes to System 2 or defers the side effect until the System
+  1 route is accepted
+
+#### Scenario: Accepted side effect already happened before escalation
+- **WHEN** a side-effecting tool has already completed after runtime accepted
+  the System 1 execution phase or after an external client changed state
 - **THEN** runtime treats the side effect as part of the current session state
   and System 2 continues from the observed post-side-effect state rather than
   replaying the original task as if no side effect occurred

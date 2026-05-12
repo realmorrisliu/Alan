@@ -125,13 +125,14 @@ Alternatives considered:
   interactions.
 - Never consolidate automatically. This allows inbox and daily notes to drift.
 
-### Decision: Reject or redact sensitive material before stable writes
+### Decision: Reject or redact sensitive material before durable memory persistence
 
 The memory writer must treat API keys, access tokens, passwords, private
 credentials, and secret-like values as unsafe memory material. A useful fact may
 still be recorded after redaction, for example "the project uses a GitHub token
 from the host secret store," but plaintext secrets must not be written to stable
-memory or ledger evidence.
+memory, staged observations, inbox entries, daily notes, consolidation queues,
+or ledger evidence.
 
 Alternatives considered:
 
@@ -175,7 +176,7 @@ Alternatives considered:
   evidence, and rationale, not private reasoning traces.
 - Proactive writes capture secrets -> Mitigate by scanning candidates and
   evidence for secret-like material and rejecting or redacting before durable
-  write.
+  stable, staged, inbox, daily-note, or ledger persistence.
 
 ## Migration Plan
 

@@ -93,14 +93,22 @@ reasoning.
   bounded excerpt or summary sufficient for later review
 
 ### Requirement: Sensitive Data Memory Guardrail
-Alan SHALL reject or redact stable memory candidates and ledger evidence that
-contain secret-like or credential-like material.
+Alan SHALL reject or redact memory candidates and evidence that contain
+secret-like or credential-like material before any stable, staged, inbox,
+daily-note, consolidation, or ledger persistence.
 
 #### Scenario: Secret-like candidate is rejected
 - **WHEN** a memory candidate observation contains an API key, token, password,
   private credential, or secret-like value
-- **THEN** runtime rejects the stable memory write or rewrites it into a
-  redacted non-secret observation before durable persistence
+- **THEN** runtime rejects the memory write or rewrites it into a redacted
+  non-secret observation before durable persistence
+
+#### Scenario: Secret-like staged candidate is rejected
+- **WHEN** a memory candidate or its evidence contains secret-like material
+- **AND** the candidate would otherwise be staged for inbox, daily-note, or
+  consolidation review rather than promoted to stable memory
+- **THEN** runtime rejects the staged write or rewrites it into redacted
+  non-secret content before writing any durable staged memory
 
 #### Scenario: Secret-like evidence is redacted
 - **WHEN** evidence for a memory write contains secret-like material

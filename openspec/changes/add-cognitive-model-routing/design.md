@@ -74,7 +74,7 @@ Alternatives considered:
 
 ### Decision: Use safety-first routing gates plus System 1 self-escalation
 
-Routing has three layers:
+Routing has four layers:
 
 1. explicit System 2 override, which can always choose the deeper route,
 2. deterministic gates for known high-risk or high-complexity cases,
@@ -107,10 +107,12 @@ For V1, System 1's auto route should behave like human fast cognition in a
 controlled environment: it can form an impression, gather read-only context, or
 ask to escalate, but it should not perform irreversible external side effects
 before System 2 has taken over or the runtime has accepted the System 1 plan.
-If a read-only tool was used before escalation, System 2 receives those results
-as part of the rerun context. If any side effect already happened, System 2 must
-continue from the observed post-side-effect state rather than replaying the
-original task as if nothing changed.
+Runtime must therefore withhold side-effecting tools from the unaccepted System
+1 phase. If a read-only tool was used before escalation, System 2 receives
+those results as part of the rerun context. If a side effect already happened
+after runtime accepted a System 1 execution phase, or due to an external client
+state change, System 2 must continue from the observed post-side-effect state
+rather than replaying the original task as if nothing changed.
 
 Alternatives considered:
 
@@ -172,6 +174,9 @@ Alternatives considered:
 - Model binding switching complicates provider state -> Mitigate by resolving
   the binding before constructing the request and by partitioning provider
   continuation by compatible provider/model/credential boundaries.
+- System 1 mutates workspace before escalation -> Mitigate by withholding
+  side-effecting tools until runtime accepts the fast route or routes to System
+  2.
 - Metadata becomes noisy -> Mitigate with compact routing reasons and stable
   enum fields.
 - Config ambiguity -> Mitigate by keeping `connection_profile` as the fallback

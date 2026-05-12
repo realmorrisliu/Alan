@@ -16,6 +16,8 @@ routing.
   dispatch, with safety gates able to supersede forced System 1 intent.
 - Add an internal-only escalation action that lets the System 1 model request a
   System 2 rerun without exposing the fast draft to the user.
+- Gate side-effecting tools during unaccepted System 1 attempts so workspace
+  mutation waits for accepted fast execution or System 2 routing.
 - Record routing decisions in turn/session metadata, rollout entries, logs, and
   daemon/client DTOs.
 - Preserve existing provider adapter boundaries: adapters only project the
@@ -50,5 +52,5 @@ routing.
 - Affected daemon/clients: session create/fork/submit DTOs and read/list
   responses expose selected cognitive system and routing reason.
 - Affected tests: routing precedence, deterministic gates, System 1 escalation,
-  hidden fast-draft suppression, metadata persistence, and provider-boundary
-  contract tests.
+  side-effect gating, hidden fast-draft suppression, metadata persistence, and
+  provider-boundary contract tests.

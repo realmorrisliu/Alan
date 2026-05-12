@@ -19,7 +19,8 @@ keeping every write inspectable and reversible.
 - Extend memory validation so invalid, over-broad, duplicate, or unsafe write
   plans are rejected or downgraded before they mutate stable memory.
 - Add sensitive-data guardrails so secrets, credentials, and private tokens are
-  not written into stable memory or ledger evidence in plaintext.
+  not written into stable memory, staged/inbox/daily memory, or ledger evidence
+  in plaintext.
 - Add consolidation rules so ambiguous or conflicting observations can remain
   staged until a stronger consolidation pass resolves them.
 - Keep memory writes file-backed, auditable, and compatible with the existing
