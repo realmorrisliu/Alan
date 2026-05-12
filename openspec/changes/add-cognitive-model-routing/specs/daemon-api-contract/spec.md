@@ -1,13 +1,21 @@
 ## ADDED Requirements
 
 ### Requirement: Cognitive Routing API Metadata
-The daemon SHALL expose cognitive routing metadata in session, turn, read, fork,
-and reconnect surfaces where request-control metadata is already reported.
+The daemon SHALL expose cognitive routing metadata in session create, session
+list, session read, turn, fork, and reconnect surfaces where request-control
+metadata is already reported.
 
 #### Scenario: Session response includes routing metadata
 - **WHEN** a session is created with cognitive routing enabled
 - **THEN** the daemon response includes the configured routing mode and the
   active cognitive model binding metadata available at startup
+
+#### Scenario: Session list includes routing metadata
+- **WHEN** a client lists sessions after cognitive routing has selected or
+  configured cognitive model binding metadata for a session
+- **THEN** each session list item includes the selected cognitive system,
+  routing source, model binding id, provider, model, effective reasoning effort,
+  and bounded routing reason when available
 
 #### Scenario: Turn read includes selected system
 - **WHEN** a client reads session history or reconnect state after a routed turn

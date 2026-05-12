@@ -139,7 +139,9 @@ Alternatives considered:
 
 Turn/session metadata includes selected cognitive system, model binding id,
 provider, model, reasoning effort, routing source, and a short routing reason.
-It does not expose private reasoning traces.
+Create, list, read, reconnect, and fork DTOs expose that bounded metadata where
+they already report request-control metadata. It does not expose private
+reasoning traces.
 
 Alternatives considered:
 
