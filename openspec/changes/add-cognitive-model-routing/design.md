@@ -176,6 +176,25 @@ Alternatives considered:
 - Disable provider-native continuation whenever cognition is enabled. This is
   safe but gives up useful stateful-provider efficiency.
 
+## Implementation Ownership
+
+This change is primarily a runtime-routing change, not a prompt-only or
+skill-only feature.
+
+- Runtime owns `CognitiveRouter`, route precedence, the System 1 acceptance
+  commit point, escalation handling, routing metadata, and provider-native
+  continuation partitioning.
+- Tool governance owns read-only versus side-effecting capability classification
+  and enforces the unaccepted System 1 side-effect gate before tool execution.
+- Prompts describe the selected cognitive role, speculative boundary, and
+  internal escalation contract to the model, but prompts are not the security or
+  side-effect boundary.
+- Skills may adapt their guidance to the routed context, but they do not decide
+  the cognitive route, bypass tool governance, or expose `escalate_to_system2`
+  as a normal user tool.
+- Daemon and client surfaces carry override intent and display bounded routing
+  metadata; they do not independently decide provider/model routing.
+
 ## Risks / Trade-offs
 
 - System 1 fails to escalate -> Mitigate with safety-first deterministic gates

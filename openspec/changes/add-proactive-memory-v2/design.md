@@ -159,6 +159,26 @@ Alternatives considered:
 - Store reverted content only in the ledger. This is safer for prompts and is
   acceptable as long as the stable memory target no longer exposes it.
 
+## Implementation Ownership
+
+This change is primarily a runtime memory/storage change, not a memory-skill
+permission expansion.
+
+- Runtime owns memory write planning orchestration, target canonicalization,
+  dedupe, confidence downgrade, sensitive-data validation, ledger writes, target
+  file mutation, and precise revert.
+- Prompt and memory surface renderers may display bounded summaries or
+  provenance references, but they must not become the ledger, reintroduce
+  reverted content, or rely on prompts as the secret-redaction boundary.
+- Skills may suggest candidate observations or explain memory behavior, but they
+  must not directly mutate stable memory, staged memory, inbox entries, daily
+  notes, or ledger files outside the runtime writer.
+- Daemon and CLI APIs expose recent/show/revert review surfaces with explicit
+  workspace or session scope; they do not choose memory targets without runtime
+  validation.
+- Client UI can make memory review easier later, but the first implementation's
+  correctness belongs to runtime validation, storage, and API contracts.
+
 ## Risks / Trade-offs
 
 - Incorrect stable memory write -> Mitigate with provenance, confidence,
