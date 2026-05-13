@@ -243,7 +243,7 @@ struct MacShellRootView: View {
                     .transition(.move(edge: .leading).combined(with: .opacity))
                 }
 
-                ShellWorkspaceView(host: host)
+                ShellWorkspaceView(host: host, hasExpandedSidebar: !isSidebarCollapsed)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .ignoresSafeArea(edges: .top)
             }

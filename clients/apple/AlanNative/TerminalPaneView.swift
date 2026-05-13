@@ -3,6 +3,7 @@ import SwiftUI
 #if os(macOS)
 struct TerminalPaneView: View {
     @ObservedObject var host: ShellHostController
+    let terminalSurfaceInsets: EdgeInsets
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -14,7 +15,7 @@ struct TerminalPaneView: View {
             }
 
         }
-        .padding(ShellWorkspaceMetrics.terminalSurfaceInset)
+        .padding(terminalSurfaceInsets)
     }
 
     private var paneMetadataStrip: some View {

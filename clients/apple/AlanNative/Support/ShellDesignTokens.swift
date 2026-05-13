@@ -238,6 +238,15 @@ enum ShellSidebarMetrics {
 
 enum ShellWorkspaceMetrics {
     static let terminalSurfaceInset: CGFloat = 8
+
+    static func terminalSurfaceInsets(hasExpandedSidebar: Bool) -> EdgeInsets {
+        EdgeInsets(
+            top: terminalSurfaceInset,
+            leading: hasExpandedSidebar ? 0 : terminalSurfaceInset,
+            bottom: terminalSurfaceInset,
+            trailing: terminalSurfaceInset
+        )
+    }
 }
 
 struct ShellShadowStyle {

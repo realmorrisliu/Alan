@@ -448,6 +448,26 @@ require_pattern \
     "ShellTerminalSurfaceFrame" \
     "terminal panes must share one outer rounded terminal surface frame"
 
+require_pattern \
+    "clients/apple/AlanNative/MacShellRootView.swift" \
+    "ShellWorkspaceView\\(host: host, hasExpandedSidebar: !isSidebarCollapsed\\)" \
+    "mac shell root must pass expanded sidebar state into workspace spacing"
+
+require_pattern \
+    "clients/apple/AlanNative/Views/Shell/ShellWorkspaceView.swift" \
+    "hasExpandedSidebar: Bool" \
+    "workspace view must expose sidebar-aware terminal surface spacing"
+
+require_pattern \
+    "clients/apple/AlanNative/TerminalPaneView.swift" \
+    "terminalSurfaceInsets: EdgeInsets" \
+    "terminal pane must receive semantic terminal surface edge insets"
+
+require_pattern \
+    "clients/apple/AlanNative/TerminalPaneView.swift" \
+    "padding\\(terminalSurfaceInsets\\)" \
+    "terminal pane must apply state-aware terminal surface edge insets"
+
 reject_pattern \
     "clients/apple/AlanNative/TerminalHostView.swift" \
     "cornerRadius = ShellRadii\\.terminalSurface" \
@@ -455,13 +475,13 @@ reject_pattern \
 
 require_pattern \
     "clients/apple/AlanNative/Support/ShellDesignTokens.swift" \
-    "terminalSurfaceInset" \
-    "terminal workspace surface inset must be a shared semantic token"
+    "terminalSurfaceInsets\\(hasExpandedSidebar" \
+    "terminal workspace surface insets must account for expanded sidebar adjacency"
 
-require_pattern \
+reject_pattern \
     "clients/apple/AlanNative/TerminalPaneView.swift" \
     "padding\\(ShellWorkspaceMetrics\\.terminalSurfaceInset\\)" \
-    "terminal surface must use equal workspace inset on all four edges"
+    "terminal surface must not apply equal workspace inset when the sidebar is expanded"
 
 require_pattern \
     "clients/apple/AlanNative/TerminalPaneView.swift" \
