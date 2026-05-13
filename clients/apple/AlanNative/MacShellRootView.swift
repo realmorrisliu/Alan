@@ -181,7 +181,7 @@ struct MacShellRootView: View {
     private func revealCollapsedSidebarPanel() {
         guard isSidebarCollapsed else { return }
         sidebarRevealToken += 1
-        withAnimation(sidebarPanelAnimation) {
+        withAnimation(sidebarPanelRevealAnimation) {
             isSidebarPanelRevealed = true
         }
     }
@@ -192,18 +192,37 @@ struct MacShellRootView: View {
         let token = sidebarRevealToken
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.16) {
             guard sidebarRevealToken == token, isSidebarCollapsed else { return }
-            withAnimation(sidebarPanelAnimation) {
+            withAnimation(sidebarPanelHideAnimation) {
                 isSidebarPanelRevealed = false
             }
         }
     }
 
-    private var sidebarPanelAnimation: Animation? {
+    private func handleCollapsedSidebarHover(_ hovering: Bool) {
+        hovering ? revealCollapsedSidebarPanel() : scheduleCollapsedSidebarHide()
+    }
+
+    private func handleCollapsedSidebarToolbarHover(_ hovering: Bool) {
+        guard isSidebarCollapsed else { return }
+        handleCollapsedSidebarHover(hovering)
+    }
+
+    private var sidebarPanelRevealAnimation: Animation? {
+        reduceMotion
+            ? nil
+            : .interactiveSpring(response: 0.28, dampingFraction: 0.86, blendDuration: 0.02)
+    }
+
+    private var sidebarPanelHideAnimation: Animation? {
+        reduceMotion ? nil : .easeInOut(duration: 0.18)
+    }
+
+    private var sidebarPinnedStateAnimation: Animation? {
         reduceMotion ? nil : .easeOut(duration: 0.16)
     }
 
     private func updateSidebarCollapsed(_ collapsed: Bool) {
-        withAnimation(sidebarPanelAnimation) {
+        withAnimation(sidebarPinnedStateAnimation) {
             isSidebarCollapsed = collapsed
             isSidebarPanelRevealed = false
         }
@@ -235,7 +254,7 @@ struct MacShellRootView: View {
 
                 if isSidebarPanelRevealed {
                     floatingSidebarPanel
-                        .transition(.move(edge: .leading).combined(with: .opacity))
+                        .transition(floatingSidebarPanelTransition)
                 }
             }
 
@@ -260,8 +279,7 @@ struct MacShellRootView: View {
             }
         }
         .animation(.easeOut(duration: 0.18), value: isCommandTabPresented)
-        .animation(sidebarPanelAnimation, value: isSidebarCollapsed)
-        .animation(sidebarPanelAnimation, value: isSidebarPanelRevealed)
+        .animation(sidebarPinnedStateAnimation, value: isSidebarCollapsed)
         .preferredColorScheme(appearanceMode.colorScheme)
         .onChange(of: isSidebarCollapsed) { _, collapsed in
             if !collapsed {
@@ -296,9 +314,7 @@ struct MacShellRootView: View {
             .frame(width: ShellSidebarMetrics.collapsedRevealEdgeWidth)
             .frame(maxHeight: .infinity, alignment: .topLeading)
             .contentShape(Rectangle())
-            .onHover { hovering in
-                hovering ? revealCollapsedSidebarPanel() : scheduleCollapsedSidebarHide()
-            }
+            .onHover(perform: handleCollapsedSidebarHover)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .ignoresSafeArea()
             .zIndex(10)
@@ -336,12 +352,17 @@ struct MacShellRootView: View {
         .padding(.top, floatingSidebarInset)
         .padding(.bottom, floatingSidebarInset)
         .shellShadow(ShellShadows.floatingPanel)
-        .onHover { hovering in
-            hovering ? revealCollapsedSidebarPanel() : scheduleCollapsedSidebarHide()
-        }
+        .onHover(perform: handleCollapsedSidebarHover)
         .ignoresSafeArea(edges: [.top, .bottom])
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .zIndex(20)
+    }
+
+    private var floatingSidebarPanelTransition: AnyTransition {
+        .asymmetric(
+            insertion: .move(edge: .leading).combined(with: .opacity),
+            removal: .move(edge: .leading)
+        )
     }
 
     private var sidebarChromeControls: some View {
@@ -363,6 +384,8 @@ struct MacShellRootView: View {
                 windowChromeMetrics.titlebarToolTopInset
                     + (isSidebarCollapsed ? floatingSidebarInset : 0)
             )
+            .contentShape(Rectangle())
+            .onHover(perform: handleCollapsedSidebarToolbarHover)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
         .ignoresSafeArea(edges: .top)

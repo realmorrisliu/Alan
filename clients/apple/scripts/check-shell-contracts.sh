@@ -378,6 +378,21 @@ require_pattern \
     "collapsedRevealEdgeWidth" \
     "collapsed sidebar reveal must use a narrow edge hot zone token"
 
+require_pattern \
+    "clients/apple/AlanNative/MacShellRootView.swift" \
+    "sidebarPanelRevealAnimation" \
+    "collapsed sidebar reveal must use a dedicated spring reveal animation"
+
+require_pattern \
+    "clients/apple/AlanNative/MacShellRootView.swift" \
+    "sidebarPanelHideAnimation" \
+    "collapsed sidebar hide must use a dedicated fast exit animation"
+
+require_pattern \
+    "clients/apple/AlanNative/MacShellRootView.swift" \
+    "handleCollapsedSidebarToolbarHover" \
+    "collapsed sidebar toolbar controls must keep the floating panel revealed while hovered"
+
 reject_pattern \
     "clients/apple/AlanNative/MacShellRootView.swift" \
     "frame\\(width: sidebarWidth, height: windowChromeMetrics\\.collapsedRevealHeaderHeight\\)" \
