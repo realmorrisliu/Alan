@@ -6,153 +6,9 @@ struct TerminalPaneView: View {
     let terminalSurfaceInsets: EdgeInsets
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            paneCanvas
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-
-            if showsMetadataStrip {
-                paneMetadataStrip
-            }
-
-        }
-        .padding(terminalSurfaceInsets)
-    }
-
-    private var paneMetadataStrip: some View {
-        let selectedPane = host.selectedPane
-        let selectedPaneTitle = selectedPane.map {
-            shellDisplayTitle(
-                rawTitle: $0.viewport?.title,
-                workingDirectoryName: $0.context?.workingDirectoryName,
-                cwd: $0.cwd,
-                program: $0.process?.program,
-                launchTarget: $0.resolvedLaunchTarget
-            )
-        }
-
-        return ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                if let selectedPane,
-                   let status = shellTerminalStatusSummary(for: selectedPane)
-                {
-                    compactMetaChip(
-                        title: status,
-                        icon: statusIcon(for: selectedPane),
-                        tint: statusTint(for: selectedPane)
-                    )
-                }
-
-                if let workingDirectory = shellVisibleLabel(
-                    selectedPane?.context?.workingDirectoryName
-                        ?? selectedPane?.cwd
-                )
-                   , workingDirectory != selectedPaneTitle
-                {
-                    compactMetaChip(title: workingDirectory, icon: "folder")
-                }
-
-                if let branch = selectedPane?.context?.gitBranch {
-                    compactMetaChip(title: branch, icon: "point.topleft.down.curvedto.point.bottomright.up")
-                }
-
-                if let attention = selectedPane?.attention,
-                   attention == .awaitingUser || attention == .notable
-                {
-                    compactMetaChip(
-                        title: attention.rawValue.replacingOccurrences(of: "_", with: " "),
-                        icon: "bell.badge",
-                        tint: attention == .awaitingUser ? ShellPalette.attention : ShellPalette.mutedInk
-                    )
-                }
-
-                if let binding = selectedPane?.alanBinding {
-                    compactMetaChip(
-                        title: "Alan \(binding.runStatus)",
-                        icon: "sparkles",
-                        tint: ShellPalette.accent
-                    )
-                }
-            }
-        }
-    }
-
-    private var showsMetadataStrip: Bool {
-        let selectedPane = host.selectedPane
-        let selectedPaneTitle = selectedPane.map {
-            shellDisplayTitle(
-                rawTitle: $0.viewport?.title,
-                workingDirectoryName: $0.context?.workingDirectoryName,
-                cwd: $0.cwd,
-                program: $0.process?.program,
-                launchTarget: $0.resolvedLaunchTarget
-            )
-        }
-
-        let workingDirectory = shellVisibleLabel(
-            selectedPane?.context?.workingDirectoryName
-                ?? selectedPane?.cwd
-        )
-
-        return selectedPane.flatMap(shellTerminalStatusSummary) != nil
-            || (workingDirectory != nil && workingDirectory != selectedPaneTitle)
-            || selectedPane?.context?.gitBranch != nil
-            || selectedPane?.attention == .awaitingUser
-            || selectedPane?.attention == .notable
-            || selectedPane?.alanBinding != nil
-    }
-
-    private func compactMetaChip(title: String, icon: String, tint: Color? = nil) -> some View {
-        HStack(spacing: 6) {
-            Image(systemName: icon)
-            Text(title)
-                .lineLimit(1)
-        }
-        .font(.system(size: 11, weight: .semibold))
-        .foregroundStyle(tint ?? ShellPalette.mutedInk)
-        .padding(.horizontal, 9)
-        .padding(.vertical, 6)
-        .background(
-            ShellMaterialShape(
-                role: .terminalChrome,
-                shape: RoundedRectangle(cornerRadius: ShellRadii.row, style: .continuous)
-            )
-        )
-        .overlay {
-            RoundedRectangle(cornerRadius: ShellRadii.row, style: .continuous)
-                .stroke(ShellPalette.line.opacity(0.22), lineWidth: 1)
-        }
-    }
-
-    private func statusIcon(for pane: ShellPane) -> String {
-        if pane.context?.processState == "exited"
-            || pane.context?.surfaceReadiness == "child_exited"
-        {
-            return "checkmark.circle"
-        }
-        if pane.context?.rendererHealth == "failed"
-            || pane.context?.rendererPhase == "failed"
-            || pane.context?.surfaceReadiness == "renderer_failed"
-        {
-            return "exclamationmark.triangle"
-        }
-        if pane.attention == .awaitingUser || pane.attention == .notable {
-            return "bell.badge"
-        }
-        return "info.circle"
-    }
-
-    private func statusTint(for pane: ShellPane) -> Color {
-        if pane.context?.rendererHealth == "failed"
-            || pane.context?.rendererPhase == "failed"
-            || pane.context?.surfaceReadiness == "renderer_failed"
-            || pane.attention == .awaitingUser
-        {
-            return ShellPalette.attention
-        }
-        if pane.attention == .notable {
-            return ShellPalette.mutedInk
-        }
-        return ShellPalette.mutedInk
+        paneCanvas
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .padding(terminalSurfaceInsets)
     }
 
     private var paneCanvas: some View {
@@ -691,6 +547,7 @@ private struct ShellTerminalLeafView: View {
         VStack(spacing: 0) {
             ShellPaneTitleBarView(
                 title: shellPaneTitleBarTitle(for: pane),
+                pane: pane,
                 isSelected: isSelected,
                 onFocusPane: {
                     activationDelegate?.terminalHostDidRequestActivation(paneID: pane.paneID)
@@ -748,6 +605,7 @@ private struct ShellTerminalLeafView: View {
 
 private struct ShellPaneTitleBarView: View {
     let title: String
+    let pane: ShellPane
     let isSelected: Bool
     let onFocusPane: () -> Void
     let onClosePane: () -> Void
@@ -760,6 +618,15 @@ private struct ShellPaneTitleBarView: View {
                 .lineLimit(1)
                 .truncationMode(.middle)
                 .frame(maxWidth: .infinity, alignment: .leading)
+
+            if !accessories.isEmpty {
+                HStack(spacing: 10) {
+                    ForEach(accessories) { accessory in
+                        ShellPaneTitleBarAccessoryView(accessory: accessory, isSelected: isSelected)
+                    }
+                }
+                .layoutPriority(1)
+            }
 
             Button(action: onClosePane) {
                 Image(systemName: "xmark")
@@ -790,6 +657,122 @@ private struct ShellPaneTitleBarView: View {
         }
         .contentShape(Rectangle())
         .onTapGesture(perform: onFocusPane)
+    }
+
+    private var accessories: [ShellPaneTitleBarAccessory] {
+        var items: [ShellPaneTitleBarAccessory] = []
+
+        if let status = shellTerminalStatusSummary(for: pane) {
+            items.append(
+                ShellPaneTitleBarAccessory(
+                    id: "status",
+                    icon: statusIcon,
+                    title: statusTitle(status),
+                    help: status,
+                    tint: statusTint
+                )
+            )
+        }
+
+        if let branch = shellVisibleLabel(pane.context?.gitBranch) {
+            items.append(
+                ShellPaneTitleBarAccessory(
+                    id: "branch",
+                    icon: "point.topleft.down.curvedto.point.bottomright.up",
+                    title: branch,
+                    help: "Git branch \(branch)",
+                    tint: ShellPalette.mutedInk,
+                    maxWidth: 120
+                )
+            )
+        }
+
+        if let binding = pane.alanBinding {
+            let bindingTitle = binding.pendingYield ? "Input" : shellVisibleLabel(binding.runStatus)
+            items.append(
+                ShellPaneTitleBarAccessory(
+                    id: "alan",
+                    icon: "sparkles",
+                    title: bindingTitle,
+                    help: "Alan \(binding.runStatus)",
+                    tint: ShellPalette.accent,
+                    maxWidth: 72
+                )
+            )
+        }
+
+        return items
+    }
+
+    private var statusIcon: String {
+        if pane.context?.processState == "exited"
+            || pane.context?.surfaceReadiness == "child_exited"
+        {
+            return "checkmark.circle"
+        }
+        if pane.context?.rendererHealth == "failed"
+            || pane.context?.rendererPhase == "failed"
+            || pane.context?.surfaceReadiness == "renderer_failed"
+        {
+            return "exclamationmark.triangle"
+        }
+        if pane.attention == .awaitingUser || pane.attention == .notable {
+            return "bell.badge"
+        }
+        return "info.circle"
+    }
+
+    private var statusTint: Color {
+        if pane.context?.rendererHealth == "failed"
+            || pane.context?.rendererPhase == "failed"
+            || pane.context?.surfaceReadiness == "renderer_failed"
+            || pane.attention == .awaitingUser
+        {
+            return ShellPalette.attention
+        }
+        return ShellPalette.mutedInk
+    }
+
+    private func statusTitle(_ status: String) -> String? {
+        if pane.attention == .notable,
+           status == "Terminal bell"
+        {
+            return nil
+        }
+        return status
+    }
+}
+
+private struct ShellPaneTitleBarAccessory: Identifiable {
+    let id: String
+    let icon: String
+    let title: String?
+    let help: String
+    let tint: Color
+    var maxWidth: CGFloat?
+}
+
+private struct ShellPaneTitleBarAccessoryView: View {
+    let accessory: ShellPaneTitleBarAccessory
+    let isSelected: Bool
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Image(systemName: accessory.icon)
+                .font(.system(size: 10, weight: .semibold))
+
+            if let title = accessory.title {
+                Text(title)
+                    .font(.system(size: 10, weight: .semibold))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .frame(maxWidth: accessory.maxWidth, alignment: .leading)
+            }
+        }
+        .foregroundStyle(accessory.tint.opacity(isSelected ? 0.86 : 0.58))
+        .fixedSize(horizontal: false, vertical: true)
+        .help(accessory.help)
+        .accessibilityLabel(accessory.help)
     }
 }
 

@@ -40,6 +40,31 @@ theme panels, and ornamental controls.
 - **WHEN** the user hovers, selects, inserts, closes, or switches tabs and spaces
 - **THEN** rows, icon controls, counters, and status marks keep stable dimensions and do not resize the sidebar or terminal content
 
+### Requirement: Collapsed sidebar uses a lightweight floating panel
+When the sidebar is collapsed, the macOS shell SHALL reveal navigation through a
+small floating material panel triggered by intentional edge or titlebar-control
+hover, while keeping the terminal workspace stable.
+
+#### Scenario: Narrow reveal target
+- **WHEN** the sidebar is collapsed and the pointer approaches the left edge
+- **THEN** Alan uses a narrow edge hot zone to reveal the floating sidebar panel rather than a full titlebar or header-width hover region
+
+#### Scenario: Floating panel hover retention
+- **WHEN** the pointer moves from the edge hot zone onto the floating sidebar panel or collapsed titlebar controls
+- **THEN** the floating panel remains revealed until the pointer leaves those related surfaces
+
+#### Scenario: Floating panel motion
+- **WHEN** reduced motion is disabled
+- **THEN** the floating sidebar panel enters with a short spring-like leading-edge reveal and exits with a faster low-emphasis hide animation
+
+#### Scenario: Reduced motion respected
+- **WHEN** reduced motion is enabled
+- **THEN** collapsed-sidebar reveal and hide behavior avoids springy movement while preserving the same hover targets and visibility state
+
+#### Scenario: Workspace stability
+- **WHEN** the floating sidebar panel appears or disappears
+- **THEN** terminal content, split geometry, and window size remain stable instead of being resized by the transient sidebar surface
+
 #### Scenario: No dashboard treatment
 - **WHEN** the user views the default shell
 - **THEN** the UI does not present page-like sections, nested cards, large explanatory panels, or marketing-style hero composition
@@ -90,6 +115,10 @@ frequent actions.
 #### Scenario: Command entry
 - **WHEN** the user invokes the command UI
 - **THEN** the entry point is labeled and organized as `Go to or Command...`
+
+#### Scenario: Empty titlebar zoom
+- **WHEN** a user double-clicks an empty, non-control area of the hidden-titlebar chrome
+- **THEN** Alan toggles the window between its previous frame and the current screen's visible work area while leaving the system traffic-light buttons, including the green button, on their normal macOS behavior
 
 ### Requirement: Default shell does not expose inspector chrome
 The default macOS shell SHALL not include a persistent right-side inspector,
@@ -245,6 +274,10 @@ terminal title is unavailable.
 #### Scenario: Debug terms suppressed
 - **WHEN** terminal metadata contains implementation-oriented summaries such as `title updated`, `window attached`, or raw runtime state
 - **THEN** the title bar does not expose those terms outside explicit developer/debug-only surfaces
+
+#### Scenario: Metadata stays in title chrome
+- **WHEN** terminal status, branch, attention, or Alan binding metadata is useful in the default pane UI
+- **THEN** Alan presents it as lightweight pane-title-bar accessories rather than as a persistent bottom status strip below the terminal canvas
 
 ### Requirement: Pane close button targets its pane
 The pane title bar close button SHALL close the pane represented by that title

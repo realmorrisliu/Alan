@@ -735,8 +735,13 @@ reject_pattern \
 
 require_pattern \
     "clients/apple/AlanNative/AlanNativeApp.swift" \
-    "Window\\(\"Alan\", id: \"main\"\\)" \
-    "macOS app scene must use a unique primary Window instead of a repeatable WindowGroup"
+    "WindowGroup\\(\"Alan\", id: \"main\"\\)" \
+    "macOS app scene must use a launch-presented primary WindowGroup"
+
+require_pattern \
+    "clients/apple/AlanNative/AlanNativeApp.swift" \
+    "defaultLaunchBehavior\\(\\.presented\\)" \
+    "macOS primary window must be presented when the app launches without restoration"
 
 require_pattern \
     "clients/apple/AlanNative/App/AlanMacShellCommands.swift" \
@@ -752,6 +757,11 @@ require_pattern \
     "clients/apple/AlanNative/AlanAppSingletonGuard.swift" \
     "flock\\(descriptor, LOCK_EX \\| LOCK_NB\\)" \
     "macOS app singleton guard must use an OS-backed exclusive lock"
+
+require_pattern \
+    "justfile" \
+    "pkill -x Alan" \
+    "just app must stop the previous Alan process before launching a fresh debug build"
 
 require_pattern \
     "clients/apple/README.md" \

@@ -252,7 +252,10 @@ struct MacShellRootView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .ignoresSafeArea(edges: .top)
             }
-            .frame(minWidth: 1260, minHeight: 800)
+            .frame(
+                minWidth: ShellWindowSizing.minimumSize.width,
+                minHeight: ShellWindowSizing.minimumSize.height
+            )
 
             if isSidebarCollapsed {
                 collapsedSidebarRevealZone

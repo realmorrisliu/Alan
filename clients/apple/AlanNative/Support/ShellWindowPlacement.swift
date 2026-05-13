@@ -78,11 +78,92 @@ struct ShellWindowChromeMetrics: Equatable {
     }
 }
 
+enum ShellWindowSizing {
+    static let defaultWidthRatio: CGFloat = 0.90
+    static let defaultHeightRatio: CGFloat = 0.80
+    static let visibleFrameMargin: CGFloat = 16
+    static let zoomFrameTolerance: CGFloat = 1
+    static let minimumSize = CGSize(width: 1180, height: 760)
+
+    static func defaultFrame(in visibleFrame: CGRect) -> CGRect {
+        let size = defaultSize(in: visibleFrame)
+
+        return CGRect(
+            x: visibleFrame.midX - (size.width / 2),
+            y: visibleFrame.midY - (size.height / 2),
+            width: size.width,
+            height: size.height
+        )
+    }
+
+    static func defaultSize(in visibleFrame: CGRect) -> CGSize {
+        let maxWidth = max(visibleFrame.width - (visibleFrameMargin * 2), 1)
+        let maxHeight = max(visibleFrame.height - (visibleFrameMargin * 2), 1)
+
+        return CGSize(
+            width: min(max(visibleFrame.width * defaultWidthRatio, minimumSize.width), maxWidth),
+            height: min(max(visibleFrame.height * defaultHeightRatio, minimumSize.height), maxHeight)
+        )
+    }
+
+    static func zoomFrame(in visibleFrame: CGRect) -> CGRect {
+        visibleFrame
+    }
+
+    static func frame(
+        _ lhs: CGRect,
+        approximatelyMatches rhs: CGRect,
+        tolerance: CGFloat = zoomFrameTolerance
+    ) -> Bool {
+        abs(lhs.origin.x - rhs.origin.x) <= tolerance
+            && abs(lhs.origin.y - rhs.origin.y) <= tolerance
+            && abs(lhs.width - rhs.width) <= tolerance
+            && abs(lhs.height - rhs.height) <= tolerance
+    }
+}
+
+enum ShellWindowDoubleClickZoomHitTesting {
+    static let topChromeBandHeight: CGFloat = 36
+    static let reservedLeadingChromeWidth: CGFloat = 160
+    static let reservedTopChromeHeight: CGFloat = 64
+
+    static func isWindowTopChromeZoomCandidate(
+        locationInWindow point: CGPoint,
+        in window: NSWindow
+    ) -> Bool {
+        let windowSize = window.frame.size
+        let windowBounds = CGRect(origin: .zero, size: windowSize)
+        guard windowBounds.contains(point) else { return false }
+        guard isPointInWindowTopChromeBand(point, windowSize: windowSize) else { return false }
+        return !isPointInReservedChromeControls(point, windowSize: windowSize)
+    }
+
+    static func isPointInWindowTopChromeBand(
+        _ point: CGPoint,
+        windowSize: CGSize
+    ) -> Bool {
+        let visualTopInset = windowSize.height - point.y
+        return visualTopInset >= 0 && visualTopInset <= topChromeBandHeight
+    }
+
+    static func isPointInReservedChromeControls(
+        _ point: CGPoint,
+        windowSize: CGSize
+    ) -> Bool {
+        let visualTopInset = windowSize.height - point.y
+        return point.x <= reservedLeadingChromeWidth
+            && visualTopInset >= 0
+            && visualTopInset <= reservedTopChromeHeight
+    }
+}
+
 final class ShellWindowPlacementNSView: NSView {
     private var appearanceMode: ShellAppearanceMode
     private var metricsHandler: (ShellWindowChromeMetrics) -> Void
     private var systemAppearanceHandler: (ColorScheme) -> Void
+    private var configuredWindowNumber: Int?
     private var lastPublishedMetrics: ShellWindowChromeMetrics?
+    private var doubleClickZoomOverlay: ShellWindowDoubleClickZoomOverlayView?
 
     init(
         appearanceMode: ShellAppearanceMode,
@@ -135,7 +216,13 @@ final class ShellWindowPlacementNSView: NSView {
     func resolveWindowIfNeeded() {
         DispatchQueue.main.async { [weak self] in
             guard let self, let window = self.window else { return }
-            let metrics = AlanShellWindowPlacement.apply(to: window, appearanceMode: self.appearanceMode)
+            if self.configuredWindowNumber != window.windowNumber {
+                AlanShellWindowPlacement.configure(window, appearanceMode: self.appearanceMode)
+                self.configuredWindowNumber = window.windowNumber
+            }
+
+            let metrics = AlanShellWindowPlacement.chromeMetrics(for: window)
+            self.installDoubleClickZoomOverlayIfNeeded(for: window)
             self.publishEffectiveSystemColorScheme()
             guard self.lastPublishedMetrics != metrics else { return }
             self.lastPublishedMetrics = metrics
@@ -152,12 +239,80 @@ final class ShellWindowPlacementNSView: NSView {
         let appearance = window?.effectiveAppearance ?? effectiveAppearance
         systemAppearanceHandler(ShellAppearanceMode.colorScheme(for: appearance))
     }
+
+    private func installDoubleClickZoomOverlayIfNeeded(for window: NSWindow) {
+        guard let titlebarView = AlanShellWindowPlacement.titlebarControlContainer(for: window)
+        else {
+            return
+        }
+
+        if let doubleClickZoomOverlay,
+           doubleClickZoomOverlay.superview === titlebarView {
+            doubleClickZoomOverlay.frame = titlebarView.bounds
+            return
+        }
+
+        doubleClickZoomOverlay?.removeFromSuperview()
+        let overlay = ShellWindowDoubleClickZoomOverlayView(frame: titlebarView.bounds)
+        overlay.autoresizingMask = [.width, .height]
+        titlebarView.addSubview(overlay, positioned: .below, relativeTo: titlebarView.subviews.first)
+        doubleClickZoomOverlay = overlay
+    }
+}
+
+final class ShellWindowDoubleClickZoomOverlayView: NSView {
+    private var restoreFrame: NSRect?
+
+    override var mouseDownCanMoveWindow: Bool {
+        true
+    }
+
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
+        true
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        guard let window else { return nil }
+        guard bounds.contains(point) else { return nil }
+        let windowPoint = convert(point, to: nil)
+        guard ShellWindowDoubleClickZoomHitTesting.isWindowTopChromeZoomCandidate(
+            locationInWindow: windowPoint,
+            in: window
+        ) else {
+            return nil
+        }
+        return self
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        guard event.clickCount == 2, let window else {
+            window?.performDrag(with: event)
+            return
+        }
+        toggleVisibleFrameZoom(for: window)
+    }
+
+    private func toggleVisibleFrameZoom(for window: NSWindow) {
+        let visibleFrame =
+            window.screen?.visibleFrame
+            ?? NSScreen.main?.visibleFrame
+            ?? window.frame
+        let zoomFrame = ShellWindowSizing.zoomFrame(in: visibleFrame)
+
+        if ShellWindowSizing.frame(window.frame, approximatelyMatches: zoomFrame),
+           let restoreFrame,
+           !ShellWindowSizing.frame(restoreFrame, approximatelyMatches: zoomFrame) {
+            window.setFrame(restoreFrame, display: true, animate: true)
+            self.restoreFrame = nil
+        } else {
+            restoreFrame = window.frame
+            window.setFrame(zoomFrame, display: true, animate: true)
+        }
+    }
 }
 
 private enum AlanShellWindowPlacement {
-    private static var positionedWindowNumbers: Set<Int> = []
-
-    static func apply(to window: NSWindow, appearanceMode: ShellAppearanceMode) -> ShellWindowChromeMetrics {
+    static func configure(_ window: NSWindow, appearanceMode: ShellAppearanceMode) {
         window.title = "Alan"
         applyAppearance(to: window, appearanceMode: appearanceMode)
         window.titleVisibility = .hidden
@@ -165,22 +320,14 @@ private enum AlanShellWindowPlacement {
         window.titlebarSeparatorStyle = .none
         window.styleMask.insert(.fullSizeContentView)
         window.isMovableByWindowBackground = true
-        window.minSize = NSSize(width: 1180, height: 760)
+        window.minSize = ShellWindowSizing.minimumSize
         window.tabbingMode = .disallowed
-
-        if positionedWindowNumbers.insert(window.windowNumber).inserted {
-            window.setFrame(centeredFrameOnMainScreen(for: window), display: true)
-        } else if shouldResetFrame(window.frame) {
-            window.setFrame(centeredFrame(for: window), display: true)
-        }
 
         if !window.isVisible {
             window.makeKeyAndOrderFront(nil)
         }
 
         NSApp.activate(ignoringOtherApps: true)
-
-        return chromeMetrics(for: window)
     }
 
     static func applyAppearance(to window: NSWindow, appearanceMode: ShellAppearanceMode) {
@@ -191,7 +338,7 @@ private enum AlanShellWindowPlacement {
         window.displayIfNeeded()
     }
 
-    private static func chromeMetrics(for window: NSWindow) -> ShellWindowChromeMetrics {
+    static func chromeMetrics(for window: NSWindow) -> ShellWindowChromeMetrics {
         var metrics = ShellWindowChromeMetrics()
 
         if let trafficLightGroupFrame = repositionStandardWindowButtons(in: window) {
@@ -199,6 +346,10 @@ private enum AlanShellWindowPlacement {
         }
 
         return metrics
+    }
+
+    static func titlebarControlContainer(for window: NSWindow) -> NSView? {
+        window.standardWindowButton(.closeButton)?.superview
     }
 
     private static func repositionStandardWindowButtons(in window: NSWindow) -> CGRect? {
@@ -261,89 +412,6 @@ private enum AlanShellWindowPlacement {
             width: contentFrame.width,
             height: contentFrame.height
         )
-    }
-
-    private static func shouldResetFrame(_ frame: NSRect) -> Bool {
-        let screens = NSScreen.screens
-        guard !screens.isEmpty else { return false }
-
-        let frameArea = max(frame.width * frame.height, 1)
-        let largestVisibleArea = screens
-            .map(\.visibleFrame)
-            .map { visibleFrame -> CGFloat in
-                let intersection = visibleFrame.intersection(frame)
-                guard !intersection.isNull else { return 0 }
-                return intersection.width * intersection.height
-            }
-            .max() ?? 0
-
-        let visibleRatio = largestVisibleArea / frameArea
-        let targetVisibleFrame = preferredVisibleFrame(for: frame)
-
-        return visibleRatio < 0.55
-            || frame.width > targetVisibleFrame.width
-            || frame.height > targetVisibleFrame.height
-            || !targetVisibleFrame.insetBy(dx: -48, dy: -48).intersects(frame)
-    }
-
-    private static func centeredFrame(for window: NSWindow) -> NSRect {
-        let visibleFrame = preferredVisibleFrame(for: window.frame)
-        return centeredFrame(in: visibleFrame, minSize: window.minSize)
-    }
-
-    private static func centeredFrameOnMainScreen(for window: NSWindow) -> NSRect {
-        let visibleFrame = primaryVisibleFrame() ?? preferredVisibleFrame(for: window.frame)
-        return centeredFrame(in: visibleFrame, minSize: window.minSize)
-    }
-
-    private static func centeredFrame(in visibleFrame: NSRect, minSize: NSSize) -> NSRect {
-        let targetWidth = min(
-            max(visibleFrame.width * 0.84, minSize.width),
-            visibleFrame.width - 32
-        )
-        let targetHeight = min(
-            max(visibleFrame.height * 0.86, minSize.height),
-            visibleFrame.height - 32
-        )
-
-        let origin = CGPoint(
-            x: visibleFrame.midX - (targetWidth / 2),
-            y: visibleFrame.midY - (targetHeight / 2)
-        )
-
-        return NSRect(origin: origin, size: NSSize(width: targetWidth, height: targetHeight))
-    }
-
-    private static func preferredVisibleFrame(for frame: NSRect) -> NSRect {
-        if let containingScreen = NSScreen.screens.first(where: {
-            !$0.visibleFrame.intersection(frame).isNull
-        }) {
-            return containingScreen.visibleFrame
-        }
-
-        if let mainFrame = NSScreen.main?.visibleFrame {
-            return mainFrame
-        }
-
-        return NSScreen.screens.first?.visibleFrame ?? NSRect(x: 80, y: 80, width: 1440, height: 900)
-    }
-
-    private static func primaryVisibleFrame() -> NSRect? {
-        if let originScreen = NSScreen.screens.first(where: {
-            abs($0.frame.minX) < 1 && abs($0.frame.minY) < 1
-        }) {
-            return originScreen.visibleFrame
-        }
-
-        return NSScreen.screens
-            .sorted {
-                if $0.frame.minY == $1.frame.minY {
-                    return $0.frame.minX < $1.frame.minX
-                }
-                return $0.frame.minY < $1.frame.minY
-            }
-            .first?
-            .visibleFrame
     }
 }
 #endif
