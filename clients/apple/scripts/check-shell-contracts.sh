@@ -184,6 +184,31 @@ reject_pattern \
     "Find UI must render through ShellFindBarView instead of the passive terminal overlay card"
 
 require_pattern \
+    "clients/apple/AlanNative/Support/ShellDesignTokens.swift" \
+    "spaceDockOuterBottomInset" \
+    "bottom space dock must use a tokenized outer inset to align with the sidebar edge"
+
+require_pattern \
+    "clients/apple/AlanNative/Views/Shell/ShellSidebarView.swift" \
+    "padding\\(\\.bottom, ShellSidebarMetrics\\.spaceDockOuterBottomInset\\)" \
+    "bottom space dock must align its visible controls to the sidebar bottom edge inset"
+
+require_pattern \
+    "clients/apple/AlanNative/Views/Shell/ShellSidebarView.swift" \
+    "padding\\(\\.vertical, ShellSidebarMetrics\\.spaceDockInternalVerticalPadding\\)" \
+    "space dock internal vertical padding must stay paired with its bottom alignment token"
+
+require_pattern \
+    "clients/apple/AlanNative/Views/Shell/ShellSidebarView.swift" \
+    "Button\\(action: createSpaceFromDock\\)" \
+    "bottom space dock add control must be a direct button, not a variant menu"
+
+reject_pattern \
+    "clients/apple/AlanNative/Views/Shell/ShellSidebarView.swift" \
+    "New Space with Alan|createAlanSpace|menuIndicator\\(\\.hidden\\)" \
+    "bottom space dock add control must not expose the removed New Space with Alan menu path"
+
+require_pattern \
     "clients/apple/scripts/test-terminal-surface-controller.swift" \
     "verifiesScrollbackActionsReachSurfaceEngine" \
     "surface controller tests must prove scrollback actions reach the surface engine"

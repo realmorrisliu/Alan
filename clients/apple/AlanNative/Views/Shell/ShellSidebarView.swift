@@ -39,7 +39,7 @@ struct ShellSidebarView: View {
                 .padding(.top, 10)
         }
         .padding(.top, chromeMetrics.commandLauncherTopInset)
-        .padding(.bottom, 15)
+        .padding(.bottom, ShellSidebarMetrics.spaceDockOuterBottomInset)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
@@ -186,17 +186,10 @@ struct ShellSidebarView: View {
                         }
                     }
                 }
-                .padding(.vertical, 2)
+                .padding(.vertical, ShellSidebarMetrics.spaceDockInternalVerticalPadding)
             }
 
-            Menu {
-                Button("New Space") {
-                    _ = host.createTerminalSpace()
-                }
-                Button("New Space with Alan") {
-                    _ = host.createAlanSpace()
-                }
-            } label: {
+            Button(action: createSpaceFromDock) {
                 Image(systemName: "plus")
                     .font(.system(size: 12.5, weight: .semibold))
                     .foregroundStyle(ShellPalette.sidebarInk.opacity(0.76))
@@ -210,15 +203,17 @@ struct ShellSidebarView: View {
                         }
                     }
             }
-            .menuStyle(.borderlessButton)
             .buttonStyle(.plain)
-            .menuIndicator(.hidden)
             .help("Create a new space")
             .accessibilityLabel("Create space")
             .onHover { isHovering in
                 hoveredSpaceID = isHovering ? "__new_space__" : nil
             }
         }
+    }
+
+    private func createSpaceFromDock() {
+        _ = host.createTerminalSpace()
     }
 
     private var activeTransition: ShellSpaceTransition? {

@@ -39,6 +39,8 @@ theme panels, and ornamental controls.
 #### Scenario: Stable compact controls
 - **WHEN** the user hovers, selects, inserts, closes, or switches tabs and spaces
 - **THEN** rows, icon controls, counters, and status marks keep stable dimensions and do not resize the sidebar or terminal content
+- **AND** the bottom space dock aligns its visible controls to the sidebar edge inset so the leading and bottom margins match optically
+- **AND** the bottom space dock add button directly creates a standard new space instead of opening a menu of space variants
 
 ### Requirement: Collapsed sidebar uses a lightweight floating panel
 When the sidebar is collapsed, the macOS shell SHALL reveal navigation through a
