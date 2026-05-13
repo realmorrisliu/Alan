@@ -27,6 +27,10 @@ instructional copy, and make the bottom space switcher feel intentional.
   choice, placement, hover actions, tooltips, menus, and accessibility labels.
 - Keep tabs skimmable and lightweight, with Alan state expressed inline and
   attention preserved outside default sidebar notification dots.
+- Calibrate the sidebar surface, tab rows, and controls as a unified tinted
+  material stack: macOS visual effect material remains visible beneath a cool
+  translucent wash, while row states are expressed through layered alpha,
+  subtle tint, and restrained shadows rather than opaque white panels.
 - Make split tabs legible at a glance by showing a compact topology indicator
   that communicates pane count, dominant split direction, and focused pane.
 - Keep the command input entry available from the sidebar, but do not redesign its
@@ -34,8 +38,10 @@ instructional copy, and make the bottom space switcher feel intentional.
 
 **Non-Goals:**
 
-- Do not redesign material treatment; that is owned by
-  `optimize-macos-material-system`.
+- Do not redesign the whole app material system; that broader token cleanup is
+  owned by `optimize-macos-material-system`. This change may tune the local
+  sidebar-facing backdrop, row, and control tokens needed for the Arc-like
+  sidebar IA to read correctly.
 - Do not implement advanced drag/reorder behavior unless needed to make the
   layout coherent.
 - Do not remove product terms such as Space and Tab from accessibility surfaces
@@ -142,13 +148,35 @@ instructional copy, and make the bottom space switcher feel intentional.
    Default rows should prioritize title, compact context, Alan attachment, and
    selection.
 
-6. Empty states should be actionable, not explanatory.
+6. Separate tab row visual states by strength.
+
+   Normal tab rows should sit directly on the sidebar material without a
+   persistent container. Hover and keyboard-focus states should introduce only a
+   subtle translucent pill so the row feels interactive without becoming a
+   card. The selected tab should be the strongest state: a brighter rounded
+   selection surface with a light shadow and stable trailing close affordance.
+   Tab list rows should keep a stable sidebar gutter so the selected surface is
+   inset into the material rather than flush to the window edge. This preserves
+   the Arc-like hierarchy where most rows remain quiet and only the active item
+   reads as a distinct object.
+
+7. Treat the space title as a sticky boundary.
+
+   The space title should remain fixed above the tab list as a quiet grayscale
+   label, not as a control or pill. At rest, the title and first tab row should
+   have a compact quiet material gap with no permanent rule, so the tab row
+   still reads as part of the same group. When tab rows scroll upward underneath
+   that title region, a subtle divider and downward shadow should fade in at the
+   boundary and the tab rows should clip below it. This creates the same
+   native-feeling depth cue as Arc without adding static section chrome.
+
+8. Empty states should be actionable, not explanatory.
 
    If no spaces or tabs exist, the sidebar should show a compact creation
    affordance in the owning zone. It should avoid paragraph-style instruction
    like "Create a space to start..." in normal chrome.
 
-7. Represent split tabs with a topology indicator, not a full thumbnail.
+9. Represent split tabs with a topology indicator, not a full thumbnail.
 
    A split tab row should show a small indicator only when the tab contains more
    than one pane. For two panes, the indicator can mirror the root split
@@ -162,7 +190,7 @@ instructional copy, and make the bottom space switcher feel intentional.
    nested horizontal/vertical splits and arbitrary ratios, which would become
    unreadable at sidebar size.
 
-8. Make the split indicator a quick focus target.
+10. Make the split indicator a quick focus target.
 
    For two panes, clicking the visible segment should focus that pane. For more
    complex layouts, clicking the indicator should provide a predictable focus

@@ -6,6 +6,9 @@ aligns cleanly around the macOS traffic-light area, with a restrained initial
 width around 264 pt. Spaces SHALL be switched through a compact bottom
 borderless icon switcher and horizontal sidebar swipe gestures, while tabs for
 the active space remain the primary sidebar list.
+The sidebar surface SHALL read as a unified tinted macOS material stack, with
+visual effect material, cool translucent wash, control alpha, and row shadows
+working together rather than as an opaque white panel with independent cards.
 Horizontal sidebar swipe SHALL feel like direct manipulation: content tracks the
 gesture inside the sidebar, previews the adjacent space there, and commits or
 cancels on release rather than acting as a threshold-only trigger. The workspace
@@ -17,6 +20,7 @@ accessibility labels rather than persistent instructional copy.
 #### Scenario: Default sidebar reading order
 - **WHEN** a user opens the macOS app
 - **THEN** the sidebar reads as a narrow command entry, active-space tab list, and bottom space switcher in one vertical column rather than as unrelated dashboard sections or a two-column sidebar
+- **AND** the sidebar surface has a cool material tint that remains coherent across empty space, controls, rows, and the bottom switcher
 
 #### Scenario: Space selection
 - **WHEN** a user selects a space in the bottom switcher
@@ -55,6 +59,24 @@ accessibility labels rather than persistent instructional copy.
 #### Scenario: Lightweight tab rows
 - **WHEN** the active-space tab list contains terminal and Alan tabs
 - **THEN** each tab appears as a skimmable row with a compact marker, title, secondary context, and low-emphasis status rather than as a card or dashboard tile
+
+#### Scenario: Tab row state hierarchy
+- **WHEN** tab rows are displayed in normal, hover, keyboard-focus, and selected states
+- **THEN** normal rows sit directly on the sidebar material without a persistent container
+- **AND** hover and keyboard-focus rows use only a subtle translucent backing without shadow or scale changes
+- **AND** keyboard focus does not introduce the system blue focus ring over the tab row selection surface
+- **AND** the selected row uses the strongest rounded selection surface with a light shadow while preserving stable text and accessory alignment
+- **AND** selected row surfaces are inset into the sidebar gutter rather than flush to the window edge
+- **AND** trailing close affordances appear for selected, hover, or focus states without resizing the row or shifting neighboring rows
+- **AND** compact creation rows remain muted by default and gain a subtle backing only on hover or focus
+
+#### Scenario: Space title scroll boundary
+- **WHEN** the active-space tab list is at its resting top position
+- **THEN** the active-space title appears as a quiet grayscale label without a persistent pill or control background
+- **AND** the area between the space title label and the first tab row keeps a compact quiet material gap without a persistent divider
+- **WHEN** the user scrolls the active-space tab list upward so tab rows move underneath the fixed space title region
+- **THEN** Alan gradually reveals a subtle divider and downward shadow at the title/list boundary
+- **AND** tab rows clip underneath that boundary instead of drawing over the space title
 
 #### Scenario: Visible copy is minimized
 - **WHEN** the default sidebar has at least one space and one tab

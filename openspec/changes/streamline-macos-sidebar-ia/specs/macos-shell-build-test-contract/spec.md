@@ -12,6 +12,8 @@ navigation.
 #### Scenario: Sidebar interaction states are reviewed
 - **WHEN** tab or space row secondary actions are progressively disclosed
 - **THEN** verification covers default, hover, selected, no-notification-dot, and empty states without row resizing or layout shifts
+- **AND** verification covers the tab row hierarchy where normal rows are containerless, hover/focus rows are subtle, selected rows are strongest, and creation rows stay muted until interaction
+- **AND** verification covers the space-title/tab-list scroll boundary where the divider and shadow appear only as tab rows scroll underneath the fixed space title region
 
 #### Scenario: Sidebar space swipe is reviewed
 - **WHEN** horizontal space switching is implemented in the sidebar

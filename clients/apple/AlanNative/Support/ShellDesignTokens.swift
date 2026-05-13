@@ -38,6 +38,20 @@ enum ShellPalette {
         light: (0.972, 0.973, 0.985),
         dark: (0.055, 0.061, 0.074)
     )
+    static let windowBackdropTint = Color.shellAdaptive(
+        light: (0.755, 0.765, 0.850),
+        lightAlpha: 0.44,
+        dark: (0.040, 0.047, 0.062),
+        darkAlpha: 0.78
+    )
+    static let sidebarInk = Color.shellAdaptive(
+        light: (0.030, 0.060, 0.220),
+        dark: (0.90, 0.92, 0.97)
+    )
+    static let sidebarMutedInk = Color.shellAdaptive(
+        light: (0.430, 0.430, 0.540),
+        dark: (0.65, 0.68, 0.76)
+    )
     static let sidebar = Color.shellAdaptive(
         light: (0.922, 0.924, 0.953),
         dark: (0.071, 0.079, 0.096)
@@ -54,27 +68,51 @@ enum ShellPalette {
     )
     static let sidebarSelection = Color.shellAdaptive(
         light: (1.0, 1.0, 1.0),
-        lightAlpha: 0.15,
+        lightAlpha: 0.24,
         dark: (0.205, 0.225, 0.270),
         darkAlpha: 0.72
     )
     static let sidebarHover = Color.shellAdaptive(
         light: (1.0, 1.0, 1.0),
-        lightAlpha: 0.08,
+        lightAlpha: 0.11,
         dark: (0.185, 0.205, 0.245),
         darkAlpha: 0.46
     )
+    static let sidebarRowHover = Color.shellAdaptive(
+        light: (1.0, 1.0, 1.0),
+        lightAlpha: 0.13,
+        dark: (0.185, 0.205, 0.245),
+        darkAlpha: 0.40
+    )
+    static let sidebarRowSelected = Color.shellAdaptive(
+        light: (1.0, 1.0, 1.0),
+        lightAlpha: 0.78,
+        dark: (0.215, 0.235, 0.282),
+        darkAlpha: 0.78
+    )
     static let sidebarControl = Color.shellAdaptive(
         light: (1.0, 1.0, 1.0),
-        lightAlpha: 0.12,
+        lightAlpha: 0.18,
         dark: (0.190, 0.210, 0.252),
         darkAlpha: 0.54
     )
     static let sidebarControlStrong = Color.shellAdaptive(
         light: (1.0, 1.0, 1.0),
-        lightAlpha: 0.18,
+        lightAlpha: 0.24,
         dark: (0.215, 0.235, 0.282),
         darkAlpha: 0.72
+    )
+    static let commandGlassTint = Color.shellAdaptive(
+        light: (0.720, 0.730, 0.790),
+        lightAlpha: 1.0,
+        dark: (0.215, 0.235, 0.282),
+        darkAlpha: 0.72
+    )
+    static let titlebarToolGlassTint = Color.shellAdaptive(
+        light: (0.720, 0.730, 0.790),
+        lightAlpha: 1.0,
+        dark: (0.215, 0.235, 0.282),
+        darkAlpha: 0.70
     )
     static let railBase = Color.shellAdaptive(
         light: (1.0, 1.0, 1.0),
@@ -90,7 +128,7 @@ enum ShellPalette {
     )
     static let railSelection = Color.shellAdaptive(
         light: (1.0, 1.0, 1.0),
-        lightAlpha: 0.22,
+        lightAlpha: 0.30,
         dark: (0.235, 0.255, 0.310),
         darkAlpha: 0.78
     )
@@ -145,20 +183,20 @@ enum ShellPalette {
         darkAlpha: 0.34
     )
     static let materialScrim = Color.shellAdaptive(
-        light: (0.922, 0.924, 0.953),
-        lightAlpha: 0.35,
+        light: (0.760, 0.770, 0.865),
+        lightAlpha: 0.34,
         dark: (0.030, 0.037, 0.050),
         darkAlpha: 0.78
     )
     static let materialTopWash = Color.shellAdaptive(
         light: (1.0, 1.0, 1.0),
-        lightAlpha: 0.06,
+        lightAlpha: 0.08,
         dark: (0.130, 0.150, 0.205),
         darkAlpha: 0.18
     )
     static let materialBottomShade = Color.shellAdaptive(
-        light: (0.84, 0.86, 0.92),
-        lightAlpha: 0.04,
+        light: (0.60, 0.62, 0.76),
+        lightAlpha: 0.06,
         dark: (0.012, 0.016, 0.024),
         darkAlpha: 0.34
     )
@@ -173,6 +211,132 @@ enum ShellRadii {
     static let row: CGFloat = 8
     static let surface: CGFloat = 10
     static let overlay: CGFloat = 12
+    static let floatingSidebarPanel: CGFloat = 16
+    static let titlebarTool: CGFloat = 9
+    static let terminalSurface: CGFloat = 22
+}
+
+enum ShellSidebarMetrics {
+    static let edgeInset: CGFloat = 12
+    static let rowInset: CGFloat = 10
+    static let iconColumnWidth: CGFloat = 16
+    static let iconPointSize: CGFloat = 12
+    static let trafficLightLeadingInset: CGFloat = 14
+    static let trafficLightTopInset: CGFloat = 16
+    static let trafficLightFallbackGroupWidth: CGFloat = 58
+    static let trafficLightFallbackButtonHeight: CGFloat = 14
+    static let titlebarToolWidth: CGFloat = 31
+    static let titlebarToolHeight: CGFloat = 30
+    static let titlebarToolGapAfterTrafficLights: CGFloat = 12
+    static let titlebarToolSpacing: CGFloat = 6
+    static let commandLauncherGapBelowTrafficLights: CGFloat = 15
+    static let commandLauncherHeight: CGFloat = 34
+}
+
+struct ShellShadowStyle {
+    let color: Color
+    let radius: CGFloat
+    let x: CGFloat
+    let y: CGFloat
+
+    init(color: Color, radius: CGFloat, x: CGFloat = 0, y: CGFloat) {
+        self.color = color
+        self.radius = radius
+        self.x = x
+        self.y = y
+    }
+}
+
+enum ShellShadows {
+    static let none = ShellShadowStyle(color: .clear, radius: 0, y: 0)
+    static let terminalSurface = ShellShadowStyle(color: Color.black.opacity(0.075), radius: 9, y: 3)
+    static let floatingOverlay = ShellShadowStyle(color: Color.black.opacity(0.10), radius: 13, y: 7)
+    static let floatingInput = ShellShadowStyle(color: Color.black.opacity(0.10), radius: 8, y: 3)
+    static let commandPalette = ShellShadowStyle(
+        color: Color.shellAdaptive(
+            light: (0.16, 0.17, 0.24),
+            lightAlpha: 0.18,
+            dark: (0, 0, 0),
+            darkAlpha: 0.38
+        ),
+        radius: 26,
+        y: 15
+    )
+    static let sidebarSelection = ShellShadowStyle(color: Color.black.opacity(0.035), radius: 3, y: 1)
+    static let spaceSelection = ShellShadowStyle(
+        color: ShellPalette.accent.opacity(0.085),
+        radius: 4,
+        y: 1.5
+    )
+}
+
+extension View {
+    func shellShadow(_ style: ShellShadowStyle) -> some View {
+        shadow(color: style.color, radius: style.radius, x: style.x, y: style.y)
+    }
+}
+
+enum ShellAppearanceMode: String, CaseIterable, Identifiable {
+    case system
+    case light
+    case dark
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .system:
+            return "System"
+        case .light:
+            return "Light"
+        case .dark:
+            return "Dark"
+        }
+    }
+
+    var symbolName: String {
+        switch self {
+        case .system:
+            return "circle.lefthalf.filled"
+        case .light:
+            return "sun.max"
+        case .dark:
+            return "moon"
+        }
+    }
+
+    var next: ShellAppearanceMode {
+        switch self {
+        case .system:
+            return .light
+        case .light:
+            return .dark
+        case .dark:
+            return .system
+        }
+    }
+
+    var colorScheme: ColorScheme? {
+        switch self {
+        case .system:
+            return nil
+        case .light:
+            return .light
+        case .dark:
+            return .dark
+        }
+    }
+
+    var nsAppearanceName: NSAppearance.Name? {
+        switch self {
+        case .system:
+            return nil
+        case .light:
+            return .aqua
+        case .dark:
+            return .darkAqua
+        }
+    }
 }
 
 enum ShellMaterialRole {
@@ -194,7 +358,7 @@ enum ShellMaterialRole {
     var visualEffectMaterial: NSVisualEffectView.Material? {
         switch self {
         case .windowBackdrop:
-            return .windowBackground
+            return .sidebar
         case .sidebarGlass:
             return .sidebar
         case .workspaceBackdrop:
@@ -237,7 +401,7 @@ enum ShellMaterialRole {
     var fill: Color {
         switch self {
         case .windowBackdrop:
-            return ShellPalette.window
+            return ShellPalette.windowBackdropTint
         case .sidebarGlass:
             return ShellPalette.materialScrim
         case .workspaceBackdrop:
@@ -478,6 +642,90 @@ struct ShellMaterialShape<MaterialShape: InsettableShape>: View {
                     shape.stroke(role.resolvedStroke(increasedContrast: increasedContrast), lineWidth: 1)
                 }
             }
+    }
+}
+
+struct ShellLiquidGlassSurface<SurfaceShape: InsettableShape>: View {
+    let shape: SurfaceShape
+    var tint = ShellPalette.sidebarControl
+    var tintOpacity: Double = 0.16
+    var strokeOpacity: Double = 0.20
+    var usesSystemGlassInLightMode = false
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+
+    var body: some View {
+        let increasedContrast = NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast
+
+        if usesSystemGlassEffect(increasedContrast: increasedContrast) {
+            baseFill(increasedContrast: increasedContrast)
+                .glassEffect(.regular.interactive(), in: shape)
+        } else {
+            baseFill(increasedContrast: increasedContrast)
+        }
+    }
+
+    private func usesSystemGlassEffect(increasedContrast: Bool) -> Bool {
+        guard !reduceTransparency, !increasedContrast else { return false }
+        return colorScheme == .dark || usesSystemGlassInLightMode
+    }
+
+    @ViewBuilder
+    private func baseFill(increasedContrast: Bool) -> some View {
+        if colorScheme == .light {
+            lightInsetFill(increasedContrast: increasedContrast)
+        } else {
+            darkGlassFill(increasedContrast: increasedContrast)
+        }
+    }
+
+    private func lightInsetFill(increasedContrast: Bool) -> some View {
+        let effectiveTintOpacity = increasedContrast ? max(tintOpacity, 0.26) : tintOpacity
+        let effectiveStrokeOpacity = increasedContrast ? 0.44 : max(strokeOpacity, 0.12)
+
+        return ZStack {
+            shape
+                .fill(
+                    tint.opacity(
+                        increasedContrast ? max(effectiveTintOpacity, 0.34) : effectiveTintOpacity
+                    )
+                )
+
+            shape
+                .strokeBorder(
+                    ShellPalette.line.opacity(increasedContrast ? 0.50 : effectiveStrokeOpacity),
+                    lineWidth: 0.55
+                )
+        }
+    }
+
+    private func darkGlassFill(increasedContrast: Bool) -> some View {
+        return ZStack {
+            shape
+                .fill(
+                    tint.opacity(
+                        increasedContrast ? max(tintOpacity, 0.34) : tintOpacity
+                    )
+                )
+
+            shape
+                .fill(
+                    LinearGradient(
+                        colors: [
+                            Color.white.opacity(0.045),
+                            Color.white.opacity(0),
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+
+            shape
+                .strokeBorder(
+                    ShellPalette.line.opacity(increasedContrast ? 0.50 : strokeOpacity),
+                    lineWidth: 0.7
+                )
+        }
     }
 }
 #endif

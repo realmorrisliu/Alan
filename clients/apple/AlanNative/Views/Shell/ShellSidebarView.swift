@@ -10,6 +10,8 @@ struct ShellSidebarView: View {
     let openCommandTab: () -> Void
     @State private var hoveredTabID: String?
     @State private var hoveredSpaceID: String?
+    @State private var isCommandLauncherHovered = false
+    @State private var tabListScrollOffsetY: CGFloat = 0
 
     var body: some View {
         GeometryReader { proxy in
@@ -19,18 +21,24 @@ struct ShellSidebarView: View {
             ShellSidebarSwipeMonitor(onUpdate: onSpaceSwipe)
         }
         .scrollDisabled(isTabListScrollDisabled)
+        .onChange(of: sourceSpaceID) { _, _ in
+            tabListScrollOffsetY = 0
+        }
     }
 
     private func sidebarContent(pageWidth: CGFloat) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 0) {
             commandLauncher
-                .padding(.horizontal, 12)
+                .padding(.horizontal, ShellSidebarMetrics.edgeInset)
+                .padding(.bottom, 10)
             spaceLabelRow(pageWidth: pageWidth)
+                .padding(.bottom, 2)
             tabSection(pageWidth: pageWidth)
             spaceDock
-                .padding(.horizontal, 12)
+                .padding(.horizontal, ShellSidebarMetrics.edgeInset)
+                .padding(.top, 10)
         }
-        .padding(.top, chromeMetrics.trafficLightsTopInset)
+        .padding(.top, chromeMetrics.commandLauncherTopInset)
         .padding(.bottom, 15)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
@@ -49,30 +57,41 @@ struct ShellSidebarView: View {
         Button(action: openCommandTab) {
             HStack(spacing: 10) {
                 Image(systemName: "magnifyingglass")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(.secondary)
-                Text("Go to or Command...")
+                    .font(.system(size: ShellSidebarMetrics.iconPointSize, weight: .semibold))
+                    .foregroundStyle(commandLauncherForeground)
+                    .frame(width: ShellSidebarMetrics.iconColumnWidth)
+                Text("Ask Alan...")
                     .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(commandLauncherForeground)
                     .lineLimit(1)
                 Spacer(minLength: 0)
             }
-            .padding(.horizontal, 11)
-            .padding(.vertical, 10)
-            .background(
-                ShellMaterialShape(
-                    role: .controlGlass,
-                    shape: RoundedRectangle(cornerRadius: ShellRadii.row, style: .continuous)
+            .padding(.horizontal, ShellSidebarMetrics.rowInset)
+            .frame(maxWidth: .infinity, minHeight: 34, alignment: .leading)
+            .background {
+                ShellLiquidGlassSurface(
+                    shape: Capsule(),
+                    tint: ShellPalette.commandGlassTint,
+                    tintOpacity: isCommandLauncherHovered ? 0.22 : 0.18,
+                    strokeOpacity: isCommandLauncherHovered ? 0.22 : 0.16
                 )
-            )
+            }
+            .contentShape(Capsule())
         }
         .buttonStyle(.plain)
-        .help("Go to or Command, Command-P")
-        .accessibilityLabel("Go to or Command")
+        .onHover { isHovering in
+            isCommandLauncherHovered = isHovering
+        }
+        .help("Ask Alan, Command-P")
+        .accessibilityLabel("Ask Alan")
+    }
+
+    private var commandLauncherForeground: Color {
+        ShellPalette.sidebarMutedInk.opacity(isCommandLauncherHovered ? 0.92 : 0.80)
     }
 
     private func tabSection(pageWidth: CGFloat) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 0) {
             GeometryReader { proxy in
                 ZStack(alignment: .topLeading) {
                     tabListPage(for: sourceSpaceID)
@@ -87,6 +106,9 @@ struct ShellSidebarView: View {
                     }
                 }
                 .clipped()
+                .overlay(alignment: .top) {
+                    ShellSidebarScrollBoundary(progress: tabListBoundaryProgress)
+                }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -94,11 +116,19 @@ struct ShellSidebarView: View {
 
     private func tabListPage(for spaceID: String?) -> some View {
         ScrollView(.vertical, showsIndicators: false) {
+            GeometryReader { proxy in
+                Color.clear.preference(
+                    key: ShellSidebarTabListOffsetPreferenceKey.self,
+                    value: proxy.frame(in: .named(tabListCoordinateSpaceName(for: spaceID))).minY
+                )
+            }
+            .frame(height: 0)
+
             VStack(alignment: .leading, spacing: 4) {
                 if let space = space(for: spaceID) {
                     if space.tabs.isEmpty {
                         ShellCompactEmptyAction(
-                            title: "New tab",
+                            title: "New Tab",
                             systemImage: "plus",
                             action: {
                                 _ = host.openTerminalTab()
@@ -112,7 +142,7 @@ struct ShellSidebarView: View {
                     }
                 } else {
                     ShellCompactEmptyAction(
-                        title: "New space",
+                        title: "New Space",
                         systemImage: "plus",
                         action: {
                             _ = host.createTerminalSpace()
@@ -122,6 +152,13 @@ struct ShellSidebarView: View {
                 }
             }
             .frame(maxWidth: .infinity, alignment: .topLeading)
+            .padding(.top, 2)
+            .padding(.horizontal, ShellSidebarMetrics.edgeInset)
+        }
+        .coordinateSpace(name: tabListCoordinateSpaceName(for: spaceID))
+        .onPreferenceChange(ShellSidebarTabListOffsetPreferenceKey.self) { offsetY in
+            guard spaceID == sourceSpaceID else { return }
+            tabListScrollOffsetY = offsetY
         }
     }
 
@@ -162,7 +199,7 @@ struct ShellSidebarView: View {
             } label: {
                 Image(systemName: "plus")
                     .font(.system(size: 12.5, weight: .semibold))
-                    .foregroundStyle(.primary)
+                    .foregroundStyle(ShellPalette.sidebarInk.opacity(0.76))
                     .frame(width: 30, height: 30)
                     .background {
                         if hoveredSpaceID == "__new_space__" {
@@ -207,6 +244,14 @@ struct ShellSidebarView: View {
 
     private func targetOffset(in width: CGFloat) -> CGFloat {
         activeTransition?.targetOffset(in: width) ?? 0
+    }
+
+    private var tabListBoundaryProgress: CGFloat {
+        min(max(-tabListScrollOffsetY / 18, 0), 1)
+    }
+
+    private func tabListCoordinateSpaceName(for spaceID: String?) -> String {
+        "ShellSidebarTabListScroll-\(spaceID ?? "none")"
     }
 
     private func space(for spaceID: String?) -> ShellSpace? {
@@ -409,6 +454,40 @@ struct ShellSidebarView: View {
     }
 }
 
+private struct ShellSidebarTabListOffsetPreferenceKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
+    }
+}
+
+private struct ShellSidebarScrollBoundary: View {
+    let progress: CGFloat
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Rectangle()
+                .fill(ShellPalette.line.opacity(0.36))
+                .frame(height: 0.5)
+
+            LinearGradient(
+                colors: [
+                    ShellPalette.sidebarInk.opacity(0.10),
+                    ShellPalette.sidebarInk.opacity(0.035),
+                    ShellPalette.sidebarInk.opacity(0),
+                ],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            .frame(height: 14)
+        }
+        .frame(maxWidth: .infinity, alignment: .top)
+        .opacity(progress)
+        .allowsHitTesting(false)
+    }
+}
+
 private struct ShellSidebarSpaceHeaderPager: View {
     @ObservedObject var host: ShellHostController
     let transition: ShellSpaceTransition?
@@ -449,25 +528,19 @@ private struct ShellSidebarSpaceHeaderPager: View {
         let space = space(for: spaceID)
         return HStack(spacing: 10) {
             Image(systemName: symbolName(for: space))
-                .font(.system(size: 10.5, weight: .semibold))
-                .foregroundStyle(ShellPalette.accent)
-                .frame(width: 14)
+                .font(.system(size: ShellSidebarMetrics.iconPointSize, weight: .semibold))
+                .foregroundStyle(ShellPalette.sidebarMutedInk.opacity(0.78))
+                .frame(width: ShellSidebarMetrics.iconColumnWidth)
 
             Text(space?.title ?? "Space")
                 .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(ShellPalette.ink)
+                .foregroundStyle(ShellPalette.sidebarMutedInk.opacity(0.82))
                 .lineLimit(1)
         }
-        .padding(.horizontal, 8)
+        .padding(.horizontal, ShellSidebarMetrics.rowInset)
         .padding(.vertical, 5)
-        .background(
-            ShellMaterialShape(
-                role: .controlGlass,
-                shape: RoundedRectangle(cornerRadius: ShellRadii.control, style: .continuous)
-            )
-        )
-        .padding(.leading, 2)
-        .padding(.trailing, 12)
+        .padding(.leading, ShellSidebarMetrics.edgeInset)
+        .padding(.trailing, ShellSidebarMetrics.edgeInset)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
@@ -522,11 +595,11 @@ private struct ShellSpaceSwitcherItem: View {
             }
             Image(systemName: symbolName)
                 .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(isSelected || isPreviewed ? ShellPalette.accent : .primary)
+                .foregroundStyle(isSelected || isPreviewed ? ShellPalette.accent : ShellPalette.sidebarInk.opacity(0.74))
         }
         .frame(width: 30, height: 30)
-        .scaleEffect(isSelected ? 1 : (isHovered || isPreviewed ? 1.03 : 1))
-        .shadow(color: isSelected || isPreviewed ? ShellPalette.accent.opacity(0.12) : .clear, radius: 8, y: 3)
+        .scaleEffect(isSelected ? 1 : (isHovered || isPreviewed ? 1.015 : 1))
+        .shellShadow(isSelected || isPreviewed ? ShellShadows.spaceSelection : ShellShadows.none)
         .animation(reduceMotion ? nil : .easeOut(duration: 0.16), value: isHovered)
         .animation(reduceMotion ? nil : .easeOut(duration: 0.16), value: isSelected)
         .animation(reduceMotion ? nil : .easeOut(duration: 0.16), value: isPreviewed)
@@ -571,6 +644,89 @@ private struct ShellTabSplitSummary: Equatable {
     }
 }
 
+private enum ShellSidebarRowVisualState: Equatable {
+    case normal
+    case hover
+    case selected
+
+    var cornerRadius: CGFloat {
+        switch self {
+        case .normal:
+            return ShellRadii.row
+        case .hover:
+            return ShellRadii.surface
+        case .selected:
+            return ShellRadii.overlay
+        }
+    }
+
+    var fill: Color? {
+        switch self {
+        case .normal:
+            return nil
+        case .hover:
+            return ShellPalette.sidebarRowHover
+        case .selected:
+            return ShellPalette.sidebarRowSelected
+        }
+    }
+
+    var stroke: Color {
+        switch self {
+        case .normal:
+            return .clear
+        case .hover:
+            return ShellPalette.line.opacity(0.08)
+        case .selected:
+            return ShellPalette.line.opacity(0.12)
+        }
+    }
+
+    var shadow: ShellShadowStyle {
+        switch self {
+        case .normal, .hover:
+            return ShellShadows.none
+        case .selected:
+            return ShellShadows.sidebarSelection
+        }
+    }
+}
+
+private struct ShellSidebarRowBackground: View {
+    @Environment(\.colorScheme) private var colorScheme
+    let state: ShellSidebarRowVisualState
+
+    var body: some View {
+        if let fill = state.fill {
+            let shape = RoundedRectangle(cornerRadius: state.cornerRadius, style: .continuous)
+            shape
+                .fill(fill)
+                .overlay {
+                    shape.stroke(state.stroke, lineWidth: 0.5)
+                }
+                .overlay {
+                    if colorScheme == .light && state == .selected {
+                        shape
+                            .stroke(Color.white.opacity(0.34), lineWidth: 0.55)
+                            .mask {
+                                shape.fill(
+                                    LinearGradient(
+                                        colors: [
+                                            Color.white,
+                                            Color.white.opacity(0),
+                                        ],
+                                        startPoint: .top,
+                                        endPoint: .bottom
+                                    )
+                                )
+                            }
+                    }
+                }
+                .shellShadow(state.shadow)
+        }
+    }
+}
+
 private struct ShellTabSidebarRow: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @FocusState private var isKeyboardFocused: Bool
@@ -588,78 +744,108 @@ private struct ShellTabSidebarRow: View {
     let onClose: () -> Void
 
     var body: some View {
-        HStack(spacing: 10) {
-            Image(systemName: iconName)
-                .font(.system(size: 11.5, weight: .semibold))
-                .foregroundStyle(isSelected ? ShellPalette.accent : .secondary)
-                .frame(width: 14)
+        ZStack(alignment: .trailing) {
+            HStack(spacing: 10) {
+                Image(systemName: iconName)
+                    .font(.system(size: ShellSidebarMetrics.iconPointSize, weight: .semibold))
+                    .foregroundStyle(iconForeground)
+                    .frame(width: ShellSidebarMetrics.iconColumnWidth)
 
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 6) {
-                    Text(title)
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(.primary)
-                        .lineLimit(1)
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 6) {
+                        Text(title)
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(titleForeground)
+                            .lineLimit(1)
 
-                    if showsAlanMarker {
-                        Image(systemName: "sparkles")
-                            .font(.system(size: 9, weight: .bold))
-                            .foregroundStyle(ShellPalette.accent)
+                        if showsAlanMarker {
+                            Image(systemName: "sparkles")
+                                .font(.system(size: 9, weight: .bold))
+                                .foregroundStyle(ShellPalette.accent)
+                        }
                     }
+
+                    Text(subtitle)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(subtitleForeground)
+                        .lineLimit(1)
                 }
 
-                Text(subtitle)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
+                Spacer(minLength: 8)
 
-            Spacer(minLength: 8)
-
-            if let splitSummary {
-                ShellSplitTopologyIndicator(
-                    summary: splitSummary,
-                    onFocusPane: onFocusPane,
-                    onFocusNextSplitPane: onFocusNextSplitPane
-                )
-            }
-
-            Button(action: onClose) {
-                Image(systemName: "xmark")
-                    .font(.system(size: 9, weight: .bold))
-                    .foregroundStyle(.secondary)
-                    .frame(width: 18, height: 18)
-            }
-            .buttonStyle(.plain)
-            .opacity(isInteractionActive ? 1 : 0)
-            .accessibilityHidden(!isInteractionActive)
-            .help("Close tab")
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 7)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            Group {
-                if isSelected || isHovered || isKeyboardFocused {
-                    ShellMaterialShape(
-                        role: isSelected ? .controlGlassSelected : .controlGlassHover,
-                        shape: RoundedRectangle(cornerRadius: ShellRadii.row, style: .continuous)
+                if let splitSummary {
+                    ShellSplitTopologyIndicator(
+                        summary: splitSummary,
+                        onFocusPane: onFocusPane,
+                        onFocusNextSplitPane: onFocusNextSplitPane
                     )
                 }
             }
+            .padding(.trailing, 24)
+
+            Button(action: onClose) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 9.5, weight: .bold))
+                    .foregroundStyle(closeForeground)
+                    .frame(width: 20, height: 20)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .opacity(showsCloseButton ? 1 : 0)
+            .allowsHitTesting(showsCloseButton)
+            .accessibilityHidden(!showsCloseButton)
+            .help("Close tab")
+        }
+        .padding(.horizontal, ShellSidebarMetrics.rowInset)
+        .padding(.vertical, 7)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            ShellSidebarRowBackground(state: visualState)
         )
-        .scaleEffect(isHovered && !isSelected ? 1.005 : 1)
-        .animation(reduceMotion ? nil : .easeOut(duration: 0.16), value: isHovered)
-        .animation(reduceMotion ? nil : .easeOut(duration: 0.16), value: isSelected)
-        .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: isInteractionActive)
+        .contentShape(RoundedRectangle(cornerRadius: visualState.cornerRadius, style: .continuous))
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.14), value: visualState)
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: showsCloseButton)
         .focusable()
         .focused($isKeyboardFocused)
+        .focusEffectDisabled()
         .accessibilityLabel(accessibilityLabel)
         .help("Select tab")
     }
 
+    private var visualState: ShellSidebarRowVisualState {
+        if isSelected {
+            return .selected
+        }
+
+        if isHovered || isKeyboardFocused {
+            return .hover
+        }
+
+        return .normal
+    }
+
     private var isInteractionActive: Bool {
         isHovered || showsCloseAffordance || isKeyboardFocused
+    }
+
+    private var showsCloseButton: Bool {
+        isSelected || isInteractionActive
+    }
+
+    private var iconForeground: Color {
+        isSelected ? ShellPalette.accent : ShellPalette.sidebarMutedInk.opacity(0.84)
+    }
+
+    private var titleForeground: Color {
+        isSelected ? ShellPalette.sidebarInk : ShellPalette.sidebarInk.opacity(0.88)
+    }
+
+    private var subtitleForeground: Color {
+        isSelected ? ShellPalette.sidebarMutedInk.opacity(0.90) : ShellPalette.sidebarMutedInk.opacity(0.68)
+    }
+
+    private var closeForeground: Color {
+        isSelected ? ShellPalette.sidebarInk.opacity(0.50) : ShellPalette.sidebarMutedInk.opacity(0.72)
     }
 
     private var accessibilityLabel: String {
@@ -751,6 +937,9 @@ private struct ShellSplitTopologyIndicator: View {
 }
 
 private struct ShellCompactEmptyAction: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @FocusState private var isKeyboardFocused: Bool
+    @State private var isHovered = false
     let title: String
     let systemImage: String
     let action: () -> Void
@@ -764,19 +953,31 @@ private struct ShellCompactEmptyAction: View {
                     .font(.system(size: 12, weight: .semibold))
                 Spacer(minLength: 0)
             }
-            .foregroundStyle(.secondary)
+            .foregroundStyle(foreground)
             .padding(.horizontal, 10)
             .padding(.vertical, 8)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(
-                ShellMaterialShape(
-                    role: .panelSoft,
-                    shape: RoundedRectangle(cornerRadius: ShellRadii.row, style: .continuous)
-                )
+                ShellSidebarRowBackground(state: visualState)
             )
         }
         .buttonStyle(.plain)
+        .focusable()
+        .focused($isKeyboardFocused)
+        .focusEffectDisabled()
+        .onHover { isHovered = $0 }
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.14), value: visualState)
         .accessibilityLabel(title)
+    }
+
+    private var visualState: ShellSidebarRowVisualState {
+        isHovered || isKeyboardFocused ? .hover : .normal
+    }
+
+    private var foreground: Color {
+        isHovered || isKeyboardFocused
+            ? ShellPalette.sidebarMutedInk.opacity(0.86)
+            : ShellPalette.sidebarMutedInk.opacity(0.58)
     }
 }
 #endif

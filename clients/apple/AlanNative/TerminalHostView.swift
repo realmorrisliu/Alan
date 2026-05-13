@@ -182,7 +182,7 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
     private func configureView() {
         wantsLayer = true
         layer?.backgroundColor = NSColor(calibratedRed: 0.06, green: 0.08, blue: 0.10, alpha: 1).cgColor
-        layer?.cornerRadius = ShellRadii.surface
+        layer?.cornerRadius = ShellRadii.terminalSurface
         layer?.cornerCurve = .continuous
         layer?.masksToBounds = true
         layer?.borderWidth = 0

@@ -370,7 +370,7 @@ require_pattern \
 
 require_pattern \
     "clients/apple/AlanNative/Views/Shell/ShellSidebarView.swift" \
-    "Go to or Command\\.\\.\\." \
+    "Ask Alan\\.\\.\\." \
     "command entry copy must match the accepted shell command UI label"
 
 require_pattern \

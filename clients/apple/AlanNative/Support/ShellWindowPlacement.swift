@@ -5,10 +5,11 @@ import AppKit
 
 struct ShellWindowPlacementView: NSViewRepresentable {
     @Binding var metrics: ShellWindowChromeMetrics
+    let appearanceMode: ShellAppearanceMode
 
     func makeNSView(context: Context) -> ShellWindowPlacementNSView {
         let metricsBinding = _metrics
-        return ShellWindowPlacementNSView { metrics in
+        return ShellWindowPlacementNSView(appearanceMode: appearanceMode) { metrics in
             let newMetrics = metrics
             DispatchQueue.main.async {
                 guard metricsBinding.wrappedValue != newMetrics else { return }
@@ -19,6 +20,7 @@ struct ShellWindowPlacementView: NSViewRepresentable {
 
     func updateNSView(_ nsView: ShellWindowPlacementNSView, context: Context) {
         let metricsBinding = _metrics
+        nsView.updateAppearanceMode(appearanceMode)
         nsView.updateMetricsHandler { metrics in
             let newMetrics = metrics
             DispatchQueue.main.async {
@@ -31,14 +33,43 @@ struct ShellWindowPlacementView: NSViewRepresentable {
 }
 
 struct ShellWindowChromeMetrics: Equatable {
-    var trafficLightsTopInset: CGFloat = 0
+    var trafficLightGroupFrame = CGRect(
+        x: ShellSidebarMetrics.trafficLightLeadingInset,
+        y: ShellSidebarMetrics.trafficLightTopInset,
+        width: ShellSidebarMetrics.trafficLightFallbackGroupWidth,
+        height: ShellSidebarMetrics.trafficLightFallbackButtonHeight
+    )
+
+    var titlebarToolLeadingInset: CGFloat {
+        trafficLightGroupFrame.maxX + ShellSidebarMetrics.titlebarToolGapAfterTrafficLights
+    }
+
+    var titlebarToolTopInset: CGFloat {
+        max(
+            0,
+            trafficLightGroupFrame.midY - (ShellSidebarMetrics.titlebarToolHeight / 2)
+        )
+    }
+
+    var commandLauncherTopInset: CGFloat {
+        trafficLightGroupFrame.maxY + ShellSidebarMetrics.commandLauncherGapBelowTrafficLights
+    }
+
+    var collapsedRevealHeaderHeight: CGFloat {
+        commandLauncherTopInset + ShellSidebarMetrics.commandLauncherHeight + 8
+    }
 }
 
 final class ShellWindowPlacementNSView: NSView {
+    private var appearanceMode: ShellAppearanceMode
     private var metricsHandler: (ShellWindowChromeMetrics) -> Void
     private var lastPublishedMetrics: ShellWindowChromeMetrics?
 
-    init(metricsHandler: @escaping (ShellWindowChromeMetrics) -> Void) {
+    init(
+        appearanceMode: ShellAppearanceMode,
+        metricsHandler: @escaping (ShellWindowChromeMetrics) -> Void
+    ) {
+        self.appearanceMode = appearanceMode
         self.metricsHandler = metricsHandler
         super.init(frame: .zero)
     }
@@ -62,14 +93,17 @@ final class ShellWindowPlacementNSView: NSView {
         metricsHandler = handler
     }
 
+    func updateAppearanceMode(_ mode: ShellAppearanceMode) {
+        appearanceMode = mode
+    }
+
     func resolveWindowIfNeeded() {
         DispatchQueue.main.async { [weak self] in
-            guard let window = self?.window else { return }
-            AlanShellWindowPlacement.apply(to: window)
-            let metrics = AlanShellWindowPlacement.chromeMetrics(for: window)
-            guard self?.lastPublishedMetrics != metrics else { return }
-            self?.lastPublishedMetrics = metrics
-            self?.metricsHandler(metrics)
+            guard let self, let window = self.window else { return }
+            let metrics = AlanShellWindowPlacement.apply(to: window, appearanceMode: self.appearanceMode)
+            guard self.lastPublishedMetrics != metrics else { return }
+            self.lastPublishedMetrics = metrics
+            self.metricsHandler(metrics)
         }
     }
 }
@@ -77,8 +111,13 @@ final class ShellWindowPlacementNSView: NSView {
 private enum AlanShellWindowPlacement {
     private static var positionedWindowNumbers: Set<Int> = []
 
-    static func apply(to window: NSWindow) {
+    static func apply(to window: NSWindow, appearanceMode: ShellAppearanceMode) -> ShellWindowChromeMetrics {
         window.title = "Alan"
+        window.appearance = appearanceMode.nsAppearanceName.flatMap(NSAppearance.init(named:))
+        window.titleVisibility = .hidden
+        window.titlebarAppearsTransparent = true
+        window.titlebarSeparatorStyle = .none
+        window.styleMask.insert(.fullSizeContentView)
         window.isMovableByWindowBackground = true
         window.minSize = NSSize(width: 1180, height: 760)
         window.tabbingMode = .disallowed
@@ -94,28 +133,79 @@ private enum AlanShellWindowPlacement {
         }
 
         NSApp.activate(ignoringOtherApps: true)
+
+        return chromeMetrics(for: window)
     }
 
-    static func chromeMetrics(for window: NSWindow) -> ShellWindowChromeMetrics {
-        let buttonFrames = [
-            NSWindow.ButtonType.closeButton,
-            .miniaturizeButton,
-            .zoomButton,
-        ].compactMap { buttonType -> NSRect? in
-            window.standardWindowButton(buttonType)?.frame
+    private static func chromeMetrics(for window: NSWindow) -> ShellWindowChromeMetrics {
+        var metrics = ShellWindowChromeMetrics()
+
+        if let trafficLightGroupFrame = repositionStandardWindowButtons(in: window) {
+            metrics.trafficLightGroupFrame = trafficLightGroupFrame
         }
 
-        guard let firstFrame = buttonFrames.first else {
-            return ShellWindowChromeMetrics()
+        return metrics
+    }
+
+    private static func repositionStandardWindowButtons(in window: NSWindow) -> CGRect? {
+        let buttonTypes: [NSWindow.ButtonType] = [.closeButton, .miniaturizeButton, .zoomButton]
+        let buttons = buttonTypes.compactMap { window.standardWindowButton($0) }
+
+        guard buttons.count == buttonTypes.count,
+              let superview = buttons.first?.superview,
+              buttons.allSatisfy({ $0.superview === superview })
+        else {
+            return nil
         }
 
-        let trafficLightsFrame = buttonFrames.dropFirst().reduce(firstFrame) { partialResult, frame in
-            partialResult.union(frame)
-        }
-        let topInset = max(0, trafficLightsFrame.maxY + 10)
+        let currentGroupFrame = buttons
+            .map(\.frame)
+            .reduce(NSRect.null) { $0.union($1) }
+        guard !currentGroupFrame.isNull else { return nil }
 
-        return ShellWindowChromeMetrics(
-            trafficLightsTopInset: ceil(topInset)
+        let currentVisualTopInset = visualTopInset(of: currentGroupFrame, in: superview)
+        let deltaX = ShellSidebarMetrics.trafficLightLeadingInset - currentGroupFrame.minX
+        let deltaTop = ShellSidebarMetrics.trafficLightTopInset - currentVisualTopInset
+        let deltaY = superview.isFlipped ? deltaTop : -deltaTop
+
+        for button in buttons {
+            var frame = button.frame
+            frame.origin.x += deltaX
+            frame.origin.y += deltaY
+            button.setFrameOrigin(frame.origin)
+        }
+
+        let movedGroupFrame = buttons
+            .map(\.frame)
+            .reduce(NSRect.null) { $0.union($1) }
+        guard !movedGroupFrame.isNull else { return nil }
+
+        return topLeadingFrame(for: movedGroupFrame, in: superview, window: window)
+    }
+
+    private static func visualTopInset(of frame: NSRect, in view: NSView) -> CGFloat {
+        if view.isFlipped {
+            return frame.minY
+        }
+
+        return max(0, view.bounds.height - frame.maxY)
+    }
+
+    private static func topLeadingFrame(
+        for frame: NSRect,
+        in view: NSView,
+        window: NSWindow
+    ) -> CGRect? {
+        guard let contentView = window.contentView else { return nil }
+        let windowFrame = view.convert(frame, to: nil)
+        let contentFrame = contentView.convert(windowFrame, from: nil)
+        let topInset = visualTopInset(of: contentFrame, in: contentView)
+
+        return CGRect(
+            x: contentFrame.minX,
+            y: topInset,
+            width: contentFrame.width,
+            height: contentFrame.height
         )
     }
 

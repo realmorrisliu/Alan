@@ -15,11 +15,12 @@
 - [x] 2.4 Remove sidebar notification dots while keeping Alan attachment inline and attention available to accessibility/control surfaces.
 - [x] 2.5 Add compact split topology indicators to split tab rows, hiding them for single-pane tabs.
 - [x] 2.6 Route split indicator activation through pane focus without mutating split layout or divider ratios.
+- [x] 2.7 Separate tab row visual states so normal rows are containerless, hover/focus rows are subtle, selected rows are strongest, close actions do not shift layout, and creation rows stay muted until interaction.
 
 ## 3. Verification
 
 - [x] 3.1 Run focused Apple build or shell UI checks affected by sidebar changes.
 - [x] 3.2 Capture screenshot or manual review notes for default, selected, hover, no-notification-dot, and empty sidebar states.
-- [ ] 3.3 Verify left/right sidebar swipe tracks gesture translation directly, commits on fast horizontal flicks, keeps the space title and tab list on the same full-width page motion, avoids static side padding gaps, holds position while fingers pause, honors zero-delta release, keeps horizontal and vertical movement axis-locked, previews sidebar content, keeps the workspace stable during drag, commits, cancels, resists edges, and leaves vertical tab-list scrolling intact.
+- [x] 3.3 Verify left/right sidebar swipe tracks gesture translation directly, commits on fast horizontal flicks, keeps the space title and tab list on the same full-width page motion, avoids static side padding gaps, holds position while fingers pause, honors zero-delta release, keeps horizontal and vertical movement axis-locked, previews sidebar content, keeps the workspace stable during drag, commits, cancels, resists edges, and leaves vertical tab-list scrolling intact.
 - [x] 3.4 Verify split indicators for single-pane, two-pane horizontal, two-pane vertical, complex split, focus switching, and accessibility activation.
 - [x] 3.5 Run `openspec validate --all --strict` before PR.

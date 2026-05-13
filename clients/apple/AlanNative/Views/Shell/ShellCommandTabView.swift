@@ -76,68 +76,8 @@ struct ShellCommandTabView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .center, spacing: 12) {
-                Image(systemName: "magnifyingglass")
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(ShellPalette.accent)
-
-                TextField(
-                    "",
-                    text: $query,
-                    prompt: Text("Go to or Command...")
-                        .foregroundStyle(ShellPalette.mutedInk.opacity(0.9))
-                )
-                .textFieldStyle(.plain)
-                .font(.system(size: 17, weight: .medium))
-                .foregroundStyle(ShellPalette.ink)
-                .focused($isQueryFocused)
-                .onChange(of: query) { _, _ in
-                    unresolvedMessage = nil
-                }
-                .onSubmit {
-                    submit()
-                }
-                .onKeyPress(.return) {
-                    submit()
-                    return .handled
-                }
-
-                Text("⌘P")
-                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(ShellPalette.mutedInk.opacity(0.85))
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 4)
-                    .background(
-                        ShellMaterialShape(
-                            role: .controlGlass,
-                            shape: RoundedRectangle(
-                                cornerRadius: ShellRadii.control,
-                                style: .continuous
-                            )
-                        )
-                    )
-
-                Button {
-                    dismissAndRestoreFocus()
-                } label: {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 11, weight: .bold))
-                        .foregroundStyle(ShellPalette.mutedInk)
-                        .frame(width: 26, height: 26)
-                        .background(
-                            ShellMaterialShape(
-                                role: .controlGlass,
-                                shape: RoundedRectangle(
-                                    cornerRadius: ShellRadii.control,
-                                    style: .continuous
-                                )
-                            )
-                        )
-                }
-                .buttonStyle(.plain)
-                .help("Close command input")
-            }
+        VStack(alignment: .leading, spacing: 9) {
+            commandInputBar
 
             if let unresolvedMessage {
                 Text(unresolvedMessage)
@@ -147,18 +87,7 @@ struct ShellCommandTabView: View {
                     .transition(.opacity)
             }
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 14)
-        .frame(width: 520, alignment: .leading)
-        .background {
-            ShellMaterialBackgroundView(.floatingOverlay)
-                .clipShape(RoundedRectangle(cornerRadius: ShellRadii.overlay, style: .continuous))
-        }
-        .overlay {
-            RoundedRectangle(cornerRadius: ShellRadii.overlay, style: .continuous)
-                .stroke(ShellMaterialRole.floatingOverlay.stroke, lineWidth: 1)
-        }
-        .shadow(color: Color.black.opacity(0.12), radius: 24, y: 14)
+        .frame(width: 560, alignment: .leading)
         .offset(x: unresolvedAttemptID.isMultiple(of: 2) ? 0 : 1.5)
         .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: unresolvedAttemptID)
         .onAppear {
@@ -167,6 +96,68 @@ struct ShellCommandTabView: View {
         .onExitCommand {
             dismissAndRestoreFocus()
         }
+    }
+
+    private var commandInputBar: some View {
+        HStack(alignment: .center, spacing: 12) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(ShellPalette.accent)
+
+            TextField(
+                "",
+                text: $query,
+                prompt: Text("Ask Alan...")
+                    .foregroundStyle(ShellPalette.mutedInk.opacity(0.9))
+            )
+            .textFieldStyle(.plain)
+            .font(.system(size: 17, weight: .medium))
+            .foregroundStyle(ShellPalette.ink)
+            .focused($isQueryFocused)
+            .onChange(of: query) { _, _ in
+                unresolvedMessage = nil
+            }
+            .onSubmit {
+                submit()
+            }
+            .onKeyPress(.return) {
+                submit()
+                return .handled
+            }
+
+            Text("⌘P")
+                .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                .foregroundStyle(ShellPalette.mutedInk.opacity(0.78))
+                .padding(.horizontal, 7)
+                .padding(.vertical, 4)
+                .background(
+                    ShellMaterialShape(
+                        role: .controlGlass,
+                        shape: RoundedRectangle(
+                            cornerRadius: ShellRadii.control,
+                            style: .continuous
+                        )
+                    )
+                )
+
+            Button {
+                dismissAndRestoreFocus()
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(ShellPalette.mutedInk.opacity(0.88))
+                    .frame(width: 26, height: 26)
+                    .contentShape(RoundedRectangle(cornerRadius: ShellRadii.control, style: .continuous))
+            }
+            .buttonStyle(.plain)
+            .help("Close command input")
+        }
+        .padding(.horizontal, 18)
+        .frame(width: 560, height: 56, alignment: .leading)
+        .background {
+            ShellCommandPaletteGlassSurface()
+        }
+        .shellShadow(ShellShadows.commandPalette)
     }
 
     private func submit() {
@@ -222,6 +213,63 @@ struct ShellCommandTabView: View {
         isPresented = false
         DispatchQueue.main.async {
             host.refocusSelectedTerminalPane()
+        }
+    }
+}
+
+private struct ShellCommandPaletteGlassSurface: View {
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.colorScheme) private var colorScheme
+
+    var body: some View {
+        let shape = Capsule()
+
+        if reduceTransparency {
+            surface(shape: shape)
+        } else {
+            surface(shape: shape)
+                .glassEffect(.regular.interactive(), in: shape)
+        }
+    }
+
+    private func surface(shape: Capsule) -> some View {
+        ZStack {
+            ShellMaterialBackgroundView(.floatingOverlay)
+                .clipShape(shape)
+
+            shape
+                .fill(ShellPalette.commandGlassTint.opacity(colorScheme == .light ? 0.18 : 0.10))
+
+            shape
+                .fill(
+                    LinearGradient(
+                        colors: [
+                            Color.white.opacity(colorScheme == .light ? 0.44 : 0.12),
+                            Color.white.opacity(colorScheme == .light ? 0.06 : 0.02),
+                            ShellPalette.sidebarInk.opacity(colorScheme == .light ? 0.035 : 0.10),
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+
+            shape
+                .strokeBorder(ShellPalette.line.opacity(colorScheme == .light ? 0.28 : 0.30), lineWidth: 0.8)
+
+            shape
+                .strokeBorder(Color.white.opacity(colorScheme == .light ? 0.50 : 0.16), lineWidth: 0.65)
+                .mask {
+                    shape.fill(
+                        LinearGradient(
+                            colors: [
+                                Color.white,
+                                Color.white.opacity(0),
+                            ],
+                            startPoint: .top,
+                            endPoint: .center
+                        )
+                    )
+                }
         }
     }
 }

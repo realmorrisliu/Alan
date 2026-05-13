@@ -452,7 +452,7 @@ struct TerminalPaneView: View {
 }
 
 private struct ShellTerminalSurfaceFrame: ViewModifier {
-    private let shape = RoundedRectangle(cornerRadius: ShellRadii.surface, style: .continuous)
+    private let shape = RoundedRectangle(cornerRadius: ShellRadii.terminalSurface, style: .continuous)
 
     func body(content: Content) -> some View {
         content
@@ -469,11 +469,7 @@ private struct ShellTerminalSurfaceFrame: ViewModifier {
                     lineWidth: 1
                 )
             }
-            .shadow(
-                color: Color.black.opacity(0.10),
-                radius: 18,
-                y: 8
-            )
+            .shellShadow(ShellShadows.terminalSurface)
     }
 }
 
@@ -862,7 +858,7 @@ private struct ShellFindBarView: View {
             RoundedRectangle(cornerRadius: ShellRadii.surface, style: .continuous)
                 .stroke(ShellPalette.line.opacity(0.35), lineWidth: 1)
         }
-        .shadow(color: Color.black.opacity(0.12), radius: 14, y: 6)
+        .shellShadow(ShellShadows.floatingInput)
         .onAppear {
             query = searchState.query
             isFocused = true

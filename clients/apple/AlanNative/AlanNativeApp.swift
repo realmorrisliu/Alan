@@ -6,6 +6,9 @@ struct AlanNativeApp: App {
     private let singletonGuard: AlanAppSingletonGuard
     @StateObject private var primaryShellOwner: AlanMacPrimaryShellOwner
     @NSApplicationDelegateAdaptor(AlanMacAppDelegate.self) private var appDelegate
+    @AppStorage("alanShellAppearanceMode") private var appearanceModeRawValue =
+        ShellAppearanceMode.system.rawValue
+    @AppStorage("alanShellSidebarCollapsed") private var isSidebarCollapsed = false
 
     init() {
         singletonGuard = AlanMacAppStartup.acquireSingletonOrTerminate()
@@ -16,7 +19,11 @@ struct AlanNativeApp: App {
     var body: some Scene {
         #if os(macOS)
         Window("Alan", id: "main") {
-            MacShellRootView(host: primaryShellOwner.host)
+            MacShellRootView(
+                host: primaryShellOwner.host,
+                appearanceMode: appearanceModeBinding,
+                isSidebarCollapsed: $isSidebarCollapsed
+            )
                 .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
                 .toolbar(removing: .title)
         }
@@ -30,5 +37,17 @@ struct AlanNativeApp: App {
             ContentView()
         }
         #endif
+    }
+
+    private var appearanceMode: ShellAppearanceMode {
+        ShellAppearanceMode(rawValue: appearanceModeRawValue) ?? .system
+    }
+
+    private var appearanceModeBinding: Binding<ShellAppearanceMode> {
+        Binding {
+            appearanceMode
+        } set: { mode in
+            appearanceModeRawValue = mode.rawValue
+        }
     }
 }
