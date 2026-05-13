@@ -16,9 +16,19 @@ private enum ShellWindowPlacementTests {
         try verifiesApproximateZoomFrameMatching()
         try verifiesTitlebarToolsMoveToLeadingEdgeWhenTrafficLightsAreHidden()
         try verifiesFullscreenChromeMetricsHideTrafficLightReservation()
+        try verifiesHiddenSidebarSurfaceHidesTrafficLights()
+        try verifiesFloatingSidebarSurfaceRevealsTrafficLightsAtSurfaceOrigin()
+        try verifiesPendingFloatingSidebarRevealHidesTrafficLightsButReservesLayout()
+        try verifiesFloatingSidebarRevealAfterPendingHiddenStateUsesSurfaceOrigin()
         try verifiesTitlebarPointOutsideContentViewCanTriggerDoubleClickZoom()
-        try verifiesTrafficLightAreaDoesNotTriggerDoubleClickZoom()
+        try verifiesTerminalSurfaceTitleBarDoesNotTriggerDoubleClickZoom()
+        try verifiesTrafficLightControlsDoNotTriggerDoubleClickZoom()
+        try verifiesTrafficLightGapsCanTriggerDoubleClickZoom()
+        try verifiesSidebarChromeBlankAreaCanTriggerDoubleClickZoom()
+        try verifiesSidebarToolbarButtonsDoNotTriggerDoubleClickZoom()
         try verifiesTitlebarOverlayAcceptsTopBlankHit()
+        try verifiesTitlebarOverlayAcceptsSidebarChromeBlankHit()
+        try verifiesTitlebarOverlayRejectsTerminalSurfaceTitleBarHit()
         try verifiesTitlebarOverlayRejectsTrafficLightHit()
         try verifiesAppearanceModeAppliesToAttachedWindowImmediately()
         try verifiesSystemModeClearsExplicitWindowAppearanceImmediately()
@@ -100,6 +110,128 @@ private enum ShellWindowPlacementTests {
         )
     }
 
+    private static func verifiesHiddenSidebarSurfaceHidesTrafficLights() throws {
+        let window = makeTestWindow()
+
+        let metrics = AlanShellWindowPlacement.synchronizeChrome(
+            for: window,
+            chromeSurface: ShellWindowChromeSurface(isVisible: false)
+        )
+
+        expect(
+            !metrics.standardTrafficLightsVisible,
+            "hidden sidebar surfaces must stop reserving titlebar space for traffic lights"
+        )
+        expect(
+            standardWindowButtons(in: window).allSatisfy(\.isHidden),
+            "hidden sidebar surfaces must hide standard traffic-light controls"
+        )
+    }
+
+    private static func verifiesFloatingSidebarSurfaceRevealsTrafficLightsAtSurfaceOrigin() throws {
+        let window = makeTestWindow()
+        let surfaceOrigin = CGPoint(x: 6, y: 6)
+
+        let metrics = AlanShellWindowPlacement.synchronizeChrome(
+            for: window,
+            chromeSurface: ShellWindowChromeSurface(isVisible: true, origin: surfaceOrigin)
+        )
+        let actualFrame = actualTrafficLightFrame(in: window)
+
+        expect(
+            standardWindowButtons(in: window).allSatisfy { !$0.isHidden },
+            "visible floating sidebar surfaces must show standard traffic-light controls"
+        )
+        expect(
+            actualFrame.minX.isApproximately(
+                ShellSidebarMetrics.trafficLightLeadingInset + surfaceOrigin.x
+            ),
+            "floating sidebar traffic lights must move to the visible surface origin; actual \(actualFrame.minX), expected \(ShellSidebarMetrics.trafficLightLeadingInset + surfaceOrigin.x)"
+        )
+        expect(
+            actualFrame.minY.isApproximately(
+                ShellSidebarMetrics.trafficLightTopInset + surfaceOrigin.y
+            ),
+            "floating sidebar traffic lights must move down with the visible surface origin; actual \(actualFrame.minY), expected \(ShellSidebarMetrics.trafficLightTopInset + surfaceOrigin.y)"
+        )
+        expect(
+            metrics.trafficLightGroupFrame.minX.isApproximately(
+                ShellSidebarMetrics.trafficLightLeadingInset
+            ),
+            "published chrome metrics must remain local to the sidebar surface"
+        )
+        expect(
+            metrics.trafficLightGroupFrame.minY.isApproximately(
+                ShellSidebarMetrics.trafficLightTopInset
+            ),
+            "published chrome metrics must not include the floating surface offset; actual \(metrics.trafficLightGroupFrame.minY), expected \(ShellSidebarMetrics.trafficLightTopInset)"
+        )
+    }
+
+    private static func verifiesPendingFloatingSidebarRevealHidesTrafficLightsButReservesLayout() throws {
+        let window = makeTestWindow()
+        let surfaceOrigin = CGPoint(x: 6, y: 6)
+
+        let metrics = AlanShellWindowPlacement.synchronizeChrome(
+            for: window,
+            chromeSurface: ShellWindowChromeSurface(
+                isVisible: true,
+                origin: surfaceOrigin,
+                showsStandardTrafficLights: false
+            )
+        )
+
+        expect(
+            standardWindowButtons(in: window).allSatisfy(\.isHidden),
+            "pending floating sidebar reveal must keep standard traffic lights hidden"
+        )
+        expect(
+            metrics.standardTrafficLightsVisible,
+            "pending floating sidebar reveal must reserve the traffic-light layout space"
+        )
+        expect(
+            metrics.titlebarToolLeadingInset
+                > ShellSidebarMetrics.edgeInset + ShellSidebarMetrics.titlebarToolWidth,
+            "titlebar tools must not jump to the leading edge while traffic lights wait for panel reveal timing"
+        )
+    }
+
+    private static func verifiesFloatingSidebarRevealAfterPendingHiddenStateUsesSurfaceOrigin() throws {
+        let window = makeTestWindow()
+        let surfaceOrigin = CGPoint(x: 6, y: 6)
+        let pendingSurface = ShellWindowChromeSurface(
+            isVisible: true,
+            origin: surfaceOrigin,
+            showsStandardTrafficLights: false
+        )
+        let revealedSurface = ShellWindowChromeSurface(
+            isVisible: true,
+            origin: surfaceOrigin,
+            showsStandardTrafficLights: true
+        )
+
+        _ = AlanShellWindowPlacement.synchronizeChrome(for: window, chromeSurface: pendingSurface)
+        _ = AlanShellWindowPlacement.synchronizeChrome(for: window, chromeSurface: revealedSurface)
+
+        let actualFrame = actualTrafficLightFrame(in: window)
+        expect(
+            standardWindowButtons(in: window).allSatisfy { !$0.isHidden },
+            "floating sidebar traffic lights must become visible after pending reveal"
+        )
+        expect(
+            actualFrame.minX.isApproximately(
+                ShellSidebarMetrics.trafficLightLeadingInset + surfaceOrigin.x
+            ),
+            "floating sidebar traffic lights must not flash at the non-floating x position after pending reveal; actual \(actualFrame.minX), expected \(ShellSidebarMetrics.trafficLightLeadingInset + surfaceOrigin.x)"
+        )
+        expect(
+            actualFrame.minY.isApproximately(
+                ShellSidebarMetrics.trafficLightTopInset + surfaceOrigin.y
+            ),
+            "floating sidebar traffic lights must not flash at the non-floating y position after pending reveal; actual \(actualFrame.minY), expected \(ShellSidebarMetrics.trafficLightTopInset + surfaceOrigin.y)"
+        )
+    }
+
     private static func verifiesTitlebarPointOutsideContentViewCanTriggerDoubleClickZoom() throws {
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 800, height: 520),
@@ -108,7 +240,7 @@ private enum ShellWindowPlacementTests {
             defer: false
         )
 
-        let location = CGPoint(x: 420, y: window.frame.height - 12)
+        let location = CGPoint(x: 420, y: window.frame.height - 4)
 
         expect(
             ShellWindowDoubleClickZoomHitTesting.isWindowTopChromeZoomCandidate(
@@ -119,22 +251,111 @@ private enum ShellWindowPlacementTests {
         )
     }
 
-    private static func verifiesTrafficLightAreaDoesNotTriggerDoubleClickZoom() throws {
+    private static func verifiesTerminalSurfaceTitleBarDoesNotTriggerDoubleClickZoom() throws {
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 800, height: 520),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
         )
+        let chromeSurface = ShellWindowChromeSurface(width: 264)
+
+        let location = CGPoint(
+            x: 760,
+            y: window.frame.height - ShellWorkspaceMetrics.terminalSurfaceInset - 12
+        )
+
+        expect(
+            !ShellWindowDoubleClickZoomHitTesting.isWindowTopChromeZoomCandidate(
+                locationInWindow: location,
+                in: window,
+                chromeSurface: chromeSurface
+            ),
+            "terminal surface title-bar controls must receive clicks instead of the window zoom overlay"
+        )
+    }
+
+    private static func verifiesTrafficLightControlsDoNotTriggerDoubleClickZoom() throws {
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 800, height: 520),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            backing: .buffered,
+            defer: false
+        )
+        let chromeSurface = ShellWindowChromeSurface(width: 264)
 
         let location = CGPoint(x: 42, y: window.frame.height - 18)
 
         expect(
             !ShellWindowDoubleClickZoomHitTesting.isWindowTopChromeZoomCandidate(
                 locationInWindow: location,
-                in: window
+                in: window,
+                chromeSurface: chromeSurface
             ),
             "traffic light region must keep its standard button behavior"
+        )
+    }
+
+    private static func verifiesTrafficLightGapsCanTriggerDoubleClickZoom() throws {
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 800, height: 520),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            backing: .buffered,
+            defer: false
+        )
+        let chromeSurface = ShellWindowChromeSurface(width: 264)
+
+        let location = CGPoint(x: 32, y: window.frame.height - 18)
+
+        expect(
+            ShellWindowDoubleClickZoomHitTesting.isWindowTopChromeZoomCandidate(
+                locationInWindow: location,
+                in: window,
+                chromeSurface: chromeSurface
+            ),
+            "blank gaps in the traffic-light titlebar area must trigger double-click visible-frame zoom"
+        )
+    }
+
+    private static func verifiesSidebarChromeBlankAreaCanTriggerDoubleClickZoom() throws {
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 800, height: 520),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            backing: .buffered,
+            defer: false
+        )
+        let chromeSurface = ShellWindowChromeSurface(width: 264)
+
+        let location = CGPoint(x: 190, y: window.frame.height - 20)
+
+        expect(
+            ShellWindowDoubleClickZoomHitTesting.isWindowTopChromeZoomCandidate(
+                locationInWindow: location,
+                in: window,
+                chromeSurface: chromeSurface
+            ),
+            "blank sidebar chrome beside the traffic lights and toolbar controls must trigger double-click visible-frame zoom"
+        )
+    }
+
+    private static func verifiesSidebarToolbarButtonsDoNotTriggerDoubleClickZoom() throws {
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 800, height: 520),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            backing: .buffered,
+            defer: false
+        )
+        let chromeSurface = ShellWindowChromeSurface(width: 264)
+
+        let location = CGPoint(x: 98, y: window.frame.height - 20)
+
+        expect(
+            !ShellWindowDoubleClickZoomHitTesting.isWindowTopChromeZoomCandidate(
+                locationInWindow: location,
+                in: window,
+                chromeSurface: chromeSurface
+            ),
+            "sidebar titlebar toolbar buttons must receive clicks instead of the window zoom overlay"
         )
     }
 
@@ -145,7 +366,7 @@ private enum ShellWindowPlacementTests {
         )
         window.contentView?.addSubview(overlay)
 
-        let windowPoint = CGPoint(x: 420, y: window.frame.height - 12)
+        let windowPoint = CGPoint(x: 420, y: window.frame.height - 4)
         let overlayPoint = overlay.convert(windowPoint, from: nil)
 
         expect(
@@ -154,11 +375,49 @@ private enum ShellWindowPlacementTests {
         )
     }
 
+    private static func verifiesTitlebarOverlayAcceptsSidebarChromeBlankHit() throws {
+        let window = makeTestWindow()
+        let overlay = ShellWindowDoubleClickZoomOverlayView(
+            frame: CGRect(origin: .zero, size: window.frame.size)
+        )
+        overlay.chromeSurface = ShellWindowChromeSurface(width: 264)
+        window.contentView?.addSubview(overlay)
+
+        let windowPoint = CGPoint(x: 190, y: window.frame.height - 20)
+        let overlayPoint = overlay.convert(windowPoint, from: nil)
+
+        expect(
+            overlay.hitTest(overlayPoint) === overlay,
+            "titlebar overlay must accept blank sidebar chrome hits below the top content inset"
+        )
+    }
+
+    private static func verifiesTitlebarOverlayRejectsTerminalSurfaceTitleBarHit() throws {
+        let window = makeTestWindow()
+        let overlay = ShellWindowDoubleClickZoomOverlayView(
+            frame: CGRect(origin: .zero, size: window.frame.size)
+        )
+        overlay.chromeSurface = ShellWindowChromeSurface(width: 264)
+        window.contentView?.addSubview(overlay)
+
+        let windowPoint = CGPoint(
+            x: window.frame.width - 40,
+            y: window.frame.height - ShellWorkspaceMetrics.terminalSurfaceInset - 12
+        )
+        let overlayPoint = overlay.convert(windowPoint, from: nil)
+
+        expect(
+            overlay.hitTest(overlayPoint) == nil,
+            "titlebar overlay must leave terminal surface title-bar controls clickable"
+        )
+    }
+
     private static func verifiesTitlebarOverlayRejectsTrafficLightHit() throws {
         let window = makeTestWindow()
         let overlay = ShellWindowDoubleClickZoomOverlayView(
             frame: CGRect(origin: .zero, size: window.frame.size)
         )
+        overlay.chromeSurface = ShellWindowChromeSurface(width: 264)
         window.contentView?.addSubview(overlay)
 
         let windowPoint = CGPoint(x: 42, y: window.frame.height - 18)
@@ -213,11 +472,47 @@ private enum ShellWindowPlacementTests {
     }
 
     private static func makeTestWindow() -> NSWindow {
-        NSWindow(
+        let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 800, height: 520),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
+        )
+        window.contentView = NSView(frame: NSRect(x: 0, y: 0, width: 800, height: 520))
+        return window
+    }
+
+    private static func standardWindowButtons(in window: NSWindow) -> [NSButton] {
+        let buttonTypes: [NSWindow.ButtonType] = [.closeButton, .miniaturizeButton, .zoomButton]
+        let buttons = buttonTypes.compactMap { window.standardWindowButton($0) }
+
+        expect(
+            buttons.count == buttonTypes.count,
+            "test window must expose all standard window buttons"
+        )
+
+        return buttons
+    }
+
+    private static func actualTrafficLightFrame(in window: NSWindow) -> CGRect {
+        let buttons = standardWindowButtons(in: window)
+        guard let superview = buttons.first?.superview,
+              buttons.allSatisfy({ $0.superview === superview })
+        else {
+            fatalError("test window standard buttons must share a superview")
+        }
+
+        let buttonFrame = buttons
+            .map(\.frame)
+            .reduce(NSRect.null) { $0.union($1) }
+        let windowFrame = superview.convert(buttonFrame, to: nil)
+        let topInset = max(0, window.frame.height - windowFrame.maxY)
+
+        return CGRect(
+            x: windowFrame.minX,
+            y: topInset,
+            width: windowFrame.width,
+            height: windowFrame.height
         )
     }
 
@@ -228,5 +523,11 @@ private enum ShellWindowPlacementTests {
         guard condition() else {
             fatalError(message())
         }
+    }
+}
+
+private extension CGFloat {
+    func isApproximately(_ other: CGFloat, tolerance: CGFloat = 1) -> Bool {
+        abs(self - other) <= tolerance
     }
 }

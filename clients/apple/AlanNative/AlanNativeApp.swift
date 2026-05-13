@@ -17,7 +17,7 @@ struct AlanNativeApp: App {
 
     var body: some Scene {
         #if os(macOS)
-        WindowGroup("Alan", id: "main") {
+        Window("Alan", id: "main") {
             MacShellRootView(
                 host: primaryShellOwner.host,
                 appearanceMode: $appearanceMode,

@@ -215,7 +215,7 @@ enum ShellRadii {
     static let overlay: CGFloat = 12
     static let floatingSidebarPanel: CGFloat = 14
     static let titlebarTool: CGFloat = 9
-    static let terminalSurface: CGFloat = 12
+    static let terminalSurface: CGFloat = 10
 }
 
 enum ShellSidebarMetrics {

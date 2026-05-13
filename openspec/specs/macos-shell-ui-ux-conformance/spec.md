@@ -53,6 +53,12 @@ hover, while keeping the terminal workspace stable.
 - **WHEN** the pointer moves from the edge hot zone onto the floating sidebar panel or collapsed titlebar controls
 - **THEN** the floating panel remains revealed until the pointer leaves those related surfaces
 
+#### Scenario: Floating panel owns traffic lights
+- **WHEN** the sidebar is collapsed and the floating panel is hidden
+- **THEN** the standard macOS traffic-light controls are hidden with the sidebar surface instead of remaining on the bare window corner
+- **AND WHEN** the floating sidebar panel is revealed
+- **THEN** the standard macOS traffic-light controls reappear on that floating sidebar surface without appearing ahead of the panel reveal timing or changing terminal workspace geometry
+
 #### Scenario: Floating panel motion
 - **WHEN** reduced motion is disabled
 - **THEN** the floating sidebar panel enters with a short spring-like leading-edge reveal and exits with a faster low-emphasis hide animation
@@ -119,6 +125,7 @@ frequent actions.
 #### Scenario: Empty titlebar zoom
 - **WHEN** a user double-clicks an empty, non-control area of the hidden-titlebar chrome
 - **THEN** Alan toggles the window between its previous frame and the current screen's visible work area while leaving the system traffic-light buttons, including the green button, on their normal macOS behavior
+- **AND** empty sidebar or floating-sidebar chrome in the traffic-light/titlebar-control band participates in double-click zoom while the actual traffic-light buttons, lightweight titlebar buttons, and terminal pane titlebar controls remain clickable
 
 #### Scenario: Native fullscreen chrome
 - **WHEN** the hidden-titlebar shell window enters native macOS fullscreen and the system takes over or hides the traffic-light controls

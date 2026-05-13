@@ -393,6 +393,36 @@ require_pattern \
     "handleCollapsedSidebarToolbarHover" \
     "collapsed sidebar toolbar controls must keep the floating panel revealed while hovered"
 
+require_pattern \
+    "clients/apple/AlanNative/MacShellRootView.swift" \
+    "windowChromeSurface" \
+    "collapsed sidebar chrome must publish its floating surface state to AppKit"
+
+require_pattern \
+    "clients/apple/AlanNative/MacShellRootView.swift" \
+    "isVisible: isSidebarSurfaceVisible" \
+    "traffic lights must hide when the collapsed sidebar surface is hidden"
+
+require_pattern \
+    "clients/apple/AlanNative/MacShellRootView.swift" \
+    "floatingSidebarTrafficLightRevealDelay" \
+    "floating sidebar traffic lights must not appear ahead of panel reveal timing"
+
+require_pattern \
+    "clients/apple/AlanNative/MacShellRootView.swift" \
+    "scheduleFloatingSidebarTrafficLightReveal" \
+    "floating sidebar traffic-light visibility must be delayed separately from panel insertion"
+
+require_pattern \
+    "clients/apple/AlanNative/MacShellRootView.swift" \
+    "guard !isSidebarPanelRevealed else" \
+    "repeated floating sidebar hover enters must not reset visible traffic lights"
+
+require_pattern \
+    "clients/apple/AlanNative/MacShellRootView.swift" \
+    "floatingSidebarTrafficLightRevealToken" \
+    "floating sidebar traffic-light reveal timing must not share the hover-retention token"
+
 reject_pattern \
     "clients/apple/AlanNative/MacShellRootView.swift" \
     "frame\\(width: sidebarWidth, height: windowChromeMetrics\\.collapsedRevealHeaderHeight\\)" \
@@ -660,6 +690,31 @@ require_pattern \
 
 require_pattern \
     "clients/apple/AlanNative/Support/ShellWindowPlacement.swift" \
+    "contentInteractionTopInset" \
+    "window double-click zoom overlay must not cover terminal surface title-bar controls"
+
+require_pattern \
+    "clients/apple/AlanNative/Support/ShellWindowPlacement.swift" \
+    "isPointInSidebarChromeBand" \
+    "window double-click zoom overlay must include blank sidebar chrome outside real controls"
+
+require_pattern \
+    "clients/apple/AlanNative/MacShellRootView.swift" \
+    "width: sidebarWidth" \
+    "window double-click zoom hit testing must know the sidebar chrome width"
+
+require_pattern \
+    "clients/apple/scripts/test-shell-window-placement.swift" \
+    "verifiesTitlebarOverlayRejectsTerminalSurfaceTitleBarHit" \
+    "shell window placement tests must prove terminal title-bar controls are not intercepted by zoom overlay"
+
+require_pattern \
+    "clients/apple/scripts/test-shell-window-placement.swift" \
+    "verifiesTitlebarOverlayAcceptsSidebarChromeBlankHit" \
+    "shell window placement tests must prove blank sidebar chrome remains a double-click zoom target"
+
+require_pattern \
+    "clients/apple/AlanNative/Support/ShellWindowPlacement.swift" \
     "NSWindow\\.didResizeNotification" \
     "hidden-titlebar shell windows must resynchronize traffic-light placement after resize"
 
@@ -687,6 +742,36 @@ require_pattern \
     "clients/apple/AlanNative/Support/ShellWindowPlacement.swift" \
     "standardTrafficLightsVisible = false" \
     "native fullscreen must stop reserving titlebar space for hidden traffic lights"
+
+require_pattern \
+    "clients/apple/AlanNative/Support/ShellWindowPlacement.swift" \
+    "ShellWindowChromeSurface" \
+    "window chrome sync must accept sidebar surface visibility and origin"
+
+require_pattern \
+    "clients/apple/AlanNative/Support/ShellWindowPlacement.swift" \
+    "setStandardWindowButtons\\(in: window, hidden: true\\)" \
+    "standard traffic lights must hide with a hidden sidebar surface"
+
+require_pattern \
+    "clients/apple/AlanNative/Support/ShellWindowPlacement.swift" \
+    "chromeSurfaceOrigin" \
+    "standard traffic lights must follow the visible floating sidebar surface origin"
+
+require_pattern \
+    "clients/apple/AlanNative/Support/ShellWindowPlacement.swift" \
+    "showsStandardTrafficLights" \
+    "window chrome sync must distinguish surface layout from actual traffic-light visibility"
+
+require_pattern \
+    "clients/apple/AlanNative/Support/ShellWindowPlacement.swift" \
+    "setStandardWindowButtons\\(in: window, hidden: false, alphaValue: 0\\)" \
+    "floating sidebar traffic lights must be made invisible before AppKit-visible repositioning"
+
+require_pattern \
+    "clients/apple/AlanNative/Support/ShellWindowPlacement.swift" \
+    "localTrafficLightGroupFrame" \
+    "floating sidebar traffic lights must be rechecked after standard button visibility changes"
 
 require_pattern \
     "clients/apple/AlanNative/TerminalHostView.swift" \
@@ -765,8 +850,13 @@ reject_pattern \
 
 require_pattern \
     "clients/apple/AlanNative/AlanNativeApp.swift" \
+    "Window\\(\"Alan\", id: \"main\"\\)" \
+    "macOS app scene must use a launch-presented singleton primary Window"
+
+reject_pattern \
+    "clients/apple/AlanNative/AlanNativeApp.swift" \
     "WindowGroup\\(\"Alan\", id: \"main\"\\)" \
-    "macOS app scene must use a launch-presented primary WindowGroup"
+    "macOS primary shell scene must not use a WindowGroup that can miss first-launch presentation"
 
 require_pattern \
     "clients/apple/AlanNative/AlanNativeApp.swift" \
@@ -789,9 +879,19 @@ require_pattern \
     "macOS app singleton guard must use an OS-backed exclusive lock"
 
 require_pattern \
-    "justfile" \
+    "clients/apple/scripts/run-alan-debug-app.sh" \
     "pkill -x Alan" \
     "just app must stop the previous Alan process before launching a fresh debug build"
+
+require_pattern \
+    "clients/apple/scripts/run-alan-debug-app.sh" \
+    "wait_for_alan_to_exit" \
+    "just app must wait for the previous Alan process to release singleton ownership before relaunching"
+
+require_pattern \
+    "justfile" \
+    "clients/apple/scripts/run-alan-debug-app\\.sh" \
+    "just app must use the guarded native app runner"
 
 require_pattern \
     "clients/apple/README.md" \

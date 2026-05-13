@@ -8,7 +8,9 @@ struct MacShellRootView: View {
     @Binding private var isSidebarCollapsed: Bool
     @State private var isCommandTabPresented = false
     @State private var isSidebarPanelRevealed = false
+    @State private var areFloatingSidebarTrafficLightsVisible = false
     @State private var sidebarRevealToken = 0
+    @State private var floatingSidebarTrafficLightRevealToken = 0
     @State private var isSpaceSwipeGestureLocked = false
     @State private var spaceTransition: ShellSpaceTransition?
     @State private var spaceTransitionToken = 0
@@ -16,6 +18,7 @@ struct MacShellRootView: View {
     @State private var systemColorScheme = ShellAppearanceMode.currentSystemColorScheme
     private let sidebarWidth: CGFloat = 264
     private let floatingSidebarInset: CGFloat = 6
+    private let floatingSidebarTrafficLightRevealDelay: TimeInterval = 0.08
 
     init(
         host: ShellHostController,
@@ -179,12 +182,34 @@ struct MacShellRootView: View {
         !isSidebarCollapsed || isSidebarPanelRevealed
     }
 
+    private var windowChromeSurface: ShellWindowChromeSurface {
+        ShellWindowChromeSurface(
+            isVisible: isSidebarSurfaceVisible,
+            origin: isSidebarCollapsed && isSidebarPanelRevealed
+                ? CGPoint(x: floatingSidebarInset, y: floatingSidebarInset)
+                : .zero,
+            width: sidebarWidth,
+            showsStandardTrafficLights: shouldShowStandardTrafficLights
+        )
+    }
+
+    private var shouldShowStandardTrafficLights: Bool {
+        guard isSidebarCollapsed else { return true }
+        return isSidebarPanelRevealed && areFloatingSidebarTrafficLightsVisible
+    }
+
     private func revealCollapsedSidebarPanel() {
         guard isSidebarCollapsed else { return }
         sidebarRevealToken += 1
+        guard !isSidebarPanelRevealed else { return }
+
+        areFloatingSidebarTrafficLightsVisible = false
+        floatingSidebarTrafficLightRevealToken += 1
+        let token = floatingSidebarTrafficLightRevealToken
         withAnimation(sidebarPanelRevealAnimation) {
             isSidebarPanelRevealed = true
         }
+        scheduleFloatingSidebarTrafficLightReveal(token: token)
     }
 
     private func scheduleCollapsedSidebarHide() {
@@ -193,9 +218,30 @@ struct MacShellRootView: View {
         let token = sidebarRevealToken
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.16) {
             guard sidebarRevealToken == token, isSidebarCollapsed else { return }
+            areFloatingSidebarTrafficLightsVisible = false
+            floatingSidebarTrafficLightRevealToken += 1
             withAnimation(sidebarPanelHideAnimation) {
                 isSidebarPanelRevealed = false
             }
+        }
+    }
+
+    private func scheduleFloatingSidebarTrafficLightReveal(token: Int) {
+        let delay = reduceMotion ? 0 : floatingSidebarTrafficLightRevealDelay
+        let reveal = {
+            guard floatingSidebarTrafficLightRevealToken == token,
+                  isSidebarCollapsed,
+                  isSidebarPanelRevealed
+            else {
+                return
+            }
+            areFloatingSidebarTrafficLightsVisible = true
+        }
+
+        if delay <= 0 {
+            DispatchQueue.main.async(execute: reveal)
+        } else {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: reveal)
         }
     }
 
@@ -230,6 +276,8 @@ struct MacShellRootView: View {
         withAnimation(sidebarPinnedStateAnimation) {
             isSidebarCollapsed = collapsed
             isSidebarPanelRevealed = false
+            areFloatingSidebarTrafficLightsVisible = false
+            floatingSidebarTrafficLightRevealToken += 1
         }
     }
 
@@ -301,6 +349,7 @@ struct MacShellRootView: View {
             ShellWindowPlacementView(
                 metrics: $windowChromeMetrics,
                 appearanceMode: appearanceMode,
+                chromeSurface: windowChromeSurface,
                 systemColorScheme: $systemColorScheme
             )
         )

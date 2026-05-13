@@ -6,6 +6,7 @@ import AppKit
 struct ShellWindowPlacementView: NSViewRepresentable {
     @Binding var metrics: ShellWindowChromeMetrics
     let appearanceMode: ShellAppearanceMode
+    var chromeSurface: ShellWindowChromeSurface = .visible
     @Binding var systemColorScheme: ColorScheme
 
     func makeNSView(context: Context) -> ShellWindowPlacementNSView {
@@ -13,6 +14,7 @@ struct ShellWindowPlacementView: NSViewRepresentable {
         let systemColorSchemeBinding = _systemColorScheme
         return ShellWindowPlacementNSView(
             appearanceMode: appearanceMode,
+            chromeSurface: chromeSurface,
             metricsHandler: metricsHandler(metricsBinding),
             systemAppearanceHandler: systemAppearanceHandler(systemColorSchemeBinding)
         )
@@ -24,6 +26,7 @@ struct ShellWindowPlacementView: NSViewRepresentable {
         nsView.updateAppearanceMode(appearanceMode)
         nsView.updateMetricsHandler(metricsHandler(metricsBinding))
         nsView.updateSystemAppearanceHandler(systemAppearanceHandler(systemColorSchemeBinding))
+        nsView.updateChromeSurface(chromeSurface)
         nsView.resolveWindowIfNeeded()
     }
 
@@ -48,6 +51,15 @@ struct ShellWindowPlacementView: NSViewRepresentable {
             }
         }
     }
+}
+
+struct ShellWindowChromeSurface: Equatable {
+    var isVisible = true
+    var origin: CGPoint = .zero
+    var width: CGFloat?
+    var showsStandardTrafficLights = true
+
+    static let visible = ShellWindowChromeSurface()
 }
 
 struct ShellWindowChromeMetrics: Equatable {
@@ -129,18 +141,30 @@ enum ShellWindowSizing {
 
 enum ShellWindowDoubleClickZoomHitTesting {
     static let topChromeBandHeight: CGFloat = 36
-    static let reservedLeadingChromeWidth: CGFloat = 160
-    static let reservedTopChromeHeight: CGFloat = 64
+    static let contentInteractionTopInset: CGFloat = ShellWorkspaceMetrics.terminalSurfaceInset
 
     static func isWindowTopChromeZoomCandidate(
         locationInWindow point: CGPoint,
-        in window: NSWindow
+        in window: NSWindow,
+        chromeSurface: ShellWindowChromeSurface = .visible
     ) -> Bool {
         let windowSize = window.frame.size
         let windowBounds = CGRect(origin: .zero, size: windowSize)
         guard windowBounds.contains(point) else { return false }
         guard isPointInWindowTopChromeBand(point, windowSize: windowSize) else { return false }
-        return !isPointInReservedChromeControls(point, windowSize: windowSize)
+        if isPointAboveContentInteractionBand(point, windowSize: windowSize) {
+            return true
+        }
+
+        guard isPointInSidebarChromeBand(point, windowSize: windowSize, chromeSurface: chromeSurface)
+        else {
+            return false
+        }
+        return !isPointInSidebarChromeControls(
+            point,
+            windowSize: windowSize,
+            chromeSurface: chromeSurface
+        )
     }
 
     static func isPointInWindowTopChromeBand(
@@ -151,19 +175,104 @@ enum ShellWindowDoubleClickZoomHitTesting {
         return visualTopInset >= 0 && visualTopInset <= topChromeBandHeight
     }
 
-    static func isPointInReservedChromeControls(
+    static func isPointAboveContentInteractionBand(
         _ point: CGPoint,
         windowSize: CGSize
     ) -> Bool {
         let visualTopInset = windowSize.height - point.y
-        return point.x <= reservedLeadingChromeWidth
-            && visualTopInset >= 0
-            && visualTopInset <= reservedTopChromeHeight
+        return visualTopInset >= 0 && visualTopInset <= contentInteractionTopInset
+    }
+
+    static func isPointInSidebarChromeBand(
+        _ point: CGPoint,
+        windowSize: CGSize,
+        chromeSurface: ShellWindowChromeSurface
+    ) -> Bool {
+        guard chromeSurface.isVisible, let chromeSurfaceWidth = chromeSurface.width else {
+            return false
+        }
+
+        let localPoint = localTopLeadingPoint(
+            point,
+            windowSize: windowSize,
+            chromeSurface: chromeSurface
+        )
+        return localPoint.x >= 0
+            && localPoint.x <= chromeSurfaceWidth
+            && localPoint.y >= 0
+            && localPoint.y <= topChromeBandHeight
+    }
+
+    static func isPointInSidebarChromeControls(
+        _ point: CGPoint,
+        windowSize: CGSize,
+        chromeSurface: ShellWindowChromeSurface
+    ) -> Bool {
+        let localPoint = localTopLeadingPoint(
+            point,
+            windowSize: windowSize,
+            chromeSurface: chromeSurface
+        )
+        return standardTrafficLightControlFrames.contains { $0.contains(localPoint) }
+            || sidebarTitlebarToolControlFrame.contains(localPoint)
+    }
+
+    private static var standardTrafficLightGroupFrame: CGRect {
+        CGRect(
+            x: ShellSidebarMetrics.trafficLightLeadingInset,
+            y: ShellSidebarMetrics.trafficLightTopInset,
+            width: ShellSidebarMetrics.trafficLightFallbackGroupWidth,
+            height: ShellSidebarMetrics.trafficLightFallbackButtonHeight
+        )
+    }
+
+    private static var standardTrafficLightControlFrames: [CGRect] {
+        let groupFrame = standardTrafficLightGroupFrame
+        let buttonWidth = ShellSidebarMetrics.trafficLightFallbackButtonHeight
+        let gap = max((groupFrame.width - (buttonWidth * 3)) / 2, 0)
+
+        return (0..<3).map { index in
+            CGRect(
+                x: groupFrame.minX + (CGFloat(index) * (buttonWidth + gap)),
+                y: groupFrame.minY,
+                width: buttonWidth,
+                height: buttonWidth
+            )
+        }
+    }
+
+    private static var sidebarTitlebarToolControlFrame: CGRect {
+        let trafficLights = standardTrafficLightGroupFrame
+        let firstButtonX = trafficLights.maxX + ShellSidebarMetrics.titlebarToolGapAfterTrafficLights
+        let buttonCount: CGFloat = 2
+        let totalButtonWidth =
+            (buttonCount * ShellSidebarMetrics.titlebarToolWidth)
+            + ((buttonCount - 1) * ShellSidebarMetrics.titlebarToolSpacing)
+
+        return CGRect(
+            x: firstButtonX,
+            y: max(0, trafficLights.midY - (ShellSidebarMetrics.titlebarToolHeight / 2)),
+            width: totalButtonWidth,
+            height: ShellSidebarMetrics.titlebarToolHeight
+        )
+    }
+
+    private static func localTopLeadingPoint(
+        _ point: CGPoint,
+        windowSize: CGSize,
+        chromeSurface: ShellWindowChromeSurface
+    ) -> CGPoint {
+        let visualTopInset = windowSize.height - point.y
+        return CGPoint(
+            x: point.x - chromeSurface.origin.x,
+            y: visualTopInset - chromeSurface.origin.y
+        )
     }
 }
 
 final class ShellWindowPlacementNSView: NSView {
     private var appearanceMode: ShellAppearanceMode
+    private var chromeSurface: ShellWindowChromeSurface
     private var metricsHandler: (ShellWindowChromeMetrics) -> Void
     private var systemAppearanceHandler: (ColorScheme) -> Void
     private var configuredWindowNumber: Int?
@@ -180,10 +289,12 @@ final class ShellWindowPlacementNSView: NSView {
 
     init(
         appearanceMode: ShellAppearanceMode,
+        chromeSurface: ShellWindowChromeSurface = .visible,
         metricsHandler: @escaping (ShellWindowChromeMetrics) -> Void,
         systemAppearanceHandler: @escaping (ColorScheme) -> Void = { _ in }
     ) {
         self.appearanceMode = appearanceMode
+        self.chromeSurface = chromeSurface
         self.metricsHandler = metricsHandler
         self.systemAppearanceHandler = systemAppearanceHandler
         super.init(frame: .zero)
@@ -236,6 +347,13 @@ final class ShellWindowPlacementNSView: NSView {
         guard didChange else { return }
         applyAppearanceToAttachedWindow()
         publishEffectiveSystemColorScheme()
+    }
+
+    func updateChromeSurface(_ surface: ShellWindowChromeSurface) {
+        let didChange = chromeSurface != surface
+        chromeSurface = surface
+        guard didChange else { return }
+        synchronizeChromeIfAttached()
     }
 
     func resolveWindowIfNeeded() {
@@ -447,6 +565,7 @@ final class ShellWindowPlacementNSView: NSView {
         installTitlebarObservers(for: titlebarView)
         let metrics = AlanShellWindowPlacement.synchronizeChrome(
             for: window,
+            chromeSurface: chromeSurface,
             nativeFullScreenOverride: nativeFullScreenOverride
         )
         installDoubleClickZoomOverlayIfNeeded(in: titlebarView)
@@ -466,11 +585,13 @@ final class ShellWindowPlacementNSView: NSView {
         if let doubleClickZoomOverlay,
            doubleClickZoomOverlay.superview === titlebarView {
             doubleClickZoomOverlay.frame = titlebarView.bounds
+            doubleClickZoomOverlay.chromeSurface = chromeSurface
             return
         }
 
         doubleClickZoomOverlay?.removeFromSuperview()
         let overlay = ShellWindowDoubleClickZoomOverlayView(frame: titlebarView.bounds)
+        overlay.chromeSurface = chromeSurface
         overlay.autoresizingMask = [.width, .height]
         titlebarView.addSubview(overlay, positioned: .below, relativeTo: titlebarView.subviews.first)
         doubleClickZoomOverlay = overlay
@@ -478,6 +599,7 @@ final class ShellWindowPlacementNSView: NSView {
 }
 
 final class ShellWindowDoubleClickZoomOverlayView: NSView {
+    var chromeSurface = ShellWindowChromeSurface.visible
     private var restoreFrame: NSRect?
 
     override var mouseDownCanMoveWindow: Bool {
@@ -494,7 +616,8 @@ final class ShellWindowDoubleClickZoomOverlayView: NSView {
         let windowPoint = convert(point, to: nil)
         guard ShellWindowDoubleClickZoomHitTesting.isWindowTopChromeZoomCandidate(
             locationInWindow: windowPoint,
-            in: window
+            in: window,
+            chromeSurface: chromeSurface
         ) else {
             return nil
         }
@@ -529,6 +652,11 @@ final class ShellWindowDoubleClickZoomOverlayView: NSView {
 }
 
 enum AlanShellWindowPlacement {
+    private struct StandardWindowButtonGroup {
+        let buttons: [NSButton]
+        let superview: NSView
+    }
+
     static func configure(_ window: NSWindow, appearanceMode: ShellAppearanceMode) {
         window.title = "Alan"
         applyAppearance(to: window, appearanceMode: appearanceMode)
@@ -557,18 +685,44 @@ enum AlanShellWindowPlacement {
 
     static func synchronizeChrome(
         for window: NSWindow,
+        chromeSurface: ShellWindowChromeSurface = .visible,
         nativeFullScreenOverride: Bool? = nil
     ) -> ShellWindowChromeMetrics {
         var metrics = ShellWindowChromeMetrics()
         let isNativeFullScreen = nativeFullScreenOverride ?? window.styleMask.contains(.fullScreen)
 
-        guard !isNativeFullScreen else {
+        guard chromeSurface.isVisible, !isNativeFullScreen else {
+            setStandardWindowButtons(in: window, hidden: true)
             metrics.standardTrafficLightsVisible = false
             return metrics
         }
 
-        if let trafficLightGroupFrame = repositionStandardWindowButtons(in: window) {
-            metrics.trafficLightGroupFrame = trafficLightGroupFrame
+        if chromeSurface.showsStandardTrafficLights {
+            setStandardWindowButtons(in: window, hidden: false, alphaValue: 0)
+        }
+
+        if let trafficLightGroupFrame = repositionStandardWindowButtons(
+            in: window,
+            chromeSurfaceOrigin: chromeSurface.origin
+        ) {
+            metrics.trafficLightGroupFrame = localTrafficLightGroupFrame(
+                for: trafficLightGroupFrame
+            )
+        }
+        setStandardWindowButtons(
+            in: window,
+            hidden: !chromeSurface.showsStandardTrafficLights,
+            alphaValue: 1
+        )
+        if chromeSurface.showsStandardTrafficLights,
+           let trafficLightGroupFrame = repositionStandardWindowButtons(
+               in: window,
+               chromeSurfaceOrigin: chromeSurface.origin
+           )
+        {
+            metrics.trafficLightGroupFrame = localTrafficLightGroupFrame(
+                for: trafficLightGroupFrame
+            )
         }
 
         return metrics
@@ -578,7 +732,32 @@ enum AlanShellWindowPlacement {
         window.standardWindowButton(.closeButton)?.superview
     }
 
-    private static func repositionStandardWindowButtons(in window: NSWindow) -> CGRect? {
+    private static func setStandardWindowButtons(
+        in window: NSWindow,
+        hidden: Bool,
+        alphaValue: CGFloat? = nil
+    ) {
+        guard let group = standardWindowButtonGroup(in: window) else { return }
+        group.buttons.forEach { button in
+            if let alphaValue, button.alphaValue != alphaValue {
+                button.alphaValue = alphaValue
+            }
+            if button.isHidden != hidden {
+                button.isHidden = hidden
+            }
+        }
+    }
+
+    private static func localTrafficLightGroupFrame(for frame: CGRect) -> CGRect {
+        CGRect(
+            x: ShellSidebarMetrics.trafficLightLeadingInset,
+            y: ShellSidebarMetrics.trafficLightTopInset,
+            width: frame.width,
+            height: frame.height
+        )
+    }
+
+    private static func standardWindowButtonGroup(in window: NSWindow) -> StandardWindowButtonGroup? {
         let buttonTypes: [NSWindow.ButtonType] = [.closeButton, .miniaturizeButton, .zoomButton]
         let buttons = buttonTypes.compactMap { window.standardWindowButton($0) }
 
@@ -589,14 +768,29 @@ enum AlanShellWindowPlacement {
             return nil
         }
 
+        return StandardWindowButtonGroup(buttons: buttons, superview: superview)
+    }
+
+    private static func repositionStandardWindowButtons(
+        in window: NSWindow,
+        chromeSurfaceOrigin: CGPoint
+    ) -> CGRect? {
+        guard let buttonGroup = standardWindowButtonGroup(in: window) else { return nil }
+        let buttons = buttonGroup.buttons
+        let superview = buttonGroup.superview
+
         let currentGroupFrame = buttons
             .map(\.frame)
             .reduce(NSRect.null) { $0.union($1) }
         guard !currentGroupFrame.isNull else { return nil }
 
         let currentVisualTopInset = visualTopInset(of: currentGroupFrame, in: superview)
-        let deltaX = ShellSidebarMetrics.trafficLightLeadingInset - currentGroupFrame.minX
-        let deltaTop = ShellSidebarMetrics.trafficLightTopInset - currentVisualTopInset
+        let targetLeadingInset =
+            ShellSidebarMetrics.trafficLightLeadingInset + chromeSurfaceOrigin.x
+        let targetTopInset =
+            ShellSidebarMetrics.trafficLightTopInset + chromeSurfaceOrigin.y
+        let deltaX = targetLeadingInset - currentGroupFrame.minX
+        let deltaTop = targetTopInset - currentVisualTopInset
         let deltaY = superview.isFlipped ? deltaTop : -deltaTop
 
         if abs(deltaX) > 0.5 || abs(deltaY) > 0.5 {

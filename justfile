@@ -54,9 +54,7 @@ build:
 
 # Build and launch the native macOS app
 app:
-    -pkill -x Alan
-    xcodebuild -project clients/apple/AlanNative.xcodeproj -scheme AlanNative -configuration Debug -destination platform=macOS -derivedDataPath target/xcode-derived build
-    /usr/bin/open -n target/xcode-derived/Build/Products/Debug/Alan.app
+    clients/apple/scripts/run-alan-debug-app.sh
 
 # Install alan to ~/.alan/bin
 install:
