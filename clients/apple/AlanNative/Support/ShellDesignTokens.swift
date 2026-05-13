@@ -231,8 +231,13 @@ enum ShellSidebarMetrics {
     static let titlebarToolHeight: CGFloat = 30
     static let titlebarToolGapAfterTrafficLights: CGFloat = 12
     static let titlebarToolSpacing: CGFloat = 6
+    static let collapsedRevealEdgeWidth: CGFloat = 12
     static let commandLauncherGapBelowTrafficLights: CGFloat = 15
     static let commandLauncherHeight: CGFloat = 34
+}
+
+enum ShellWorkspaceMetrics {
+    static let terminalSurfaceInset: CGFloat = 8
 }
 
 struct ShellShadowStyle {

@@ -292,19 +292,16 @@ struct MacShellRootView: View {
     }
 
     private var collapsedSidebarRevealZone: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Color.clear
-                .frame(width: sidebarWidth, height: windowChromeMetrics.collapsedRevealHeaderHeight)
-            Color.clear
-                .frame(width: 18)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .contentShape(Rectangle())
-        .onHover { hovering in
-            hovering ? revealCollapsedSidebarPanel() : scheduleCollapsedSidebarHide()
-        }
-        .ignoresSafeArea()
-        .zIndex(10)
+        Color.clear
+            .frame(width: ShellSidebarMetrics.collapsedRevealEdgeWidth)
+            .frame(maxHeight: .infinity, alignment: .topLeading)
+            .contentShape(Rectangle())
+            .onHover { hovering in
+                hovering ? revealCollapsedSidebarPanel() : scheduleCollapsedSidebarHide()
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .ignoresSafeArea()
+            .zIndex(10)
     }
 
     private var floatingSidebarPanel: some View {
@@ -367,11 +364,6 @@ struct MacShellRootView: View {
                     + (isSidebarCollapsed ? floatingSidebarInset : 0)
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            .onHover { hovering in
-                if isSidebarCollapsed {
-                    hovering ? revealCollapsedSidebarPanel() : scheduleCollapsedSidebarHide()
-                }
-            }
         }
         .ignoresSafeArea(edges: .top)
         .zIndex(30)

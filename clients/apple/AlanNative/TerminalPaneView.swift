@@ -14,9 +14,7 @@ struct TerminalPaneView: View {
             }
 
         }
-        .padding(.top, 8)
-        .padding(.trailing, 8)
-        .padding(.bottom, 8)
+        .padding(ShellWorkspaceMetrics.terminalSurfaceInset)
     }
 
     private var paneMetadataStrip: some View {

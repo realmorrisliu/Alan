@@ -374,6 +374,16 @@ require_pattern \
     "command entry copy must match the accepted shell command UI label"
 
 require_pattern \
+    "clients/apple/AlanNative/Support/ShellDesignTokens.swift" \
+    "collapsedRevealEdgeWidth" \
+    "collapsed sidebar reveal must use a narrow edge hot zone token"
+
+reject_pattern \
+    "clients/apple/AlanNative/MacShellRootView.swift" \
+    "frame\\(width: sidebarWidth, height: windowChromeMetrics\\.collapsedRevealHeaderHeight\\)" \
+    "collapsed sidebar reveal must not use the full titlebar/header width as a hover zone"
+
+require_pattern \
     "clients/apple/AlanNative/TerminalSurfaceController.swift" \
     "func routeWorkspaceCommand\\(_ input: AlanTerminalKeyInput\\) -> ShellWorkspaceCommand\\?" \
     "terminal input routing must recognize Alan workspace shortcuts before terminal bindings"
@@ -422,6 +432,16 @@ require_pattern \
     "clients/apple/AlanNative/TerminalPaneView.swift" \
     "ShellTerminalSurfaceFrame" \
     "terminal panes must share one outer rounded terminal surface frame"
+
+require_pattern \
+    "clients/apple/AlanNative/Support/ShellDesignTokens.swift" \
+    "terminalSurfaceInset" \
+    "terminal workspace surface inset must be a shared semantic token"
+
+require_pattern \
+    "clients/apple/AlanNative/TerminalPaneView.swift" \
+    "padding\\(ShellWorkspaceMetrics\\.terminalSurfaceInset\\)" \
+    "terminal surface must use equal workspace inset on all four edges"
 
 require_pattern \
     "clients/apple/AlanNative/TerminalPaneView.swift" \
