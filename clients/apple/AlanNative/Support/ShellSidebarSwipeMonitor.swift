@@ -107,6 +107,12 @@ struct ShellSidebarSwipeMonitor: NSViewRepresentable {
             monitor = nil
         }
 
+#if ALAN_TESTING
+        func handleForTesting(_ event: NSEvent) -> NSEvent? {
+            handle(event)
+        }
+#endif
+
         private func handle(_ event: NSEvent) -> NSEvent? {
             if ignoresHorizontalMomentum, !event.momentumPhase.isEmpty {
                 if event.momentumPhase.contains(.ended) || event.momentumPhase.contains(.cancelled) {
@@ -163,12 +169,14 @@ struct ShellSidebarSwipeMonitor: NSViewRepresentable {
                    abs(accumulatedY) > abs(accumulatedX) * verticalIntentBias {
                     intent = .vertical
                     lastEventTime = now
+                    schedulePhaseLessEndIfNeeded(for: event, velocityX: eventVelocityX)
                     return event
                 }
 
                 guard abs(accumulatedX) >= intentLockDistance,
                       abs(accumulatedX) > abs(accumulatedY) * horizontalIntentBias else {
                     lastEventTime = now
+                    schedulePhaseLessEndIfNeeded(for: event, velocityX: eventVelocityX)
                     return nil
                 }
 
@@ -204,6 +212,7 @@ struct ShellSidebarSwipeMonitor: NSViewRepresentable {
                     resetAccumulatedScroll()
                 } else {
                     lastEventTime = now
+                    schedulePhaseLessEndIfNeeded(for: event, velocityX: eventVelocityX)
                 }
                 return event
 
@@ -271,16 +280,21 @@ struct ShellSidebarSwipeMonitor: NSViewRepresentable {
 
             phaseLessEndWorkItem?.cancel()
             let workItem = DispatchWorkItem { [weak self] in
-                guard let self, self.intent == .horizontal else { return }
-                self.onUpdate(
-                    ShellSidebarSwipeUpdate(
-                        phase: .ended,
-                        translationX: self.accumulatedX,
-                        velocityX: velocityX
+                guard let self else { return }
+                switch self.intent {
+                case .horizontal:
+                    self.onUpdate(
+                        ShellSidebarSwipeUpdate(
+                            phase: .ended,
+                            translationX: self.accumulatedX,
+                            velocityX: velocityX
+                        )
                     )
-                )
-                self.resetAccumulatedScroll()
-                self.ignoresHorizontalMomentum = true
+                    self.resetAccumulatedScroll()
+                    self.ignoresHorizontalMomentum = true
+                case .vertical, .undecided:
+                    self.resetAccumulatedScroll()
+                }
             }
             phaseLessEndWorkItem = workItem
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.16, execute: workItem)
