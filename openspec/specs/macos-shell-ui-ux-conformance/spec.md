@@ -120,6 +120,14 @@ frequent actions.
 - **WHEN** a user double-clicks an empty, non-control area of the hidden-titlebar chrome
 - **THEN** Alan toggles the window between its previous frame and the current screen's visible work area while leaving the system traffic-light buttons, including the green button, on their normal macOS behavior
 
+#### Scenario: Native fullscreen chrome
+- **WHEN** the hidden-titlebar shell window enters native macOS fullscreen and the system takes over or hides the traffic-light controls
+- **THEN** Alan moves its lightweight titlebar controls to the leading edge without reserving traffic-light space
+- **AND WHEN** the window is actively live-resized
+- **THEN** Alan continuously resynchronizes the standard traffic-light controls during the resize interaction rather than only correcting the final resting position
+- **AND WHEN** the window exits native fullscreen or finishes resizing
+- **THEN** Alan keeps the standard traffic-light controls at their intended inset and returns its titlebar controls to the post-traffic-light position
+
 ### Requirement: Default shell does not expose inspector chrome
 The default macOS shell SHALL not include a persistent right-side inspector,
 inspector toggle, or inspector command surface.

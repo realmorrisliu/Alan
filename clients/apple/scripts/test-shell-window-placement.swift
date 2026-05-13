@@ -14,6 +14,8 @@ private enum ShellWindowPlacementTests {
         try verifiesDefaultFrameFitsSmallVisibleRegions()
         try verifiesZoomFrameUsesEntireVisibleRegion()
         try verifiesApproximateZoomFrameMatching()
+        try verifiesTitlebarToolsMoveToLeadingEdgeWhenTrafficLightsAreHidden()
+        try verifiesFullscreenChromeMetricsHideTrafficLightReservation()
         try verifiesTitlebarPointOutsideContentViewCanTriggerDoubleClickZoom()
         try verifiesTrafficLightAreaDoesNotTriggerDoubleClickZoom()
         try verifiesTitlebarOverlayAcceptsTopBlankHit()
@@ -67,6 +69,34 @@ private enum ShellWindowPlacementTests {
         expect(
             !ShellWindowSizing.frame(notZoomed, approximatelyMatches: visibleFrame),
             "zoom frame matching must reject clearly different frames"
+        )
+    }
+
+    private static func verifiesTitlebarToolsMoveToLeadingEdgeWhenTrafficLightsAreHidden() throws {
+        var metrics = ShellWindowChromeMetrics()
+        metrics.standardTrafficLightsVisible = false
+
+        expect(
+            metrics.titlebarToolLeadingInset == ShellSidebarMetrics.edgeInset,
+            "titlebar tools must move to the leading edge when native fullscreen hides traffic lights"
+        )
+    }
+
+    private static func verifiesFullscreenChromeMetricsHideTrafficLightReservation() throws {
+        let window = makeTestWindow()
+
+        let metrics = AlanShellWindowPlacement.synchronizeChrome(
+            for: window,
+            nativeFullScreenOverride: true
+        )
+
+        expect(
+            !metrics.standardTrafficLightsVisible,
+            "native fullscreen metrics must stop reserving leading space for traffic lights"
+        )
+        expect(
+            metrics.titlebarToolLeadingInset == ShellSidebarMetrics.edgeInset,
+            "native fullscreen titlebar tools must align to the leading edge"
         )
     }
 

@@ -51,6 +51,7 @@ struct ShellWindowPlacementView: NSViewRepresentable {
 }
 
 struct ShellWindowChromeMetrics: Equatable {
+    var standardTrafficLightsVisible = true
     var trafficLightGroupFrame = CGRect(
         x: ShellSidebarMetrics.trafficLightLeadingInset,
         y: ShellSidebarMetrics.trafficLightTopInset,
@@ -59,7 +60,11 @@ struct ShellWindowChromeMetrics: Equatable {
     )
 
     var titlebarToolLeadingInset: CGFloat {
-        trafficLightGroupFrame.maxX + ShellSidebarMetrics.titlebarToolGapAfterTrafficLights
+        guard standardTrafficLightsVisible else {
+            return ShellSidebarMetrics.edgeInset
+        }
+
+        return trafficLightGroupFrame.maxX + ShellSidebarMetrics.titlebarToolGapAfterTrafficLights
     }
 
     var titlebarToolTopInset: CGFloat {
@@ -164,6 +169,14 @@ final class ShellWindowPlacementNSView: NSView {
     private var configuredWindowNumber: Int?
     private var lastPublishedMetrics: ShellWindowChromeMetrics?
     private var doubleClickZoomOverlay: ShellWindowDoubleClickZoomOverlayView?
+    private weak var observedWindow: NSWindow?
+    private weak var observedTitlebarView: NSView?
+    private var windowObservers: [NSObjectProtocol] = []
+    private var titlebarObservers: [NSObjectProtocol] = []
+    private var chromeSyncScheduled = false
+    private var isSynchronizingChrome = false
+    private var liveResizeChromeSyncTimer: Timer?
+    private var nativeFullScreenOverride: Bool?
 
     init(
         appearanceMode: ShellAppearanceMode,
@@ -181,6 +194,12 @@ final class ShellWindowPlacementNSView: NSView {
         fatalError("init(coder:) has not been implemented")
     }
 
+    deinit {
+        stopLiveResizeChromeSync()
+        removeWindowObservers()
+        removeTitlebarObservers()
+    }
+
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         resolveWindowIfNeeded()
@@ -194,6 +213,12 @@ final class ShellWindowPlacementNSView: NSView {
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
         publishEffectiveSystemColorScheme()
+    }
+
+    override func layout() {
+        super.layout()
+        guard window?.inLiveResize == true else { return }
+        synchronizeChromeIfAttached()
     }
 
     func updateMetricsHandler(_ handler: @escaping (ShellWindowChromeMetrics) -> Void) {
@@ -218,15 +243,11 @@ final class ShellWindowPlacementNSView: NSView {
             guard let self, let window = self.window else { return }
             if self.configuredWindowNumber != window.windowNumber {
                 AlanShellWindowPlacement.configure(window, appearanceMode: self.appearanceMode)
+                self.installWindowObservers(for: window)
                 self.configuredWindowNumber = window.windowNumber
             }
 
-            let metrics = AlanShellWindowPlacement.chromeMetrics(for: window)
-            self.installDoubleClickZoomOverlayIfNeeded(for: window)
-            self.publishEffectiveSystemColorScheme()
-            guard self.lastPublishedMetrics != metrics else { return }
-            self.lastPublishedMetrics = metrics
-            self.metricsHandler(metrics)
+            self.synchronizeChrome(for: window)
         }
     }
 
@@ -240,9 +261,205 @@ final class ShellWindowPlacementNSView: NSView {
         systemAppearanceHandler(ShellAppearanceMode.colorScheme(for: appearance))
     }
 
-    private func installDoubleClickZoomOverlayIfNeeded(for window: NSWindow) {
-        guard let titlebarView = AlanShellWindowPlacement.titlebarControlContainer(for: window)
-        else {
+    private func installWindowObservers(for window: NSWindow) {
+        guard observedWindow !== window else { return }
+
+        removeWindowObservers()
+        observedWindow = window
+
+        let center = NotificationCenter.default
+        windowObservers = [
+            center.addObserver(
+                forName: NSWindow.willStartLiveResizeNotification,
+                object: window,
+                queue: nil
+            ) { [weak self] _ in
+                self?.startLiveResizeChromeSync()
+            },
+            center.addObserver(
+                forName: NSWindow.didResizeNotification,
+                object: window,
+                queue: nil
+            ) { [weak self] _ in
+                self?.synchronizeChromeIfAttached()
+            },
+            center.addObserver(
+                forName: NSWindow.didEndLiveResizeNotification,
+                object: window,
+                queue: nil
+            ) { [weak self] _ in
+                self?.stopLiveResizeChromeSync()
+                self?.synchronizeChromeIfAttached()
+                self?.scheduleChromeSync(after: 0.02)
+            },
+            center.addObserver(
+                forName: NSWindow.didChangeScreenNotification,
+                object: window,
+                queue: .main
+            ) { [weak self] _ in
+                self?.scheduleChromeSync()
+            },
+            center.addObserver(
+                forName: NSWindow.willEnterFullScreenNotification,
+                object: window,
+                queue: .main
+            ) { [weak self] _ in
+                self?.nativeFullScreenOverride = true
+                self?.scheduleChromeSync()
+            },
+            center.addObserver(
+                forName: NSWindow.didEnterFullScreenNotification,
+                object: window,
+                queue: .main
+            ) { [weak self] _ in
+                self?.nativeFullScreenOverride = nil
+                self?.scheduleChromeSync()
+            },
+            center.addObserver(
+                forName: NSWindow.willExitFullScreenNotification,
+                object: window,
+                queue: .main
+            ) { [weak self] _ in
+                self?.nativeFullScreenOverride = true
+                self?.scheduleChromeSync()
+            },
+            center.addObserver(
+                forName: NSWindow.didExitFullScreenNotification,
+                object: window,
+                queue: .main
+            ) { [weak self] _ in
+                self?.nativeFullScreenOverride = nil
+                self?.scheduleChromeSync()
+                self?.scheduleChromeSync(after: 0.08)
+            },
+        ]
+    }
+
+    private func removeWindowObservers() {
+        stopLiveResizeChromeSync()
+        windowObservers.forEach(NotificationCenter.default.removeObserver)
+        windowObservers.removeAll()
+        observedWindow = nil
+    }
+
+    private func installTitlebarObservers(for titlebarView: NSView?) {
+        guard observedTitlebarView !== titlebarView else { return }
+
+        removeTitlebarObservers()
+        guard let titlebarView else { return }
+
+        observedTitlebarView = titlebarView
+        titlebarView.postsFrameChangedNotifications = true
+        titlebarView.postsBoundsChangedNotifications = true
+
+        let center = NotificationCenter.default
+        titlebarObservers = [
+            center.addObserver(
+                forName: NSView.frameDidChangeNotification,
+                object: titlebarView,
+                queue: nil
+            ) { [weak self] _ in
+                self?.synchronizeChromeIfAttached()
+            },
+            center.addObserver(
+                forName: NSView.boundsDidChangeNotification,
+                object: titlebarView,
+                queue: nil
+            ) { [weak self] _ in
+                self?.synchronizeChromeIfAttached()
+            },
+        ]
+    }
+
+    private func removeTitlebarObservers() {
+        titlebarObservers.forEach(NotificationCenter.default.removeObserver)
+        titlebarObservers.removeAll()
+        observedTitlebarView = nil
+    }
+
+    private func scheduleChromeSync(after delay: TimeInterval = 0) {
+        let shouldCoalesce = delay <= 0
+        if shouldCoalesce {
+            guard !chromeSyncScheduled else { return }
+            chromeSyncScheduled = true
+        }
+
+        let work = { [weak self] in
+            guard let self else { return }
+            if shouldCoalesce {
+                self.chromeSyncScheduled = false
+            }
+            guard let window = self.window else { return }
+            self.synchronizeChrome(for: window)
+        }
+
+        if delay > 0 {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
+        } else {
+            DispatchQueue.main.async(execute: work)
+        }
+    }
+
+    private func startLiveResizeChromeSync() {
+        stopLiveResizeChromeSync()
+        synchronizeChromeIfAttached()
+
+        let timer = Timer(timeInterval: 1.0 / 60.0, repeats: true) { [weak self] timer in
+            guard let self else {
+                timer.invalidate()
+                return
+            }
+
+            guard self.window?.inLiveResize == true else {
+                timer.invalidate()
+                self.liveResizeChromeSyncTimer = nil
+                self.synchronizeChromeIfAttached()
+                return
+            }
+
+            self.synchronizeChromeIfAttached()
+        }
+        timer.tolerance = 1.0 / 120.0
+        RunLoop.main.add(timer, forMode: .eventTracking)
+        RunLoop.main.add(timer, forMode: .common)
+        liveResizeChromeSyncTimer = timer
+        timer.fire()
+    }
+
+    private func stopLiveResizeChromeSync() {
+        liveResizeChromeSyncTimer?.invalidate()
+        liveResizeChromeSyncTimer = nil
+    }
+
+    private func synchronizeChromeIfAttached() {
+        guard let window else { return }
+        synchronizeChrome(for: window)
+    }
+
+    private func synchronizeChrome(for window: NSWindow) {
+        guard !isSynchronizingChrome else { return }
+        isSynchronizingChrome = true
+        defer {
+            isSynchronizingChrome = false
+        }
+
+        let titlebarView = AlanShellWindowPlacement.titlebarControlContainer(for: window)
+        installTitlebarObservers(for: titlebarView)
+        let metrics = AlanShellWindowPlacement.synchronizeChrome(
+            for: window,
+            nativeFullScreenOverride: nativeFullScreenOverride
+        )
+        installDoubleClickZoomOverlayIfNeeded(in: titlebarView)
+        publishEffectiveSystemColorScheme()
+        guard lastPublishedMetrics != metrics else { return }
+        lastPublishedMetrics = metrics
+        metricsHandler(metrics)
+    }
+
+    private func installDoubleClickZoomOverlayIfNeeded(in titlebarView: NSView?) {
+        guard let titlebarView else {
+            doubleClickZoomOverlay?.removeFromSuperview()
+            doubleClickZoomOverlay = nil
             return
         }
 
@@ -311,7 +528,7 @@ final class ShellWindowDoubleClickZoomOverlayView: NSView {
     }
 }
 
-private enum AlanShellWindowPlacement {
+enum AlanShellWindowPlacement {
     static func configure(_ window: NSWindow, appearanceMode: ShellAppearanceMode) {
         window.title = "Alan"
         applyAppearance(to: window, appearanceMode: appearanceMode)
@@ -338,8 +555,17 @@ private enum AlanShellWindowPlacement {
         window.displayIfNeeded()
     }
 
-    static func chromeMetrics(for window: NSWindow) -> ShellWindowChromeMetrics {
+    static func synchronizeChrome(
+        for window: NSWindow,
+        nativeFullScreenOverride: Bool? = nil
+    ) -> ShellWindowChromeMetrics {
         var metrics = ShellWindowChromeMetrics()
+        let isNativeFullScreen = nativeFullScreenOverride ?? window.styleMask.contains(.fullScreen)
+
+        guard !isNativeFullScreen else {
+            metrics.standardTrafficLightsVisible = false
+            return metrics
+        }
 
         if let trafficLightGroupFrame = repositionStandardWindowButtons(in: window) {
             metrics.trafficLightGroupFrame = trafficLightGroupFrame
@@ -373,11 +599,13 @@ private enum AlanShellWindowPlacement {
         let deltaTop = ShellSidebarMetrics.trafficLightTopInset - currentVisualTopInset
         let deltaY = superview.isFlipped ? deltaTop : -deltaTop
 
-        for button in buttons {
-            var frame = button.frame
-            frame.origin.x += deltaX
-            frame.origin.y += deltaY
-            button.setFrameOrigin(frame.origin)
+        if abs(deltaX) > 0.5 || abs(deltaY) > 0.5 {
+            for button in buttons {
+                var frame = button.frame
+                frame.origin.x += deltaX
+                frame.origin.y += deltaY
+                button.setFrameOrigin(frame.origin)
+            }
         }
 
         let movedGroupFrame = buttons

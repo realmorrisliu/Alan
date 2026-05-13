@@ -659,6 +659,36 @@ require_pattern \
     "hidden-titlebar shell windows must make non-interactive background regions draggable"
 
 require_pattern \
+    "clients/apple/AlanNative/Support/ShellWindowPlacement.swift" \
+    "NSWindow\\.didResizeNotification" \
+    "hidden-titlebar shell windows must resynchronize traffic-light placement after resize"
+
+require_pattern \
+    "clients/apple/AlanNative/Support/ShellWindowPlacement.swift" \
+    "NSWindow\\.willStartLiveResizeNotification" \
+    "hidden-titlebar shell windows must start continuous traffic-light sync during live resize"
+
+require_pattern \
+    "clients/apple/AlanNative/Support/ShellWindowPlacement.swift" \
+    "liveResizeChromeSyncTimer" \
+    "hidden-titlebar shell windows must keep a scoped live-resize chrome sync timer"
+
+require_pattern \
+    "clients/apple/AlanNative/Support/ShellWindowPlacement.swift" \
+    "RunLoop\\.main\\.add\\(timer, forMode: \\.eventTracking\\)" \
+    "live-resize chrome sync must run in the event-tracking run loop mode"
+
+require_pattern \
+    "clients/apple/AlanNative/Support/ShellWindowPlacement.swift" \
+    "NSWindow\\.didEnterFullScreenNotification" \
+    "hidden-titlebar shell windows must publish native fullscreen chrome state"
+
+require_pattern \
+    "clients/apple/AlanNative/Support/ShellWindowPlacement.swift" \
+    "standardTrafficLightsVisible = false" \
+    "native fullscreen must stop reserving titlebar space for hidden traffic lights"
+
+require_pattern \
     "clients/apple/AlanNative/TerminalHostView.swift" \
     "override var mouseDownCanMoveWindow: Bool \\{ false \\}" \
     "terminal host views must not allow terminal pane clicks to drag the shell window"
