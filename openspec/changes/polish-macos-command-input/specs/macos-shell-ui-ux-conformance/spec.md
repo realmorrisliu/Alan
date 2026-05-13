@@ -9,9 +9,14 @@ candidate sections below the input.
 - **WHEN** the user presses `Command-P` or activates the sidebar command entry
 - **THEN** Alan opens a floating material-backed input field, focuses the text field, and does not show action, routing, attention, or best-match lists below it
 
+#### Scenario: Command input toggles from shortcut
+- **WHEN** the command input is already open and the user presses `Command-P`
+- **THEN** Alan dismisses the input and returns keyboard focus to the previously focused terminal pane when available
+
 #### Scenario: Command input is visually restrained
 - **WHEN** the command input is visible
 - **THEN** the surface uses a restrained native material treatment, stable geometry, and compact controls rather than a large card, dashboard panel, or multi-section palette
+- **AND** it appears and disappears with an opacity-only fade instead of moving down from the top edge
 
 #### Scenario: Command input dismisses
 - **WHEN** the user presses Escape, clicks outside the input, activates a close affordance, or successfully submits a resolved command

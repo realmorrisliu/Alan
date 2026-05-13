@@ -394,6 +394,66 @@ require_pattern \
     "command UI tab actions must use the shared shell workspace command vocabulary"
 
 require_pattern \
+    "clients/apple/AlanNative/Views/Shell/ShellCommandTabView.swift" \
+    "GlassEffectContainer\\(spacing:" \
+    "floating Ask Alan command input must group custom Liquid Glass surfaces"
+
+require_pattern \
+    "clients/apple/AlanNative/Views/Shell/ShellCommandTabView.swift" \
+    "\\.glassEffect\\(\\.regular\\.interactive\\(\\), in: shape\\)" \
+    "floating Ask Alan command input must use the default system Liquid Glass material"
+
+require_pattern \
+    "clients/apple/AlanNative/Views/Shell/ShellCommandTabView.swift" \
+    "\\.glassEffectTransition\\(\\.identity\\)" \
+    "floating Ask Alan command input must disable Liquid Glass material insertion animation"
+
+require_pattern \
+    "clients/apple/AlanNative/Views/Shell/ShellCommandTabView.swift" \
+    "private var commandInputContent: some View" \
+    "floating Ask Alan command input foreground content must render outside the glass-effect layer"
+
+require_pattern \
+    "clients/apple/AlanNative/MacShellRootView.swift" \
+    "private let hiddenCommandInputOpacity = 0\\.001" \
+    "floating Ask Alan command input must keep the Liquid Glass surface mounted before presentation"
+
+require_pattern \
+    "clients/apple/AlanNative/MacShellRootView.swift" \
+    "private func toggleCommandInput\\(\\)" \
+    "Command-P must toggle the floating Ask Alan command input"
+
+require_pattern \
+    "clients/apple/AlanNative/MacShellRootView.swift" \
+    "isActive: isCommandTabPresented" \
+    "floating Ask Alan command input must separate mounted glass identity from active text focus"
+
+require_pattern \
+    "clients/apple/AlanNative/MacShellRootView.swift" \
+    "withAnimation\\(commandInputAnimation\\)" \
+    "floating Ask Alan command input must fade between hidden and visible states"
+
+require_pattern \
+    "clients/apple/AlanNative/MacShellRootView.swift" \
+    "\\.opacity\\(commandInputOpacity\\)" \
+    "floating Ask Alan command input must use opacity fade instead of moving from an edge"
+
+require_pattern \
+    "clients/apple/AlanNative/MacShellRootView.swift" \
+    "Color\\.clear" \
+    "floating Ask Alan click-away layer must avoid visible dimming under Liquid Glass"
+
+require_pattern \
+    "clients/apple/AlanNative/MacShellRootView.swift" \
+    "\\.transition\\(\\.identity\\)" \
+    "floating Ask Alan click-away layer must not animate behind Liquid Glass on insertion"
+
+reject_pattern \
+    "clients/apple/AlanNative/MacShellRootView.swift" \
+    "ShellPalette\\.overlayScrim" \
+    "floating Ask Alan must not place a visible dimming scrim behind Liquid Glass"
+
+require_pattern \
     "clients/apple/AlanNative/Views/Shell/ShellSidebarView.swift" \
     "Ask Alan\\.\\.\\." \
     "command entry copy must match the accepted shell command UI label"

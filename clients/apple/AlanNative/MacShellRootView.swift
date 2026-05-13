@@ -19,6 +19,7 @@ struct MacShellRootView: View {
     private let sidebarWidth: CGFloat = 264
     private let floatingSidebarInset: CGFloat = 6
     private let floatingSidebarTrafficLightRevealDelay: TimeInterval = 0.08
+    private let hiddenCommandInputOpacity = 0.001
 
     init(
         host: ShellHostController,
@@ -30,14 +31,22 @@ struct MacShellRootView: View {
         _isSidebarCollapsed = isSidebarCollapsed
     }
 
+    private func toggleCommandInput() {
+        if isCommandTabPresented {
+            dismissCommandInput()
+        } else {
+            presentCommandInput()
+        }
+    }
+
     private func presentCommandInput() {
-        withAnimation(.easeOut(duration: 0.18)) {
+        withAnimation(commandInputAnimation) {
             isCommandTabPresented = true
         }
     }
 
     private func dismissCommandInput() {
-        withAnimation(.easeOut(duration: 0.18)) {
+        withAnimation(commandInputAnimation) {
             isCommandTabPresented = false
         }
         DispatchQueue.main.async {
@@ -182,6 +191,14 @@ struct MacShellRootView: View {
         !isSidebarCollapsed || isSidebarPanelRevealed
     }
 
+    private var commandInputOpacity: Double {
+        isCommandTabPresented ? 1 : hiddenCommandInputOpacity
+    }
+
+    private var commandInputAnimation: Animation? {
+        reduceMotion ? nil : .easeOut(duration: 0.14)
+    }
+
     private var windowChromeSurface: ShellWindowChromeSurface {
         ShellWindowChromeSurface(
             isVisible: isSidebarSurfaceVisible,
@@ -320,21 +337,29 @@ struct MacShellRootView: View {
             }
 
             if isCommandTabPresented {
-                ShellPalette.overlayScrim
+                Color.clear
                     .ignoresSafeArea()
+                    .contentShape(Rectangle())
+                    .transition(.identity)
+                    .transaction { transaction in
+                        transaction.animation = nil
+                        transaction.disablesAnimations = true
+                    }
                     .onTapGesture {
                         dismissCommandInput()
                     }
-
-                ShellCommandTabView(
-                    host: host,
-                    isPresented: $isCommandTabPresented
-                )
-                .frame(width: 560)
-                .transition(.move(edge: .top).combined(with: .opacity))
             }
+
+            ShellCommandTabView(
+                host: host,
+                isPresented: $isCommandTabPresented,
+                isActive: isCommandTabPresented
+            )
+            .frame(width: 560)
+            .opacity(commandInputOpacity)
+            .allowsHitTesting(isCommandTabPresented)
+            .accessibilityHidden(!isCommandTabPresented)
         }
-        .animation(.easeOut(duration: 0.18), value: isCommandTabPresented)
         .animation(sidebarPinnedStateAnimation, value: isSidebarCollapsed)
         .environment(\.colorScheme, resolvedAppearanceColorScheme)
         .onChange(of: isSidebarCollapsed) { _, collapsed in
@@ -343,7 +368,7 @@ struct MacShellRootView: View {
             }
         }
         .onChange(of: host.commandInputRequestID) { _, _ in
-            presentCommandInput()
+            toggleCommandInput()
         }
         .background(
             ShellWindowPlacementView(

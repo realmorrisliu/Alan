@@ -123,6 +123,14 @@ frequent actions.
 #### Scenario: Command entry
 - **WHEN** the user invokes the command UI
 - **THEN** the entry point is labeled and organized as `Go to or Command...`
+- **AND WHEN** the floating Ask Alan command input is presented
+- **THEN** the input surface uses the system Liquid Glass effect for its primary material instead of relying on a custom blur, opaque fill, or gradient-only imitation
+- **AND** the Liquid Glass material follows the app's current light or dark appearance instead of assuming the active terminal theme is dark
+- **AND** the active terminal theme only contributes sampled background color through the system material and MUST NOT switch the command input's light or dark foreground palette
+- **AND** foreground text and controls render above the Liquid Glass layer using system foreground hierarchy so the glass material does not blur or wash out typed content
+- **AND** Alan keeps the Liquid Glass surface mounted across hidden and visible states, disables material insertion animation, and uses an opacity-only fade instead of moving the input from an edge
+- **AND** Alan uses a transparent click-away layer rather than a visible dimming scrim behind the Liquid Glass surface so the material does not flash between undimmed and dimmed sampled backgrounds
+- **AND** pressing `Command-P` while the input is already open dismisses it and returns keyboard focus to the previously focused terminal pane when available
 
 #### Scenario: Empty titlebar zoom
 - **WHEN** a user double-clicks an empty, non-control area of the hidden-titlebar chrome
