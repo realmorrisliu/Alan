@@ -14,6 +14,8 @@ struct TerminalRuntimeServiceTestRunner {
 @MainActor
 private enum TerminalRuntimeServiceTests {
     static func run() {
+        verifiesGhosttyTerminfoEnvironmentProjection()
+        verifiesRuntimeCwdDoesNotRequireSurfaceRecreation()
         verifiesBootstrapReuseAndPaneHandleIdentity()
         verifiesPaneScopedHandleIsolation()
         verifiesDeliveryAndMissingRuntimeResults()
@@ -23,6 +25,56 @@ private enum TerminalRuntimeServiceTests {
         verifiesFinalizePanesOnlyReleasesStaleHandles()
         verifiesBootstrapFailureDiagnostics()
         print("Terminal runtime service tests passed.")
+    }
+
+    private static func verifiesGhosttyTerminfoEnvironmentProjection() {
+        let tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("alan-ghostty-terminfo-\(UUID().uuidString)", isDirectory: true)
+        try! FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        setenv("ALAN_GHOSTTY_TERMINFO_DIR", tempDir.path, 1)
+        defer {
+            unsetenv("ALAN_GHOSTTY_TERMINFO_DIR")
+            try? FileManager.default.removeItem(at: tempDir)
+        }
+
+        let state = ShellStateSnapshot.bootstrapDefault()
+        let pane = state.panes[0]
+        let profile = AlanShellBootProfile.forPane(pane, shellState: state)
+
+        expect(
+            profile.environment["TERMINFO"] == tempDir.path,
+            "boot profile must pass Ghostty terminfo to terminal child processes"
+        )
+        expect(
+            profile.environment["TERM_PROGRAM"] == "Alan",
+            "boot profile must identify Alan as the terminal program"
+        )
+        expect(
+            profile.environment["COLORTERM"] == "truecolor",
+            "boot profile must advertise truecolor terminal support"
+        )
+    }
+
+    private static func verifiesRuntimeCwdDoesNotRequireSurfaceRecreation() {
+        let base = sampleBootProfile(workingDirectory: "/Users/morris")
+        let afterCd = sampleBootProfile(workingDirectory: "/Users/morris/Developer/Alan")
+        let differentEnvironment = sampleBootProfile(
+            workingDirectory: "/Users/morris/Developer/Alan",
+            environment: ["TERMINFO": "/tmp/other-terminfo"]
+        )
+
+        expect(
+            !afterCd.requiresSurfaceRecreation(comparedTo: base),
+            "runtime cwd updates must not recreate the Ghostty surface"
+        )
+        expect(
+            differentEnvironment.requiresSurfaceRecreation(comparedTo: base),
+            "terminal environment changes must recreate the Ghostty surface"
+        )
+        expect(
+            base.requiresSurfaceRecreation(comparedTo: nil),
+            "missing previous boot profile must require initial surface creation"
+        )
     }
 
     private static func verifiesBootstrapReuseAndPaneHandleIdentity() {
@@ -184,6 +236,34 @@ private enum TerminalRuntimeServiceTests {
         let diagnostics = service.ensureReady()
         expect(diagnostics.phase == .failed, "failed bootstrap must publish failed phase")
         expect(diagnostics.failureReason == "missing resources", "failed bootstrap must retain reason")
+    }
+
+    private static func sampleBootProfile(
+        workingDirectory: String,
+        environment: [String: String] = ["TERMINFO": "/tmp/ghostty-terminfo"]
+    ) -> AlanShellBootProfile {
+        AlanShellBootProfile(
+            command: AlanCommandResolution(
+                strategy: .loginShellFallback,
+                executablePath: "/bin/zsh",
+                launchPath: "/bin/zsh",
+                arguments: ["-l"],
+                bootCommand: "/bin/zsh -l",
+                surfaceCommand: nil,
+                summary: "Launching pane with the default login shell",
+                detail: "/bin/zsh",
+                repoRoot: nil,
+                candidates: []
+            ),
+            workingDirectory: workingDirectory,
+            environment: environment,
+            ghostty: GhosttyIntegrationStatus(
+                frameworkPath: "/tmp/GhosttyKit.xcframework",
+                resourcesPath: "/tmp/ghostty-resources",
+                terminfoPath: "/tmp/ghostty-terminfo",
+                candidates: []
+            )
+        )
     }
 
     private static func expect(
