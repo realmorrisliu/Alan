@@ -73,6 +73,25 @@ the terminal itself remains stable, high contrast, and readable.
    fall back to a more solid standard material or tonal fill without changing the
    view hierarchy.
 
+5. Treat radius and shadow as surface semantics, not decorative effects.
+
+   The current terminal surface establishes the baseline for a primary content
+   surface: continuous 12pt corners, a focused contact shadow, and a restrained
+   rim/highlight treatment. Other active shell elements should derive from a
+   smaller semantic scale: micro geometry for split indicators, 6-10pt compact
+   controls and inputs, 12pt selected/content surfaces, 16pt collapsed floating
+   panels, and capsules only for semantic pill inputs such as `Ask Alan...` and
+   the command palette. Shadow should appear only where elevation changes the
+   interaction model: selected navigation rows, floating inputs, the terminal
+   surface, collapsed sidebar panels, and modal command entry. Static sidebar
+   controls and titlebar ghost buttons should rely on tint, stroke, hover, and
+   highlight instead of default shadows.
+
+   Alternative considered: give every translucent control a small shadow to
+   make the glass visible. That made light mode feel dirty because dark ambient
+   shadow mixed with the sidebar material. Focused adaptive contact shadows are
+   clearer and closer to native macOS hierarchy.
+
 ## Risks / Trade-offs
 
 - Visual regressions can be subjective -> Mitigate with screenshot/manual review

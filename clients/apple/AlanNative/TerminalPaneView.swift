@@ -452,24 +452,55 @@ struct TerminalPaneView: View {
 }
 
 private struct ShellTerminalSurfaceFrame: ViewModifier {
+    @Environment(\.colorScheme) private var colorScheme
     private let shape = RoundedRectangle(cornerRadius: ShellRadii.terminalSurface, style: .continuous)
 
     func body(content: Content) -> some View {
         content
-            .background(
+            .clipShape(shape)
+            .background {
                 ShellMaterialShape(
                     role: .terminalSurround,
                     shape: shape
                 )
-            )
-            .clipShape(shape)
-            .overlay {
-                shape.stroke(
-                    ShellPalette.line.opacity(0.18),
-                    lineWidth: 1
-                )
+                .shellShadow(ShellShadows.terminalSurfaceRim)
+                .shellShadow(ShellShadows.terminalSurface)
             }
-            .shellShadow(ShellShadows.terminalSurface)
+            .overlay {
+                terminalSurfaceRim
+            }
+    }
+
+    private var terminalSurfaceRim: some View {
+        ZStack {
+            shape
+                .strokeBorder(
+                    ShellPalette.line.opacity(colorScheme == .light ? 0.30 : 0.26),
+                    lineWidth: 0.85
+                )
+
+            shape
+                .strokeBorder(
+                    LinearGradient(
+                        colors: [
+                            Color.white.opacity(colorScheme == .light ? 0.18 : 0.07),
+                            Color.white.opacity(0.015),
+                            Color.black.opacity(colorScheme == .light ? 0.14 : 0.32),
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    ),
+                    lineWidth: 0.65
+                )
+
+            shape
+                .inset(by: 1)
+                .strokeBorder(
+                    Color.white.opacity(colorScheme == .light ? 0.06 : 0.03),
+                    lineWidth: 0.4
+                )
+        }
+        .allowsHitTesting(false)
     }
 }
 

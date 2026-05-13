@@ -338,7 +338,7 @@ struct MacShellRootView: View {
         .padding(.leading, floatingSidebarInset)
         .padding(.top, floatingSidebarInset)
         .padding(.bottom, floatingSidebarInset)
-        .shellShadow(ShellShadows.floatingOverlay)
+        .shellShadow(ShellShadows.floatingPanel)
         .onHover { hovering in
             hovering ? revealCollapsedSidebarPanel() : scheduleCollapsedSidebarHide()
         }

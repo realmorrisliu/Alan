@@ -207,13 +207,15 @@ enum ShellPalette {
 }
 
 enum ShellRadii {
+    static let micro: CGFloat = 2
+    static let badge: CGFloat = 4
     static let control: CGFloat = 6
     static let row: CGFloat = 8
     static let surface: CGFloat = 10
     static let overlay: CGFloat = 12
     static let floatingSidebarPanel: CGFloat = 16
     static let titlebarTool: CGFloat = 9
-    static let terminalSurface: CGFloat = 22
+    static let terminalSurface: CGFloat = 12
 }
 
 enum ShellSidebarMetrics {
@@ -249,25 +251,75 @@ struct ShellShadowStyle {
 
 enum ShellShadows {
     static let none = ShellShadowStyle(color: .clear, radius: 0, y: 0)
-    static let terminalSurface = ShellShadowStyle(color: Color.black.opacity(0.075), radius: 9, y: 3)
-    static let floatingOverlay = ShellShadowStyle(color: Color.black.opacity(0.10), radius: 13, y: 7)
-    static let floatingInput = ShellShadowStyle(color: Color.black.opacity(0.10), radius: 8, y: 3)
-    static let commandPalette = ShellShadowStyle(
+    static let navigationSelection = ShellShadowStyle(
+        color: Color.shellAdaptive(
+            light: (0.18, 0.20, 0.28),
+            lightAlpha: 0.11,
+            dark: (0, 0, 0),
+            darkAlpha: 0.26
+        ),
+        radius: 2.2,
+        x: -0.2,
+        y: 0.9
+    )
+    static let terminalSurface = ShellShadowStyle(
+        color: Color.shellAdaptive(
+            light: (0.18, 0.20, 0.28),
+            lightAlpha: 0.22,
+            dark: (0, 0, 0),
+            darkAlpha: 0.34
+        ),
+        radius: 3,
+        x: -0.7,
+        y: 1.4
+    )
+    static let terminalSurfaceRim = ShellShadowStyle(
+        color: Color.shellAdaptive(
+            light: (0.18, 0.20, 0.28),
+            lightAlpha: 0.12,
+            dark: (0, 0, 0),
+            darkAlpha: 0.28
+        ),
+        radius: 0.8,
+        x: -0.5,
+        y: 0.3
+    )
+    static let floatingInput = ShellShadowStyle(
+        color: Color.shellAdaptive(
+            light: (0.16, 0.17, 0.24),
+            lightAlpha: 0.16,
+            dark: (0, 0, 0),
+            darkAlpha: 0.32
+        ),
+        radius: 5,
+        x: -0.5,
+        y: 2.2
+    )
+    static let floatingPanel = ShellShadowStyle(
         color: Color.shellAdaptive(
             light: (0.16, 0.17, 0.24),
             lightAlpha: 0.18,
             dark: (0, 0, 0),
-            darkAlpha: 0.38
+            darkAlpha: 0.36
         ),
-        radius: 26,
-        y: 15
+        radius: 10,
+        x: -1,
+        y: 5
     )
-    static let sidebarSelection = ShellShadowStyle(color: Color.black.opacity(0.035), radius: 3, y: 1)
-    static let spaceSelection = ShellShadowStyle(
-        color: ShellPalette.accent.opacity(0.085),
-        radius: 4,
-        y: 1.5
+    static let commandPalette = ShellShadowStyle(
+        color: Color.shellAdaptive(
+            light: (0.16, 0.17, 0.24),
+            lightAlpha: 0.20,
+            dark: (0, 0, 0),
+            darkAlpha: 0.40
+        ),
+        radius: 22,
+        x: -1,
+        y: 12
     )
+    static let floatingOverlay = floatingPanel
+    static let sidebarSelection = navigationSelection
+    static let spaceSelection = navigationSelection
 }
 
 extension View {
@@ -692,10 +744,38 @@ struct ShellLiquidGlassSurface<SurfaceShape: InsettableShape>: View {
                 )
 
             shape
+                .fill(
+                    LinearGradient(
+                        colors: [
+                            Color.white.opacity(increasedContrast ? 0.18 : 0.13),
+                            Color.white.opacity(0.02),
+                            ShellPalette.sidebarInk.opacity(increasedContrast ? 0.018 : 0.012),
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+
+            shape
                 .strokeBorder(
                     ShellPalette.line.opacity(increasedContrast ? 0.50 : effectiveStrokeOpacity),
                     lineWidth: 0.55
                 )
+
+            shape
+                .strokeBorder(Color.white.opacity(increasedContrast ? 0.22 : 0.16), lineWidth: 0.45)
+                .mask {
+                    shape.fill(
+                        LinearGradient(
+                            colors: [
+                                Color.white,
+                                Color.white.opacity(0),
+                            ],
+                            startPoint: .top,
+                            endPoint: .center
+                        )
+                    )
+                }
         }
     }
 

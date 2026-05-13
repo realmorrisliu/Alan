@@ -599,7 +599,7 @@ private struct ShellSpaceSwitcherItem: View {
         }
         .frame(width: 30, height: 30)
         .scaleEffect(isSelected ? 1 : (isHovered || isPreviewed ? 1.015 : 1))
-        .shellShadow(isSelected || isPreviewed ? ShellShadows.spaceSelection : ShellShadows.none)
+        .shellShadow(isSelected || isPreviewed ? ShellShadows.navigationSelection : ShellShadows.none)
         .animation(reduceMotion ? nil : .easeOut(duration: 0.16), value: isHovered)
         .animation(reduceMotion ? nil : .easeOut(duration: 0.16), value: isSelected)
         .animation(reduceMotion ? nil : .easeOut(duration: 0.16), value: isPreviewed)
@@ -687,7 +687,7 @@ private enum ShellSidebarRowVisualState: Equatable {
         case .normal, .hover:
             return ShellShadows.none
         case .selected:
-            return ShellShadows.sidebarSelection
+            return ShellShadows.navigationSelection
         }
     }
 }
@@ -913,7 +913,7 @@ private struct ShellSplitTopologyIndicator: View {
             .foregroundStyle(summary.focusedPaneID == nil ? .secondary : ShellPalette.accent)
             .frame(width: 28, height: 18)
             .background(
-                RoundedRectangle(cornerRadius: 4, style: .continuous)
+                RoundedRectangle(cornerRadius: ShellRadii.badge, style: .continuous)
                     .fill(ShellPalette.canvas.opacity(0.55))
             )
         }
@@ -928,7 +928,7 @@ private struct ShellSplitTopologyIndicator: View {
         return Button {
             onFocusPane(paneID)
         } label: {
-            RoundedRectangle(cornerRadius: 2, style: .continuous)
+            RoundedRectangle(cornerRadius: ShellRadii.micro, style: .continuous)
                 .fill(isFocused ? ShellPalette.accent.opacity(0.9) : ShellPalette.mutedInk.opacity(0.24))
         }
         .buttonStyle(.plain)

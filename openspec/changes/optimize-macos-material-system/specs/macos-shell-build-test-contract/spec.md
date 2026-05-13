@@ -16,3 +16,11 @@ reintroduce hard-coded visual effects.
 #### Scenario: One-off material fills are checked
 - **WHEN** a change adds new active-shell material or translucent fills
 - **THEN** focused review or a lightweight check confirms the fill is attached to a shared semantic material/control role rather than a local hard-coded effect
+
+#### Scenario: Elevation hierarchy is reviewed
+- **WHEN** active macOS shell radius, shadow, rim, or floating-surface treatment changes
+- **THEN** focused review confirms terminal surface, sidebar selection, titlebar controls, command launcher, Find bar, command palette, and collapsed sidebar panel use the shared semantic radius/elevation scale
+
+#### Scenario: Light-mode shadow cleanliness is reviewed
+- **WHEN** active shell elevation changes are marked complete
+- **THEN** maintainers can inspect screenshots or notes confirming light-mode shadows are focused and adaptive rather than broad, dirty, or purely black halos
