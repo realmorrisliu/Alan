@@ -37,7 +37,9 @@ final class AlanGhosttyLiveHost: NSObject {
         focused: Bool
     ) {
         let canvasChanged = self.canvasView !== canvasView
-        let bootProfileChanged = self.bootProfile != bootProfile
+        let needsSurfaceRecreation = bootProfile?.requiresSurfaceRecreation(
+            comparedTo: self.bootProfile
+        ) ?? (self.bootProfile != nil)
 
         self.canvasView = canvasView
         self.bootProfile = bootProfile
@@ -67,7 +69,7 @@ final class AlanGhosttyLiveHost: NSObject {
             return
         }
 
-        if surface == nil || bootProfileChanged || canvasChanged {
+        if surface == nil || needsSurfaceRecreation || canvasChanged {
             createSurface(on: canvasView, bootProfile: bootProfile)
         }
 

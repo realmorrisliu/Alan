@@ -351,6 +351,8 @@ final class AlanShellSocketServer {
     }
 
     func handleLocally(_ command: AlanShellControlCommand) -> AlanShellControlResponse? {
+        guard !command.command.allocatesPaneID else { return nil }
+
         let localResult: AlanShellLocalCommandResult? = {
             stateLock.lock()
             defer { stateLock.unlock() }
@@ -390,6 +392,17 @@ final class AlanShellSocketServer {
             }
         } else {
             try? Data(line.utf8).write(to: logURL, options: .atomic)
+        }
+    }
+}
+
+private extension AlanShellControlCommandKind {
+    var allocatesPaneID: Bool {
+        switch self {
+        case .spaceCreate, .spaceOpenAlan, .tabOpen, .paneSplit:
+            return true
+        default:
+            return false
         }
     }
 }

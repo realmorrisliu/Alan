@@ -3,9 +3,15 @@ import SwiftUI
 #if os(macOS)
 struct ShellWorkspaceView: View {
     @ObservedObject var host: ShellHostController
+    let hasExpandedSidebar: Bool
 
     var body: some View {
-        TerminalPaneView(host: host)
+        TerminalPaneView(
+            host: host,
+            terminalSurfaceInsets: ShellWorkspaceMetrics.terminalSurfaceInsets(
+                hasExpandedSidebar: hasExpandedSidebar
+            )
+        )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }

@@ -39,6 +39,39 @@ theme panels, and ornamental controls.
 #### Scenario: Stable compact controls
 - **WHEN** the user hovers, selects, inserts, closes, or switches tabs and spaces
 - **THEN** rows, icon controls, counters, and status marks keep stable dimensions and do not resize the sidebar or terminal content
+- **AND** the bottom space dock aligns its visible controls to the sidebar edge inset so the leading and bottom margins match optically
+- **AND** the bottom space dock add button directly creates a standard new space instead of opening a menu of space variants
+
+### Requirement: Collapsed sidebar uses a lightweight floating panel
+When the sidebar is collapsed, the macOS shell SHALL reveal navigation through a
+small floating material panel triggered by intentional edge or titlebar-control
+hover, while keeping the terminal workspace stable.
+
+#### Scenario: Narrow reveal target
+- **WHEN** the sidebar is collapsed and the pointer approaches the left edge
+- **THEN** Alan uses a narrow edge hot zone to reveal the floating sidebar panel rather than a full titlebar or header-width hover region
+
+#### Scenario: Floating panel hover retention
+- **WHEN** the pointer moves from the edge hot zone onto the floating sidebar panel or collapsed titlebar controls
+- **THEN** the floating panel remains revealed until the pointer leaves those related surfaces
+
+#### Scenario: Floating panel owns traffic lights
+- **WHEN** the sidebar is collapsed and the floating panel is hidden
+- **THEN** the standard macOS traffic-light controls are hidden with the sidebar surface instead of remaining on the bare window corner
+- **AND WHEN** the floating sidebar panel is revealed
+- **THEN** the standard macOS traffic-light controls reappear on that floating sidebar surface without appearing ahead of the panel reveal timing or changing terminal workspace geometry
+
+#### Scenario: Floating panel motion
+- **WHEN** reduced motion is disabled
+- **THEN** the floating sidebar panel enters with a short spring-like leading-edge reveal and exits with a faster low-emphasis hide animation
+
+#### Scenario: Reduced motion respected
+- **WHEN** reduced motion is enabled
+- **THEN** collapsed-sidebar reveal and hide behavior avoids springy movement while preserving the same hover targets and visibility state
+
+#### Scenario: Workspace stability
+- **WHEN** the floating sidebar panel appears or disappears
+- **THEN** terminal content, split geometry, and window size remain stable instead of being resized by the transient sidebar surface
 
 #### Scenario: No dashboard treatment
 - **WHEN** the user views the default shell
@@ -90,6 +123,27 @@ frequent actions.
 #### Scenario: Command entry
 - **WHEN** the user invokes the command UI
 - **THEN** the entry point is labeled and organized as `Go to or Command...`
+- **AND WHEN** the floating Ask Alan command input is presented
+- **THEN** the input surface uses the system Liquid Glass effect for its primary material instead of relying on a custom blur, opaque fill, or gradient-only imitation
+- **AND** the Liquid Glass material follows the app's current light or dark appearance instead of assuming the active terminal theme is dark
+- **AND** the active terminal theme only contributes sampled background color through the system material and MUST NOT switch the command input's light or dark foreground palette
+- **AND** foreground text and controls render above the Liquid Glass layer using system foreground hierarchy so the glass material does not blur or wash out typed content
+- **AND** Alan keeps the Liquid Glass surface mounted across hidden and visible states, disables material insertion animation, and uses an opacity-only fade instead of moving the input from an edge
+- **AND** Alan uses a transparent click-away layer rather than a visible dimming scrim behind the Liquid Glass surface so the material does not flash between undimmed and dimmed sampled backgrounds
+- **AND** pressing `Command-P` while the input is already open dismisses it and returns keyboard focus to the previously focused terminal pane when available
+
+#### Scenario: Empty titlebar zoom
+- **WHEN** a user double-clicks an empty, non-control area of the hidden-titlebar chrome
+- **THEN** Alan toggles the window between its previous frame and the current screen's visible work area while leaving the system traffic-light buttons, including the green button, on their normal macOS behavior
+- **AND** empty sidebar or floating-sidebar chrome in the traffic-light/titlebar-control band participates in double-click zoom while the actual traffic-light buttons, lightweight titlebar buttons, and terminal pane titlebar controls remain clickable
+
+#### Scenario: Native fullscreen chrome
+- **WHEN** the hidden-titlebar shell window enters native macOS fullscreen and the system takes over or hides the traffic-light controls
+- **THEN** Alan moves its lightweight titlebar controls to the leading edge without reserving traffic-light space
+- **AND WHEN** the window is actively live-resized
+- **THEN** Alan continuously resynchronizes the standard traffic-light controls during the resize interaction rather than only correcting the final resting position
+- **AND WHEN** the window exits native fullscreen or finishes resizing
+- **THEN** Alan keeps the standard traffic-light controls at their intended inset and returns its titlebar controls to the post-traffic-light position
 
 ### Requirement: Default shell does not expose inspector chrome
 The default macOS shell SHALL not include a persistent right-side inspector,
@@ -245,6 +299,10 @@ terminal title is unavailable.
 #### Scenario: Debug terms suppressed
 - **WHEN** terminal metadata contains implementation-oriented summaries such as `title updated`, `window attached`, or raw runtime state
 - **THEN** the title bar does not expose those terms outside explicit developer/debug-only surfaces
+
+#### Scenario: Metadata stays in title chrome
+- **WHEN** terminal status, branch, attention, or Alan binding metadata is useful in the default pane UI
+- **THEN** Alan presents it as lightweight pane-title-bar accessories rather than as a persistent bottom status strip below the terminal canvas
 
 ### Requirement: Pane close button targets its pane
 The pane title bar close button SHALL close the pane represented by that title

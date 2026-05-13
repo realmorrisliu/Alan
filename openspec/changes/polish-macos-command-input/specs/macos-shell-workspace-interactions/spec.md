@@ -19,6 +19,10 @@ candidate action lists.
 - **WHEN** the user opens `Go to or Command...`
 - **THEN** Alan focuses a single command input field instead of presenting default action, routing, or attention candidate lists
 
+#### Scenario: Command input shortcut toggles
+- **WHEN** the user presses `Command-P` while the command input is focused or visible
+- **THEN** Alan dismisses the command input instead of opening a duplicate surface
+
 #### Scenario: Typed command resolves
 - **WHEN** the user submits a typed command that Alan can resolve to a workspace action or routing target
 - **THEN** Alan executes the same shell controller action used by menu and keyboard paths and dismisses the command input

@@ -36,3 +36,28 @@ opaque, or ad hoc translucent fills in default shell chrome.
 #### Scenario: AppKit bridge remains isolated
 - **WHEN** a SwiftUI shell view needs an AppKit-backed visual effect material
 - **THEN** the view uses a reusable support-layer wrapper rather than creating `NSVisualEffectView` bridge details inline
+
+### Requirement: Active shell surfaces use semantic elevation
+The active macOS shell SHALL pair its material roles with a small semantic
+radius and shadow scale. Surface elevation MUST communicate hierarchy and
+interaction state rather than decorate every translucent control.
+
+#### Scenario: Primary terminal surface anchors elevation
+- **WHEN** the active terminal surface is visible
+- **THEN** it uses the primary content-surface treatment with continuous 12pt corners, a focused adaptive contact shadow, and restrained rim/highlight treatment
+
+#### Scenario: Static controls stay quiet
+- **WHEN** sidebar command launchers, titlebar ghost buttons, or compact static controls are idle
+- **THEN** they avoid default shadows and use material tint, stroke, hover, or highlight to show affordance
+
+#### Scenario: Selected navigation uses light elevation
+- **WHEN** a sidebar row or space switcher item is selected or previewed
+- **THEN** it may use a very light adaptive contact shadow that is smaller than floating overlay shadows and does not produce dirty dark halos in light mode
+
+#### Scenario: Floating surfaces carry stronger elevation
+- **WHEN** the command palette, pane Find bar, or collapsed sidebar panel floats above the shell
+- **THEN** it uses semantic floating-surface shadows that are visible, focused, and adaptive while keeping the terminal content visually dominant
+
+#### Scenario: Radius scale remains role-based
+- **WHEN** active shell visual chrome is updated
+- **THEN** micro indicators, compact controls, rows, floating inputs, primary surfaces, collapsed panels, and semantic pill inputs use the shared shell radius roles instead of local one-off values

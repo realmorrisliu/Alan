@@ -20,6 +20,7 @@ private enum ShellSplitModelTests {
         try verifiesPaneScopedCloseKeepsInactivePaneTargeting()
         try verifiesPaneScopedCloseClosesSinglePaneTab()
         try verifiesPaneScopedClosePreservesFinalPane()
+        try verifiesPaneAllocationSkipsReservedRuntimeIDs()
         try verifiesSplitDecodeRequiresPersistedRatio()
         print("Shell split model tests passed.")
     }
@@ -223,6 +224,41 @@ private enum ShellSplitModelTests {
         } catch ShellStateMutationError.lastTab {
             // Expected.
         }
+    }
+
+    private static func verifiesPaneAllocationSkipsReservedRuntimeIDs() throws {
+        let state = ShellStateSnapshot.bootstrapDefault(workingDirectory: "/tmp")
+
+        let openedTab = try state.openingTerminalTab(
+            in: nil,
+            title: nil,
+            workingDirectory: nil,
+            reservedPaneIDs: ["pane_2"]
+        )
+        expect(
+            openedTab.paneID == "pane_3",
+            "opening a tab must not reuse a pane ID reserved by a live runtime"
+        )
+
+        let splitPane = try state.splittingPane(
+            "pane_1",
+            direction: .vertical,
+            reservedPaneIDs: ["pane_2"]
+        )
+        expect(
+            splitPane.paneID == "pane_3",
+            "splitting a pane must not reuse a pane ID reserved by a live runtime"
+        )
+
+        let newSpace = state.creatingTerminalSpace(
+            title: nil,
+            workingDirectory: nil,
+            reservedPaneIDs: ["pane_2"]
+        )
+        expect(
+            newSpace.paneID == "pane_3",
+            "creating a space must not reuse a pane ID reserved by a live runtime"
+        )
     }
 
     private static func verifiesSplitDecodeRequiresPersistedRatio() throws {

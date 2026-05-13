@@ -369,7 +369,8 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         let result = shellState.creatingSpace(
             launchTarget: launchTarget,
             title: title,
-            workingDirectory: workingDirectory
+            workingDirectory: workingDirectory,
+            reservedPaneIDs: terminalRuntimeRegistry.registeredPaneIDs
         )
         applyMutationResult(result)
         return result.spaceID
@@ -398,7 +399,8 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
                 launchTarget: launchTarget,
                 in: spaceID,
                 title: title,
-                workingDirectory: workingDirectory
+                workingDirectory: workingDirectory,
+                reservedPaneIDs: terminalRuntimeRegistry.registeredPaneIDs
             )
         } catch {
             return nil
@@ -457,7 +459,8 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         do {
             result = try shellState.splittingPane(
                 paneID,
-                placement: placement
+                placement: placement,
+                reservedPaneIDs: terminalRuntimeRegistry.registeredPaneIDs
             )
         } catch {
             return nil

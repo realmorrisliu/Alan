@@ -184,6 +184,31 @@ reject_pattern \
     "Find UI must render through ShellFindBarView instead of the passive terminal overlay card"
 
 require_pattern \
+    "clients/apple/AlanNative/Support/ShellDesignTokens.swift" \
+    "spaceDockOuterBottomInset" \
+    "bottom space dock must use a tokenized outer inset to align with the sidebar edge"
+
+require_pattern \
+    "clients/apple/AlanNative/Views/Shell/ShellSidebarView.swift" \
+    "padding\\(\\.bottom, ShellSidebarMetrics\\.spaceDockOuterBottomInset\\)" \
+    "bottom space dock must align its visible controls to the sidebar bottom edge inset"
+
+require_pattern \
+    "clients/apple/AlanNative/Views/Shell/ShellSidebarView.swift" \
+    "padding\\(\\.vertical, ShellSidebarMetrics\\.spaceDockInternalVerticalPadding\\)" \
+    "space dock internal vertical padding must stay paired with its bottom alignment token"
+
+require_pattern \
+    "clients/apple/AlanNative/Views/Shell/ShellSidebarView.swift" \
+    "Button\\(action: createSpaceFromDock\\)" \
+    "bottom space dock add control must be a direct button, not a variant menu"
+
+reject_pattern \
+    "clients/apple/AlanNative/Views/Shell/ShellSidebarView.swift" \
+    "New Space with Alan|createAlanSpace|menuIndicator\\(\\.hidden\\)" \
+    "bottom space dock add control must not expose the removed New Space with Alan menu path"
+
+require_pattern \
     "clients/apple/scripts/test-terminal-surface-controller.swift" \
     "verifiesScrollbackActionsReachSurfaceEngine" \
     "surface controller tests must prove scrollback actions reach the surface engine"
@@ -369,9 +394,124 @@ require_pattern \
     "command UI tab actions must use the shared shell workspace command vocabulary"
 
 require_pattern \
+    "clients/apple/AlanNative/Views/Shell/ShellCommandTabView.swift" \
+    "GlassEffectContainer\\(spacing:" \
+    "floating Ask Alan command input must group custom Liquid Glass surfaces"
+
+require_pattern \
+    "clients/apple/AlanNative/Views/Shell/ShellCommandTabView.swift" \
+    "\\.glassEffect\\(\\.regular\\.interactive\\(\\), in: shape\\)" \
+    "floating Ask Alan command input must use the default system Liquid Glass material"
+
+require_pattern \
+    "clients/apple/AlanNative/Views/Shell/ShellCommandTabView.swift" \
+    "\\.glassEffectTransition\\(\\.identity\\)" \
+    "floating Ask Alan command input must disable Liquid Glass material insertion animation"
+
+require_pattern \
+    "clients/apple/AlanNative/Views/Shell/ShellCommandTabView.swift" \
+    "private var commandInputContent: some View" \
+    "floating Ask Alan command input foreground content must render outside the glass-effect layer"
+
+require_pattern \
+    "clients/apple/AlanNative/MacShellRootView.swift" \
+    "private let hiddenCommandInputOpacity = 0\\.001" \
+    "floating Ask Alan command input must keep the Liquid Glass surface mounted before presentation"
+
+require_pattern \
+    "clients/apple/AlanNative/MacShellRootView.swift" \
+    "private func toggleCommandInput\\(\\)" \
+    "Command-P must toggle the floating Ask Alan command input"
+
+require_pattern \
+    "clients/apple/AlanNative/MacShellRootView.swift" \
+    "isActive: isCommandTabPresented" \
+    "floating Ask Alan command input must separate mounted glass identity from active text focus"
+
+require_pattern \
+    "clients/apple/AlanNative/MacShellRootView.swift" \
+    "withAnimation\\(commandInputAnimation\\)" \
+    "floating Ask Alan command input must fade between hidden and visible states"
+
+require_pattern \
+    "clients/apple/AlanNative/MacShellRootView.swift" \
+    "\\.opacity\\(commandInputOpacity\\)" \
+    "floating Ask Alan command input must use opacity fade instead of moving from an edge"
+
+require_pattern \
+    "clients/apple/AlanNative/MacShellRootView.swift" \
+    "Color\\.clear" \
+    "floating Ask Alan click-away layer must avoid visible dimming under Liquid Glass"
+
+require_pattern \
+    "clients/apple/AlanNative/MacShellRootView.swift" \
+    "\\.transition\\(\\.identity\\)" \
+    "floating Ask Alan click-away layer must not animate behind Liquid Glass on insertion"
+
+reject_pattern \
+    "clients/apple/AlanNative/MacShellRootView.swift" \
+    "ShellPalette\\.overlayScrim" \
+    "floating Ask Alan must not place a visible dimming scrim behind Liquid Glass"
+
+require_pattern \
     "clients/apple/AlanNative/Views/Shell/ShellSidebarView.swift" \
-    "Go to or Command\\.\\.\\." \
+    "Ask Alan\\.\\.\\." \
     "command entry copy must match the accepted shell command UI label"
+
+require_pattern \
+    "clients/apple/AlanNative/Support/ShellDesignTokens.swift" \
+    "collapsedRevealEdgeWidth" \
+    "collapsed sidebar reveal must use a narrow edge hot zone token"
+
+require_pattern \
+    "clients/apple/AlanNative/MacShellRootView.swift" \
+    "sidebarPanelRevealAnimation" \
+    "collapsed sidebar reveal must use a dedicated spring reveal animation"
+
+require_pattern \
+    "clients/apple/AlanNative/MacShellRootView.swift" \
+    "sidebarPanelHideAnimation" \
+    "collapsed sidebar hide must use a dedicated fast exit animation"
+
+require_pattern \
+    "clients/apple/AlanNative/MacShellRootView.swift" \
+    "handleCollapsedSidebarToolbarHover" \
+    "collapsed sidebar toolbar controls must keep the floating panel revealed while hovered"
+
+require_pattern \
+    "clients/apple/AlanNative/MacShellRootView.swift" \
+    "windowChromeSurface" \
+    "collapsed sidebar chrome must publish its floating surface state to AppKit"
+
+require_pattern \
+    "clients/apple/AlanNative/MacShellRootView.swift" \
+    "isVisible: isSidebarSurfaceVisible" \
+    "traffic lights must hide when the collapsed sidebar surface is hidden"
+
+require_pattern \
+    "clients/apple/AlanNative/MacShellRootView.swift" \
+    "floatingSidebarTrafficLightRevealDelay" \
+    "floating sidebar traffic lights must not appear ahead of panel reveal timing"
+
+require_pattern \
+    "clients/apple/AlanNative/MacShellRootView.swift" \
+    "scheduleFloatingSidebarTrafficLightReveal" \
+    "floating sidebar traffic-light visibility must be delayed separately from panel insertion"
+
+require_pattern \
+    "clients/apple/AlanNative/MacShellRootView.swift" \
+    "guard !isSidebarPanelRevealed else" \
+    "repeated floating sidebar hover enters must not reset visible traffic lights"
+
+require_pattern \
+    "clients/apple/AlanNative/MacShellRootView.swift" \
+    "floatingSidebarTrafficLightRevealToken" \
+    "floating sidebar traffic-light reveal timing must not share the hover-retention token"
+
+reject_pattern \
+    "clients/apple/AlanNative/MacShellRootView.swift" \
+    "frame\\(width: sidebarWidth, height: windowChromeMetrics\\.collapsedRevealHeaderHeight\\)" \
+    "collapsed sidebar reveal must not use the full titlebar/header width as a hover zone"
 
 require_pattern \
     "clients/apple/AlanNative/TerminalSurfaceController.swift" \
@@ -422,6 +562,61 @@ require_pattern \
     "clients/apple/AlanNative/TerminalPaneView.swift" \
     "ShellTerminalSurfaceFrame" \
     "terminal panes must share one outer rounded terminal surface frame"
+
+require_pattern \
+    "clients/apple/AlanNative/MacShellRootView.swift" \
+    "ShellWorkspaceView\\(host: host, hasExpandedSidebar: !isSidebarCollapsed\\)" \
+    "mac shell root must pass expanded sidebar state into workspace spacing"
+
+require_pattern \
+    "clients/apple/AlanNative/Views/Shell/ShellWorkspaceView.swift" \
+    "hasExpandedSidebar: Bool" \
+    "workspace view must expose sidebar-aware terminal surface spacing"
+
+require_pattern \
+    "clients/apple/AlanNative/TerminalPaneView.swift" \
+    "terminalSurfaceInsets: EdgeInsets" \
+    "terminal pane must receive semantic terminal surface edge insets"
+
+require_pattern \
+    "clients/apple/AlanNative/TerminalPaneView.swift" \
+    "padding\\(terminalSurfaceInsets\\)" \
+    "terminal pane must apply state-aware terminal surface edge insets"
+
+reject_pattern \
+    "clients/apple/AlanNative/TerminalHostView.swift" \
+    "cornerRadius = ShellRadii\\.terminalSurface" \
+    "terminal host view must not apply an inner rounded corner inside the outer terminal surface"
+
+require_pattern \
+    "clients/apple/AlanNative/Support/ShellDesignTokens.swift" \
+    "terminalSurfaceInsets\\(hasExpandedSidebar" \
+    "terminal workspace surface insets must account for expanded sidebar adjacency"
+
+require_pattern \
+    "clients/apple/scripts/test-shell-window-placement.swift" \
+    "verifiesSystemModeClearsExplicitWindowAppearanceImmediately" \
+    "window-placement tests must cover immediate reset to system appearance mode"
+
+require_pattern \
+    "clients/apple/scripts/test-shell-window-placement.sh" \
+    "ShellWindowPlacement\\.swift" \
+    "window-placement tests must compile the macOS shell appearance bridge"
+
+require_pattern \
+    "clients/apple/AlanNative/MacShellRootView.swift" \
+    "resolvedAppearanceColorScheme" \
+    "mac shell root must resolve system appearance into an explicit SwiftUI colorScheme environment"
+
+reject_pattern \
+    "clients/apple/AlanNative/MacShellRootView.swift" \
+    "preferredColorScheme" \
+    "mac shell appearance switching must not rely on clearing a stale SwiftUI preferredColorScheme preference"
+
+reject_pattern \
+    "clients/apple/AlanNative/TerminalPaneView.swift" \
+    "padding\\(ShellWorkspaceMetrics\\.terminalSurfaceInset\\)" \
+    "terminal surface must not apply equal workspace inset when the sidebar is expanded"
 
 require_pattern \
     "clients/apple/AlanNative/TerminalPaneView.swift" \
@@ -579,6 +774,91 @@ require_pattern \
     "hidden-titlebar shell windows must make non-interactive background regions draggable"
 
 require_pattern \
+    "clients/apple/AlanNative/Support/ShellWindowPlacement.swift" \
+    "contentInteractionTopInset" \
+    "window double-click zoom overlay must not cover terminal surface title-bar controls"
+
+require_pattern \
+    "clients/apple/AlanNative/Support/ShellWindowPlacement.swift" \
+    "isPointInSidebarChromeBand" \
+    "window double-click zoom overlay must include blank sidebar chrome outside real controls"
+
+require_pattern \
+    "clients/apple/AlanNative/MacShellRootView.swift" \
+    "width: sidebarWidth" \
+    "window double-click zoom hit testing must know the sidebar chrome width"
+
+require_pattern \
+    "clients/apple/scripts/test-shell-window-placement.swift" \
+    "verifiesTitlebarOverlayRejectsTerminalSurfaceTitleBarHit" \
+    "shell window placement tests must prove terminal title-bar controls are not intercepted by zoom overlay"
+
+require_pattern \
+    "clients/apple/scripts/test-shell-window-placement.swift" \
+    "verifiesTitlebarOverlayAcceptsSidebarChromeBlankHit" \
+    "shell window placement tests must prove blank sidebar chrome remains a double-click zoom target"
+
+require_pattern \
+    "clients/apple/AlanNative/Support/ShellWindowPlacement.swift" \
+    "NSWindow\\.didResizeNotification" \
+    "hidden-titlebar shell windows must resynchronize traffic-light placement after resize"
+
+require_pattern \
+    "clients/apple/AlanNative/Support/ShellWindowPlacement.swift" \
+    "NSWindow\\.willStartLiveResizeNotification" \
+    "hidden-titlebar shell windows must start continuous traffic-light sync during live resize"
+
+require_pattern \
+    "clients/apple/AlanNative/Support/ShellWindowPlacement.swift" \
+    "liveResizeChromeSyncTimer" \
+    "hidden-titlebar shell windows must keep a scoped live-resize chrome sync timer"
+
+require_pattern \
+    "clients/apple/AlanNative/Support/ShellWindowPlacement.swift" \
+    "RunLoop\\.main\\.add\\(timer, forMode: \\.eventTracking\\)" \
+    "live-resize chrome sync must run in the event-tracking run loop mode"
+
+require_pattern \
+    "clients/apple/AlanNative/Support/ShellWindowPlacement.swift" \
+    "NSWindow\\.didEnterFullScreenNotification" \
+    "hidden-titlebar shell windows must publish native fullscreen chrome state"
+
+require_pattern \
+    "clients/apple/AlanNative/Support/ShellWindowPlacement.swift" \
+    "standardTrafficLightsVisible = false" \
+    "native fullscreen must stop reserving titlebar space for hidden traffic lights"
+
+require_pattern \
+    "clients/apple/AlanNative/Support/ShellWindowPlacement.swift" \
+    "ShellWindowChromeSurface" \
+    "window chrome sync must accept sidebar surface visibility and origin"
+
+require_pattern \
+    "clients/apple/AlanNative/Support/ShellWindowPlacement.swift" \
+    "setStandardWindowButtons\\(in: window, hidden: true\\)" \
+    "standard traffic lights must hide with a hidden sidebar surface"
+
+require_pattern \
+    "clients/apple/AlanNative/Support/ShellWindowPlacement.swift" \
+    "chromeSurfaceOrigin" \
+    "standard traffic lights must follow the visible floating sidebar surface origin"
+
+require_pattern \
+    "clients/apple/AlanNative/Support/ShellWindowPlacement.swift" \
+    "showsStandardTrafficLights" \
+    "window chrome sync must distinguish surface layout from actual traffic-light visibility"
+
+require_pattern \
+    "clients/apple/AlanNative/Support/ShellWindowPlacement.swift" \
+    "setStandardWindowButtons\\(in: window, hidden: false, alphaValue: 0\\)" \
+    "floating sidebar traffic lights must be made invisible before AppKit-visible repositioning"
+
+require_pattern \
+    "clients/apple/AlanNative/Support/ShellWindowPlacement.swift" \
+    "localTrafficLightGroupFrame" \
+    "floating sidebar traffic lights must be rechecked after standard button visibility changes"
+
+require_pattern \
     "clients/apple/AlanNative/TerminalHostView.swift" \
     "override var mouseDownCanMoveWindow: Bool \\{ false \\}" \
     "terminal host views must not allow terminal pane clicks to drag the shell window"
@@ -656,7 +936,17 @@ reject_pattern \
 require_pattern \
     "clients/apple/AlanNative/AlanNativeApp.swift" \
     "Window\\(\"Alan\", id: \"main\"\\)" \
-    "macOS app scene must use a unique primary Window instead of a repeatable WindowGroup"
+    "macOS app scene must use a launch-presented singleton primary Window"
+
+reject_pattern \
+    "clients/apple/AlanNative/AlanNativeApp.swift" \
+    "WindowGroup\\(\"Alan\", id: \"main\"\\)" \
+    "macOS primary shell scene must not use a WindowGroup that can miss first-launch presentation"
+
+require_pattern \
+    "clients/apple/AlanNative/AlanNativeApp.swift" \
+    "defaultLaunchBehavior\\(\\.presented\\)" \
+    "macOS primary window must be presented when the app launches without restoration"
 
 require_pattern \
     "clients/apple/AlanNative/App/AlanMacShellCommands.swift" \
@@ -672,6 +962,21 @@ require_pattern \
     "clients/apple/AlanNative/AlanAppSingletonGuard.swift" \
     "flock\\(descriptor, LOCK_EX \\| LOCK_NB\\)" \
     "macOS app singleton guard must use an OS-backed exclusive lock"
+
+require_pattern \
+    "clients/apple/scripts/run-alan-debug-app.sh" \
+    "pkill -x Alan" \
+    "just app must stop the previous Alan process before launching a fresh debug build"
+
+require_pattern \
+    "clients/apple/scripts/run-alan-debug-app.sh" \
+    "wait_for_alan_to_exit" \
+    "just app must wait for the previous Alan process to release singleton ownership before relaunching"
+
+require_pattern \
+    "justfile" \
+    "clients/apple/scripts/run-alan-debug-app\\.sh" \
+    "just app must use the guarded native app runner"
 
 require_pattern \
     "clients/apple/README.md" \

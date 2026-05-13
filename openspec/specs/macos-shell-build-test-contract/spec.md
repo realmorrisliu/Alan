@@ -159,6 +159,10 @@ ownership when pane title bars are changed.
 - **WHEN** pane title-bar implementation is ready for review
 - **THEN** maintainers can inspect automated shell contract checks or manual notes covering terminal click-to-focus, typing, selection drag, right click, scrolling, and close-button interaction
 
+#### Scenario: Window chrome and collapsed sidebar guardrails run
+- **WHEN** hidden-titlebar window chrome, titlebar double-click behavior, local app launch behavior, or collapsed-sidebar floating-panel behavior changes
+- **THEN** focused checks verify launch presents one primary window, empty titlebar double-click zoom targets only non-control chrome, system traffic-light buttons keep their normal behavior, and collapsed-sidebar reveal uses narrow hover targets with stable workspace geometry
+
 #### Scenario: Visual evidence captured
 - **WHEN** pane title-bar UI polish is marked complete
 - **THEN** maintainers can inspect a running-app screenshot or manual note showing light-mode single-pane and split-pane tabs with compact pane title bars, readable titles, restrained close buttons, and no default debug labels

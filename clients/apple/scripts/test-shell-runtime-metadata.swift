@@ -20,6 +20,7 @@ private enum ShellRuntimeMetadataTests {
         verifiesPaneTitleBarPrefersTerminalTitle()
         verifiesPaneTitleBarFallbackOrdering()
         verifiesPaneTitleBarSuppressesInternalTitles()
+        verifiesOpeningTabSkipsStaleRuntimePaneIDs()
         print("Shell runtime metadata tests passed.")
     }
 
@@ -359,6 +360,52 @@ private enum ShellRuntimeMetadataTests {
             )
         )
         expect(preservedLongTitle == longTitle, "pane title helper must leave long titles available for UI truncation")
+    }
+
+    private static func verifiesOpeningTabSkipsStaleRuntimePaneIDs() {
+        let windowID = "metadata_test_\(UUID().uuidString)"
+        let registry = TerminalRuntimeRegistry(runtimeService: FakeAlanTerminalRuntimeService())
+        let context = ShellWindowContext.make(
+            windowID: windowID,
+            terminalRuntimeRegistry: registry
+        )
+        let persistenceURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(windowID).json")
+        let controller = ShellHostController(
+            shellState: .bootstrapDefault(windowID: windowID),
+            windowContext: context,
+            persistenceURL: persistenceURL,
+            terminalRuntimeRegistry: registry
+        )
+        let stalePane = ShellPane(
+            paneID: "pane_2",
+            tabID: "tab_stale",
+            spaceID: "space_main",
+            launchTarget: .shell,
+            cwd: "/tmp",
+            process: nil,
+            attention: .idle,
+            context: nil,
+            viewport: nil,
+            alanBinding: nil
+        )
+        _ = registry.surfaceHandle(for: stalePane, bootProfile: nil)
+
+        expect(
+            registry.registeredPaneIDs.contains("pane_2"),
+            "test setup must register a runtime-only stale pane"
+        )
+
+        _ = controller.openTerminalTab()
+
+        expect(
+            controller.selectedPane?.paneID == "pane_3",
+            "opening a tab must skip pane IDs still owned by the terminal runtime registry"
+        )
+        expect(
+            !registry.registeredPaneIDs.contains("pane_2"),
+            "opening a tab must release stale runtime-only panes after adopting the new state"
+        )
     }
 
     private static func makeController() -> ShellHostController {

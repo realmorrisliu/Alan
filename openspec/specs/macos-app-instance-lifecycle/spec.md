@@ -37,7 +37,7 @@ window instead of creating another primary shell window.
 
 #### Scenario: First owned launch creates primary window
 - **WHEN** the owned Alan app instance completes launch
-- **THEN** exactly one primary Alan shell window is presented
+- **THEN** exactly one primary Alan shell window is presented without requiring a Dock icon click, application reopen, or other secondary activation step
 
 #### Scenario: New Window command
 - **WHEN** the user invokes the New Window menu item or presses `Command-N`
@@ -79,7 +79,7 @@ routing, reopen, and lock-release behavior.
 
 #### Scenario: Window singleton verified
 - **WHEN** macOS scene or command behavior changes
-- **THEN** tests, local scripts, or manual notes verify initial launch, `Command-N`, Dock reopen, close/reopen, repeated `open`, and forced `open -n`
+- **THEN** tests, local scripts, or manual notes verify initial launch through the local app runner, `Command-N`, Dock reopen, close/reopen, repeated `open`, and forced `open -n`
 
 #### Scenario: Documentation updated
 - **WHEN** singleton behavior changes the shell window lifecycle contract

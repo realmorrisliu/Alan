@@ -470,6 +470,14 @@ struct AlanShellBootProfile: Equatable {
     let environment: [String: String]
     let ghostty: GhosttyIntegrationStatus
 
+    func requiresSurfaceRecreation(comparedTo previous: AlanShellBootProfile?) -> Bool {
+        guard let previous else { return true }
+        // Runtime PWD updates change workingDirectory but must not respawn the pane.
+        return command != previous.command
+            || environment != previous.environment
+            || ghostty != previous.ghostty
+    }
+
     var launchCommandString: String {
         command.launchCommandString
     }
@@ -519,6 +527,12 @@ struct AlanShellBootProfile: Equatable {
         if let repoRoot = command.repoRoot {
             environment["ALAN_REPOSITORY_ROOT"] = repoRoot
         }
+
+        if let terminfoPath = ghostty.terminfoPath {
+            environment["TERMINFO"] = terminfoPath
+        }
+        environment["TERM_PROGRAM"] = "Alan"
+        environment["COLORTERM"] = "truecolor"
 
         return AlanShellBootProfile(
             command: command,

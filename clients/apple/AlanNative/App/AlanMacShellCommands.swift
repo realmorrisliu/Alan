@@ -25,7 +25,7 @@ struct AlanMacShellCommands: Commands {
             }
             .keyboardShortcut("t", modifiers: [.command, .option])
 
-            Button("Go to or Command...") {
+            Button("Ask Alan...") {
                 host.requestCommandInput()
             }
             .keyboardShortcut("p", modifiers: .command)
