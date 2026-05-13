@@ -6,29 +6,47 @@ import AppKit
 struct ShellWindowPlacementView: NSViewRepresentable {
     @Binding var metrics: ShellWindowChromeMetrics
     let appearanceMode: ShellAppearanceMode
+    @Binding var systemColorScheme: ColorScheme
 
     func makeNSView(context: Context) -> ShellWindowPlacementNSView {
         let metricsBinding = _metrics
-        return ShellWindowPlacementNSView(appearanceMode: appearanceMode) { metrics in
-            let newMetrics = metrics
-            DispatchQueue.main.async {
-                guard metricsBinding.wrappedValue != newMetrics else { return }
-                metricsBinding.wrappedValue = newMetrics
-            }
-        }
+        let systemColorSchemeBinding = _systemColorScheme
+        return ShellWindowPlacementNSView(
+            appearanceMode: appearanceMode,
+            metricsHandler: metricsHandler(metricsBinding),
+            systemAppearanceHandler: systemAppearanceHandler(systemColorSchemeBinding)
+        )
     }
 
     func updateNSView(_ nsView: ShellWindowPlacementNSView, context: Context) {
         let metricsBinding = _metrics
+        let systemColorSchemeBinding = _systemColorScheme
         nsView.updateAppearanceMode(appearanceMode)
-        nsView.updateMetricsHandler { metrics in
-            let newMetrics = metrics
+        nsView.updateMetricsHandler(metricsHandler(metricsBinding))
+        nsView.updateSystemAppearanceHandler(systemAppearanceHandler(systemColorSchemeBinding))
+        nsView.resolveWindowIfNeeded()
+    }
+
+    private func metricsHandler(
+        _ metricsBinding: Binding<ShellWindowChromeMetrics>
+    ) -> (ShellWindowChromeMetrics) -> Void {
+        { metrics in
             DispatchQueue.main.async {
-                guard metricsBinding.wrappedValue != newMetrics else { return }
-                metricsBinding.wrappedValue = newMetrics
+                guard metricsBinding.wrappedValue != metrics else { return }
+                metricsBinding.wrappedValue = metrics
             }
         }
-        nsView.resolveWindowIfNeeded()
+    }
+
+    private func systemAppearanceHandler(
+        _ systemColorSchemeBinding: Binding<ColorScheme>
+    ) -> (ColorScheme) -> Void {
+        { colorScheme in
+            DispatchQueue.main.async {
+                guard systemColorSchemeBinding.wrappedValue != colorScheme else { return }
+                systemColorSchemeBinding.wrappedValue = colorScheme
+            }
+        }
     }
 }
 
@@ -63,14 +81,17 @@ struct ShellWindowChromeMetrics: Equatable {
 final class ShellWindowPlacementNSView: NSView {
     private var appearanceMode: ShellAppearanceMode
     private var metricsHandler: (ShellWindowChromeMetrics) -> Void
+    private var systemAppearanceHandler: (ColorScheme) -> Void
     private var lastPublishedMetrics: ShellWindowChromeMetrics?
 
     init(
         appearanceMode: ShellAppearanceMode,
-        metricsHandler: @escaping (ShellWindowChromeMetrics) -> Void
+        metricsHandler: @escaping (ShellWindowChromeMetrics) -> Void,
+        systemAppearanceHandler: @escaping (ColorScheme) -> Void = { _ in }
     ) {
         self.appearanceMode = appearanceMode
         self.metricsHandler = metricsHandler
+        self.systemAppearanceHandler = systemAppearanceHandler
         super.init(frame: .zero)
     }
 
@@ -89,22 +110,47 @@ final class ShellWindowPlacementNSView: NSView {
         resolveWindowIfNeeded()
     }
 
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        publishEffectiveSystemColorScheme()
+    }
+
     func updateMetricsHandler(_ handler: @escaping (ShellWindowChromeMetrics) -> Void) {
         metricsHandler = handler
     }
 
+    func updateSystemAppearanceHandler(_ handler: @escaping (ColorScheme) -> Void) {
+        systemAppearanceHandler = handler
+        publishEffectiveSystemColorScheme()
+    }
+
     func updateAppearanceMode(_ mode: ShellAppearanceMode) {
+        let didChange = appearanceMode != mode
         appearanceMode = mode
+        guard didChange else { return }
+        applyAppearanceToAttachedWindow()
+        publishEffectiveSystemColorScheme()
     }
 
     func resolveWindowIfNeeded() {
         DispatchQueue.main.async { [weak self] in
             guard let self, let window = self.window else { return }
             let metrics = AlanShellWindowPlacement.apply(to: window, appearanceMode: self.appearanceMode)
+            self.publishEffectiveSystemColorScheme()
             guard self.lastPublishedMetrics != metrics else { return }
             self.lastPublishedMetrics = metrics
             self.metricsHandler(metrics)
         }
+    }
+
+    private func applyAppearanceToAttachedWindow() {
+        guard let window else { return }
+        AlanShellWindowPlacement.applyAppearance(to: window, appearanceMode: appearanceMode)
+    }
+
+    private func publishEffectiveSystemColorScheme() {
+        let appearance = window?.effectiveAppearance ?? effectiveAppearance
+        systemAppearanceHandler(ShellAppearanceMode.colorScheme(for: appearance))
     }
 }
 
@@ -113,7 +159,7 @@ private enum AlanShellWindowPlacement {
 
     static func apply(to window: NSWindow, appearanceMode: ShellAppearanceMode) -> ShellWindowChromeMetrics {
         window.title = "Alan"
-        window.appearance = appearanceMode.nsAppearanceName.flatMap(NSAppearance.init(named:))
+        applyAppearance(to: window, appearanceMode: appearanceMode)
         window.titleVisibility = .hidden
         window.titlebarAppearsTransparent = true
         window.titlebarSeparatorStyle = .none
@@ -135,6 +181,14 @@ private enum AlanShellWindowPlacement {
         NSApp.activate(ignoringOtherApps: true)
 
         return chromeMetrics(for: window)
+    }
+
+    static func applyAppearance(to window: NSWindow, appearanceMode: ShellAppearanceMode) {
+        let appearance = appearanceMode.nsAppearanceName.flatMap(NSAppearance.init(named:))
+        window.appearance = appearance
+        window.contentView?.appearance = appearance
+        window.contentView?.needsDisplay = true
+        window.displayIfNeeded()
     }
 
     private static func chromeMetrics(for window: NSWindow) -> ShellWindowChromeMetrics {

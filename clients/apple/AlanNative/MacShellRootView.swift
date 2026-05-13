@@ -13,6 +13,7 @@ struct MacShellRootView: View {
     @State private var spaceTransition: ShellSpaceTransition?
     @State private var spaceTransitionToken = 0
     @State private var windowChromeMetrics = ShellWindowChromeMetrics()
+    @State private var systemColorScheme = ShellAppearanceMode.currentSystemColorScheme
     private let sidebarWidth: CGFloat = 264
     private let floatingSidebarInset: CGFloat = 6
 
@@ -221,6 +222,10 @@ struct MacShellRootView: View {
         reduceMotion ? nil : .easeOut(duration: 0.16)
     }
 
+    private var resolvedAppearanceColorScheme: ColorScheme {
+        appearanceMode.resolvedColorScheme(systemColorScheme: systemColorScheme)
+    }
+
     private func updateSidebarCollapsed(_ collapsed: Bool) {
         withAnimation(sidebarPinnedStateAnimation) {
             isSidebarCollapsed = collapsed
@@ -280,7 +285,7 @@ struct MacShellRootView: View {
         }
         .animation(.easeOut(duration: 0.18), value: isCommandTabPresented)
         .animation(sidebarPinnedStateAnimation, value: isSidebarCollapsed)
-        .preferredColorScheme(appearanceMode.colorScheme)
+        .environment(\.colorScheme, resolvedAppearanceColorScheme)
         .onChange(of: isSidebarCollapsed) { _, collapsed in
             if !collapsed {
                 isSidebarPanelRevealed = false
@@ -292,7 +297,8 @@ struct MacShellRootView: View {
         .background(
             ShellWindowPlacementView(
                 metrics: $windowChromeMetrics,
-                appearanceMode: appearanceMode
+                appearanceMode: appearanceMode,
+                systemColorScheme: $systemColorScheme
             )
         )
     }

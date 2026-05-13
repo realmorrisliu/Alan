@@ -478,6 +478,26 @@ require_pattern \
     "terminalSurfaceInsets\\(hasExpandedSidebar" \
     "terminal workspace surface insets must account for expanded sidebar adjacency"
 
+require_pattern \
+    "clients/apple/scripts/test-shell-window-placement.swift" \
+    "verifiesSystemModeClearsExplicitWindowAppearanceImmediately" \
+    "window-placement tests must cover immediate reset to system appearance mode"
+
+require_pattern \
+    "clients/apple/scripts/test-shell-window-placement.sh" \
+    "ShellWindowPlacement\\.swift" \
+    "window-placement tests must compile the macOS shell appearance bridge"
+
+require_pattern \
+    "clients/apple/AlanNative/MacShellRootView.swift" \
+    "resolvedAppearanceColorScheme" \
+    "mac shell root must resolve system appearance into an explicit SwiftUI colorScheme environment"
+
+reject_pattern \
+    "clients/apple/AlanNative/MacShellRootView.swift" \
+    "preferredColorScheme" \
+    "mac shell appearance switching must not rely on clearing a stale SwiftUI preferredColorScheme preference"
+
 reject_pattern \
     "clients/apple/AlanNative/TerminalPaneView.swift" \
     "padding\\(ShellWorkspaceMetrics\\.terminalSurfaceInset\\)" \

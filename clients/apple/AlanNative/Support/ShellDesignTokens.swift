@@ -393,6 +393,18 @@ enum ShellAppearanceMode: String, CaseIterable, Identifiable {
         }
     }
 
+    func resolvedColorScheme(systemColorScheme: ColorScheme) -> ColorScheme {
+        colorScheme ?? systemColorScheme
+    }
+
+    static var currentSystemColorScheme: ColorScheme {
+        colorScheme(for: NSApplication.shared.effectiveAppearance)
+    }
+
+    static func colorScheme(for appearance: NSAppearance) -> ColorScheme {
+        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? .dark : .light
+    }
+
     var nsAppearanceName: NSAppearance.Name? {
         switch self {
         case .system:
@@ -401,6 +413,19 @@ enum ShellAppearanceMode: String, CaseIterable, Identifiable {
             return .aqua
         case .dark:
             return .darkAqua
+        }
+    }
+}
+
+private extension ColorScheme {
+    var shellNSAppearance: NSAppearance? {
+        switch self {
+        case .light:
+            return NSAppearance(named: .aqua)
+        case .dark:
+            return NSAppearance(named: .darkAqua)
+        @unknown default:
+            return nil
         }
     }
 }
@@ -627,18 +652,24 @@ enum ShellMaterialRole {
 
 private struct ShellVisualEffectView: NSViewRepresentable {
     let role: ShellMaterialRole
+    @Environment(\.colorScheme) private var colorScheme
 
     func makeNSView(context: Context) -> NSVisualEffectView {
         let view = NSVisualEffectView()
-        view.material = role.visualEffectMaterial ?? .contentBackground
-        view.blendingMode = role.blendingMode
+        applyConfiguration(to: view)
         view.state = .followsWindowActiveState
         return view
     }
 
     func updateNSView(_ nsView: NSVisualEffectView, context: Context) {
+        applyConfiguration(to: nsView)
+    }
+
+    private func applyConfiguration(to nsView: NSVisualEffectView) {
         nsView.material = role.visualEffectMaterial ?? .contentBackground
         nsView.blendingMode = role.blendingMode
+        nsView.appearance = colorScheme.shellNSAppearance
+        nsView.needsDisplay = true
     }
 }
 
