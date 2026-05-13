@@ -448,6 +448,11 @@ require_pattern \
     "ShellTerminalSurfaceFrame" \
     "terminal panes must share one outer rounded terminal surface frame"
 
+reject_pattern \
+    "clients/apple/AlanNative/TerminalHostView.swift" \
+    "cornerRadius = ShellRadii\\.terminalSurface" \
+    "terminal host view must not apply an inner rounded corner inside the outer terminal surface"
+
 require_pattern \
     "clients/apple/AlanNative/Support/ShellDesignTokens.swift" \
     "terminalSurfaceInset" \
