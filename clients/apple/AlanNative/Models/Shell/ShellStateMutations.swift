@@ -120,13 +120,14 @@ extension ShellStateSnapshot {
         launchTarget: ShellLaunchTarget,
         title: String?,
         workingDirectory: String?,
+        reservedPaneIDs: Set<String> = [],
         defaultWorkingDirectory: String = defaultShellWorkingDirectory(),
         now: Date = .now
     ) -> ShellStateMutationResult {
         let spaceIndex = spaces.count + 1
         let spaceID = nextID(prefix: "space", existing: spaces.map(\.spaceID))
         let tabID = nextID(prefix: "tab", existing: spaces.flatMap { $0.tabs.map(\.tabID) })
-        let paneID = nextID(prefix: "pane", existing: panes.map(\.paneID))
+        let paneID = nextID(prefix: "pane", existing: panes.map(\.paneID) + Array(reservedPaneIDs))
         let pane = makeTerminalPane(
             paneID: paneID,
             tabID: tabID,
@@ -172,6 +173,7 @@ extension ShellStateSnapshot {
     func creatingAlanSpace(
         title: String?,
         workingDirectory: String?,
+        reservedPaneIDs: Set<String> = [],
         defaultWorkingDirectory: String = defaultShellWorkingDirectory(),
         now: Date = .now
     ) -> ShellStateMutationResult {
@@ -179,6 +181,7 @@ extension ShellStateSnapshot {
             launchTarget: .alan,
             title: title,
             workingDirectory: workingDirectory,
+            reservedPaneIDs: reservedPaneIDs,
             defaultWorkingDirectory: defaultWorkingDirectory,
             now: now
         )
@@ -187,6 +190,7 @@ extension ShellStateSnapshot {
     func creatingTerminalSpace(
         title: String?,
         workingDirectory: String?,
+        reservedPaneIDs: Set<String> = [],
         defaultWorkingDirectory: String = defaultShellWorkingDirectory(),
         now: Date = .now
     ) -> ShellStateMutationResult {
@@ -194,6 +198,7 @@ extension ShellStateSnapshot {
             launchTarget: .shell,
             title: title,
             workingDirectory: workingDirectory,
+            reservedPaneIDs: reservedPaneIDs,
             defaultWorkingDirectory: defaultWorkingDirectory,
             now: now
         )
@@ -204,6 +209,7 @@ extension ShellStateSnapshot {
         in requestedSpaceID: String?,
         title: String?,
         workingDirectory: String?,
+        reservedPaneIDs: Set<String> = [],
         defaultWorkingDirectory: String = defaultShellWorkingDirectory(),
         now: Date = .now
     ) throws -> ShellStateMutationResult {
@@ -215,7 +221,7 @@ extension ShellStateSnapshot {
         }
 
         let tabID = nextID(prefix: "tab", existing: spaces.flatMap { $0.tabs.map(\.tabID) })
-        let paneID = nextID(prefix: "pane", existing: panes.map(\.paneID))
+        let paneID = nextID(prefix: "pane", existing: panes.map(\.paneID) + Array(reservedPaneIDs))
         let pane = makeTerminalPane(
             paneID: paneID,
             tabID: tabID,
@@ -264,6 +270,7 @@ extension ShellStateSnapshot {
         in requestedSpaceID: String?,
         title: String?,
         workingDirectory: String?,
+        reservedPaneIDs: Set<String> = [],
         defaultWorkingDirectory: String = defaultShellWorkingDirectory(),
         now: Date = .now
     ) throws -> ShellStateMutationResult {
@@ -272,6 +279,7 @@ extension ShellStateSnapshot {
             in: requestedSpaceID,
             title: title,
             workingDirectory: workingDirectory,
+            reservedPaneIDs: reservedPaneIDs,
             defaultWorkingDirectory: defaultWorkingDirectory,
             now: now
         )
@@ -281,6 +289,7 @@ extension ShellStateSnapshot {
         in requestedSpaceID: String?,
         title: String?,
         workingDirectory: String?,
+        reservedPaneIDs: Set<String> = [],
         defaultWorkingDirectory: String = defaultShellWorkingDirectory(),
         now: Date = .now
     ) throws -> ShellStateMutationResult {
@@ -289,6 +298,7 @@ extension ShellStateSnapshot {
             in: requestedSpaceID,
             title: title,
             workingDirectory: workingDirectory,
+            reservedPaneIDs: reservedPaneIDs,
             defaultWorkingDirectory: defaultWorkingDirectory,
             now: now
         )
@@ -297,12 +307,14 @@ extension ShellStateSnapshot {
     func splittingPane(
         _ paneID: String,
         direction: ShellSplitDirection,
+        reservedPaneIDs: Set<String> = [],
         defaultWorkingDirectory: String = defaultShellWorkingDirectory(),
         now: Date = .now
     ) throws -> ShellStateMutationResult {
         try splittingPane(
             paneID,
             placement: .defaultPlacement(for: direction),
+            reservedPaneIDs: reservedPaneIDs,
             defaultWorkingDirectory: defaultWorkingDirectory,
             now: now
         )
@@ -311,6 +323,7 @@ extension ShellStateSnapshot {
     func splittingPane(
         _ paneID: String,
         placement: ShellPaneSplitDirection,
+        reservedPaneIDs: Set<String> = [],
         defaultWorkingDirectory: String = defaultShellWorkingDirectory(),
         now: Date = .now
     ) throws -> ShellStateMutationResult {
@@ -320,7 +333,7 @@ extension ShellStateSnapshot {
             throw ShellStateMutationError.paneNotFound
         }
 
-        let newPaneID = nextID(prefix: "pane", existing: panes.map(\.paneID))
+        let newPaneID = nextID(prefix: "pane", existing: panes.map(\.paneID) + Array(reservedPaneIDs))
         let splitNodeID = nextID(
             prefix: "node",
             existing: spaces.flatMap(\.tabs).flatMap { $0.paneTree.nodeIDs }

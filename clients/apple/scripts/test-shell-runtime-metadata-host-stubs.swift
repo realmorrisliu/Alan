@@ -18,6 +18,7 @@ final class AlanTerminalHostNSView: NSView {
         surfaceHandle: AlanTerminalSurfaceHandle?,
         activationDelegate: TerminalHostActivationDelegate?,
         onWorkspaceCommand: ((ShellWorkspaceCommand) -> Void)?,
+        onCommandInput: (() -> Void)?,
         onRuntimeUpdate: @escaping (TerminalHostRuntimeSnapshot) -> Void,
         onMetadataUpdate: @escaping (TerminalPaneMetadataSnapshot) -> Void
     ) {}
@@ -39,5 +40,7 @@ final class AlanTerminalHostNSView: NSView {
     func selectPreviousFindMatch() {}
 
     func dismissFindInteraction(refocusTerminal: Bool = true) {}
+
+    func focusTerminal() {}
 }
 #endif

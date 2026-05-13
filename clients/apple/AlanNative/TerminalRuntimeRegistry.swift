@@ -116,6 +116,7 @@ final class TerminalRuntimeRegistry: ObservableObject {
     func releaseRuntimes(excluding activePaneIDs: Set<String>) {
         let stalePaneIDs = Set(hostViewsByPaneID.keys)
             .union(snapshotsByPaneID.keys)
+            .union(runtimeService.registeredPaneIDs)
             .subtracting(activePaneIDs)
         stalePaneIDs.forEach { releaseRuntime($0) }
     }
