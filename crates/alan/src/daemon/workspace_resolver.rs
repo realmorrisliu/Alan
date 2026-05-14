@@ -519,7 +519,8 @@ impl WorkspaceResolver {
         }
 
         let alan_dir = self.workspace_alan_dir(canonical);
-        if alan_dir == self.default_workspace_dir {
+        let comparable_alan_dir = canonicalize_existing_or_self(alan_dir.clone());
+        if comparable_alan_dir == self.default_workspace_dir {
             return (
                 self.default_workspace_dir.clone(),
                 self.default_workspace_dir.clone(),
@@ -690,6 +691,39 @@ mod tests {
         assert_eq!(resolved.path, default_dir);
         assert_eq!(resolved.alan_dir, default_dir);
         assert!(resolved.alan_dir.join("sessions").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_resolve_registered_home_symlink_uses_default_workspace() {
+        use std::os::unix::fs::symlink;
+
+        let temp = TempDir::new().unwrap();
+        let real_home_dir = temp.path().join("real-home");
+        std::fs::create_dir_all(&real_home_dir).unwrap();
+        let linked_home_dir = temp.path().join("linked-home");
+        symlink(&real_home_dir, &linked_home_dir).unwrap();
+        let default_dir = linked_home_dir.join(".alan");
+        std::fs::create_dir_all(&default_dir).unwrap();
+        let default_dir = std::fs::canonicalize(&default_dir).unwrap();
+
+        let id = generate_workspace_id(&linked_home_dir);
+        let registry = WorkspaceRegistry {
+            version: 1,
+            workspaces: vec![crate::registry::WorkspaceEntry {
+                id: id.clone(),
+                path: linked_home_dir,
+                alias: "home".to_string(),
+                created_at: chrono::Utc::now().to_rfc3339(),
+            }],
+        };
+
+        let resolver = WorkspaceResolver::with_registry(registry, default_dir.clone());
+        let resolved = resolver.resolve(Some("home")).unwrap();
+
+        assert_eq!(resolved.id, id);
+        assert_eq!(resolved.path, default_dir);
+        assert_eq!(resolved.alan_dir, default_dir);
     }
 
     #[test]
