@@ -141,7 +141,7 @@ impl CapabilityPackageExports {
 /// Capability package available to an agent definition.
 ///
 /// Stable directory-backed packages currently expose one portable skill plus
-/// optional Alan-native resources and package-local launch targets.
+/// optional alan-native resources and package-local launch targets.
 #[derive(Debug, Clone)]
 pub struct CapabilityPackage {
     pub id: CapabilityPackageId,
@@ -250,7 +250,7 @@ pub struct SkillMetadata {
     /// Whether the skill may appear in the prompt catalog for implicit use.
     #[serde(default = "default_allow_implicit_invocation")]
     pub allow_implicit_invocation: bool,
-    /// Alan-native runtime/UI metadata loaded from optional sidecars.
+    /// alan-native runtime/UI metadata loaded from optional sidecars.
     #[serde(skip, default)]
     pub alan_metadata: AlanSkillRuntimeMetadata,
     /// Public compatibility metadata loaded from tolerated sidecars such as
@@ -443,7 +443,7 @@ impl SkillCompatibility {
     }
 }
 
-/// Partial compatibility overlay loaded from optional Alan sidecars.
+/// Partial compatibility overlay loaded from optional alan sidecars.
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct SkillCompatibilityOverlay {
     #[serde(default)]
@@ -579,7 +579,7 @@ pub struct CompatibleSkillToolDependency {
     pub url: Option<String>,
 }
 
-/// Author-declared execution mode from Alan sidecar metadata.
+/// Author-declared execution mode from alan sidecar metadata.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AlanSkillExecutionMode {
@@ -587,7 +587,7 @@ pub enum AlanSkillExecutionMode {
     Delegate,
 }
 
-/// Alan-native execution metadata for a skill.
+/// alan-native execution metadata for a skill.
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct AlanSkillExecutionMetadata {
     #[serde(default)]
@@ -611,7 +611,7 @@ impl AlanSkillExecutionMetadata {
     }
 }
 
-/// Alan-native runtime metadata for a skill.
+/// alan-native runtime metadata for a skill.
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct AlanSkillRuntimeMetadata {
     #[serde(default)]
@@ -642,7 +642,7 @@ impl AlanSkillRuntimeMetadata {
     }
 }
 
-/// Optional Alan-native skill sidecar content.
+/// Optional alan-native skill sidecar content.
 ///
 /// Stable sidecar behavior is intentionally narrow: only runtime metadata is
 /// consumed from `skill.yaml` / `package.yaml`.
@@ -652,7 +652,7 @@ pub struct AlanSkillSidecar {
     pub runtime: AlanSkillRuntimeMetadata,
 }
 
-/// Optional Alan-native package sidecar content.
+/// Optional alan-native package sidecar content.
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct AlanPackageSidecar {
     #[serde(default)]
@@ -1013,7 +1013,7 @@ impl std::fmt::Display for SkillAvailabilityIssue {
                 write!(f, "unresolved execution: {detail}")
             }
             SkillAvailabilityIssue::MinVersionNotMet { required, current } => {
-                write!(f, "requires Alan >= {required} (current: {current})")
+                write!(f, "requires alan >= {required} (current: {current})")
             }
             SkillAvailabilityIssue::InvalidMinVersion(version) => {
                 write!(f, "invalid compatibility.min_version: {version}")
@@ -1956,7 +1956,7 @@ pub fn skill_remediation_from_issues(
                 );
             }
             SkillAvailabilityIssue::MinVersionNotMet { required, .. } => {
-                next_steps.insert(format!("Upgrade Alan to version {required} or newer."));
+                next_steps.insert(format!("Upgrade alan to version {required} or newer."));
             }
             SkillAvailabilityIssue::InvalidMinVersion(version) => {
                 next_steps.insert(format!(
@@ -2308,7 +2308,7 @@ enabled = true
             remediation
                 .next_steps
                 .iter()
-                .any(|step| step.contains("Upgrade Alan"))
+                .any(|step| step.contains("Upgrade alan"))
         );
         assert!(
             remediation

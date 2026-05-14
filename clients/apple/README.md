@@ -1,9 +1,9 @@
-# Alan Native Client (SwiftUI)
+# alan for macOS
 
-`clients/apple` is Alan's native Apple client project, supporting macOS and iOS.
+`clients/apple` is alan's native Apple client project, supporting macOS and iOS.
 
-The macOS path is currently being reframed into Alan Shell: a real terminal app
-whose shell is readable and operable by both humans and agents.
+The macOS path is alan for macOS: a real terminal workspace whose terminal
+state is readable and operable by both humans and agents.
 
 ## System Requirements
 
@@ -17,7 +17,7 @@ The current app is being split from a flat Swift source directory into durable
 owner folders. The accepted target layout and current file inventory are
 recorded in [`ARCHITECTURE.md`](./ARCHITECTURE.md).
 
-- `AlanNativeApp.swift`: current app entry point
+- `AlanApp.swift`: current app entry point
 - `App/`: macOS app delegate, duplicate-instance startup, primary shell owner,
   shell commands, and primary window presentation helpers
 - `Support/`: shared design tokens, native material wrappers, and window
@@ -50,8 +50,8 @@ bash clients/apple/scripts/check-architecture-maintainability.sh
 
 ## Quick Start
 
-1. Open `clients/apple/AlanNative.xcodeproj` with Xcode
-2. Select the `AlanNative` scheme
+1. Open `clients/apple/alan-macos.xcodeproj` with Xcode
+2. Select the `alan-macos` scheme
 3. Select a run target: `My Mac` or an iOS simulator/device
 4. Run the app
 
@@ -94,13 +94,13 @@ Or force a one-off startup command with:
 ALAN_SHELL_BOOT_COMMAND='tmux attach || tmux new'
 ```
 
-If you want an Alan-targeted surface to launch a specific Alan binary, set:
+If you want an alan-targeted surface to launch a specific alan binary, set:
 
 ```bash
 ALAN_SHELL_ALAN_PATH=/absolute/path/to/alan
 ```
 
-Without that override, the macOS shell host resolves Alan in this order:
+Without that override, the macOS terminal workspace resolves alan in this order:
 
 1. `ALAN_SHELL_ALAN_PATH`
 2. worktree-local `target/debug/alan`
@@ -110,9 +110,13 @@ Without that override, the macOS shell host resolves Alan in this order:
 
 The macOS app owns one primary shell context for the process. The default shell
 surface uses the stable `window_main` identity, so reopen, activation, and New
-Window commands focus the existing Alan window instead of creating another
+Window commands focus the existing alan window instead of creating another
 control plane. Older fixed `shell-state-v0.1.json` files are not loaded; the
 current persisted state file is scoped as `shell-state-window_main.json`.
+During the rename, alan for macOS reads existing shell state from the historical
+`Application Support/AlanNative` directory when the new
+`Application Support/alan-macos` file is missing, then writes future state only
+to `Application Support/alan-macos`. No destructive migration is performed.
 
 ### Window Capture Helper
 
@@ -136,10 +140,10 @@ for your terminal on first use.
 
 ### Desktop (macOS)
 
-- Alan Shell macOS root with Arc-like sidebar/workspace chrome
+- alan for macOS root with Arc-like sidebar/workspace chrome
 - Local typed shell snapshot preview
 - Native AppKit terminal-host scaffold sized and focused by the shell host
-- Plain-shell-first boot profile projection for the selected pane, with Alan as
+- Plain-shell-first boot profile projection for the selected pane, with alan as
   an explicit optional surface type
 - Ghostty readiness discovery for local developer integration
 - Live Ghostty-backed host path with runtime diagnostics, fallback config, and
@@ -177,8 +181,8 @@ The client uses the existing `/api/v1/sessions/*` compatibility layer:
 ```bash
 # macOS
 xcodebuild \
-  -project clients/apple/AlanNative.xcodeproj \
-  -scheme AlanNative \
+  -project clients/apple/alan-macos.xcodeproj \
+  -scheme alan-macos \
   -destination 'platform=macOS' build
 
 # Shell control-plane contract smoke
@@ -189,7 +193,7 @@ bash clients/apple/scripts/check-architecture-maintainability.sh
 
 # iOS
 xcodebuild \
-  -project clients/apple/AlanNative.xcodeproj \
-  -scheme AlanNative \
+  -project clients/apple/alan-macos.xcodeproj \
+  -scheme alan-macos \
   -destination 'platform=iOS Simulator,name=iPhone 16' build
 ```

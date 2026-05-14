@@ -1,4 +1,4 @@
-# Alan Architecture — The AI Turing Machine
+# alan Architecture — The AI Turing Machine
 
 > Status: this document tracks the current architecture plus the accepted V2
 > governance direction.
@@ -11,9 +11,9 @@
 
 ## Philosophy
 
-Alan models AI agents as **Turing machines**: LLM generation is the transition
+alan models AI agents as **Turing machines**: LLM generation is the transition
 function, the tape holds bounded conversational state, and tools are the side
-effects. That computation model is intentionally separate from Alan's hosting
+effects. That computation model is intentionally separate from alan's hosting
 model, which distinguishes on-disk agent definitions, persistent workspaces,
 running agent instances, and bounded sessions.
 
@@ -60,11 +60,11 @@ Companion execution contracts:
 `SpawnSpec` is the explicit child-agent launch contract that will connect
 agent-instance supervision with future multi-agent execution. Runtime-internal
 types such as `AgentConfig` still exist, but they are derived from resolved
-agent roots rather than serving as Alan's primary user-facing hosting model.
+agent roots rather than serving as alan's primary user-facing hosting model.
 
 ### AgentRoot — The On-Disk Definition
 
-An **AgentRoot** is the filesystem form of an agent definition. Alan resolves one
+An **AgentRoot** is the filesystem form of an agent definition. alan resolves one
 effective agent by overlaying multiple roots.
 
 ```text
@@ -122,19 +122,19 @@ This section keeps only the architecture-level summary so the detailed behavior
 does not drift in multiple places.
 
 Each resolved `AgentRoot` contributes its `skills/` directory as a capability
-package source. Alan also adapts `~/.agents/skills/` and
+package source. alan also adapts `~/.agents/skills/` and
 `<workspace>/.agents/skills/` as public single-skill package sources for the
-global and workspace default layers. Alan combines those root-backed and public
+global and workspace default layers. alan combines those root-backed and public
 sources with built-in first-party packages into one `ResolvedCapabilityView`,
 which is then consumed by runtime instead of the older mixed
 `repo/user/builtin` skill-loading paths.
 
 A standards-compatible skill directory with `SKILL.md` and optional supporting
 resources is adapted automatically as a single-skill package. Directory-backed
-packages currently expose one portable skill plus optional Alan-native
+packages currently expose one portable skill plus optional alan-native
 launch targets from `agents/` and resource directories such as `scripts/`,
 `references/`, and `assets/`. Package hosting therefore stays in
-the definition layer without requiring an Alan-specific manifest for every
+the definition layer without requiring an alan-specific manifest for every
 public skill directory.
 
 Each root can then expose skills through explicit `skill_overrides` in
@@ -148,7 +148,7 @@ activation from legacy scope-specific loading paths or package-level mount
 modes.
 
 Built-in first-party packages are no longer always active by default. Any
-baseline behavior Alan requires unconditionally must live in the base prompt,
+baseline behavior alan requires unconditionally must live in the base prompt,
 tool descriptions, or dedicated runtime policy.
 
 At runtime, those resolved skills may execute inline or delegate to
@@ -219,7 +219,7 @@ pub struct WorkspaceRuntimeConfig {
 └── rollout-*.jsonl         # current + archived session rollouts
 ```
 
-Public skill install targets live alongside the Alan state roots:
+Public skill install targets live alongside the alan state roots:
 
 ```text
 {home}/.agents/skills/            # user-wide public skills
@@ -269,7 +269,7 @@ them into that inactive retained state; explicit delete is the destructive path.
 
 ## Policy Model (HITE Governance V2)
 
-Alan uses policy-as-code as the only decision layer for tool governance.
+alan uses policy-as-code as the only decision layer for tool governance.
 
 1. **Policy gate (`PolicyEngine`)**: per-call decision `allow | deny | escalate` based on tool name, capability, and command patterns.
 2. **Execution backend**: the current `workspace_path_guard` backend is a best-effort execution guard for workspace paths and shell shape checks, not a strict OS sandbox. Daemon session APIs surface this as `execution_backend`.
@@ -282,7 +282,7 @@ user-visible assistant text.
 
 `escalate` always maps to `Event::Yield` and waits for `Op::Resume`. There is no `approval_policy` downgrade branch.
 
-Strong containment is optional defense in depth, not Alan's primary HITE
+Strong containment is optional defense in depth, not alan's primary HITE
 control plane. Owner-local governance should remain coherent even when only the
 lightweight built-in backend is available.
 
@@ -301,7 +301,7 @@ Target V2 design: [HITE Governance](./spec/hite_governance.md).
 
 ## Turing Machine Mapping
 
-| TM Concept              | Alan Implementation                                          |
+| TM Concept              | alan Implementation                                          |
 | ----------------------- | ------------------------------------------------------------ |
 | **Program**             | Resolved `AgentRoot` definition consumed as runtime config   |
 | **Tape**                | `Tape` — messages, context items, conversation summary       |
@@ -374,4 +374,4 @@ Target V2 design: [HITE Governance](./spec/hite_governance.md).
 
 4. **Skills-First, Extension-Ready** — Workflow intelligence lives in skills; pluggable system capabilities live in extensions behind stable contracts.
 
-5. **Bounded Sessions** — Context windows are finite. Instead of fighting this constraint, Alan embraces it: sessions are discrete, archivable units that can be summarized, forked, and resumed.
+5. **Bounded Sessions** — Context windows are finite. Instead of fighting this constraint, alan embraces it: sessions are discrete, archivable units that can be summarized, forked, and resumed.

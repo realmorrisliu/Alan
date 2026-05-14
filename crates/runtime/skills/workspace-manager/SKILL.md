@@ -1,7 +1,7 @@
 ---
 name: workspace-manager
 description: |
-  Manage Alan workspaces using the `alan` CLI.
+  Manage alan workspaces using the `alan` CLI.
 
   Workspaces are project directories with an `.alan/` configuration directory.
   Any directory can become a workspace via `alan init`.
@@ -12,7 +12,7 @@ description: |
   - User wants to switch between projects
   - User asks about available workspaces or their status
 
-  Alan ships this as a built-in capability package.
+  alan ships this as a built-in capability package.
 
 metadata:
   short-description: Manage workspaces via alan CLI
@@ -23,7 +23,7 @@ capabilities:
 
 # Workspace Manager Skill
 
-Manage Alan workspaces using the `alan` CLI tool. Workspaces follow a distributed, Git-like model: any directory containing a `.alan/` subdirectory is a workspace.
+Manage alan workspaces using the `alan` CLI tool. Workspaces follow a distributed, Git-like model: any directory containing a `.alan/` subdirectory is a workspace.
 
 ## CLI Reference
 

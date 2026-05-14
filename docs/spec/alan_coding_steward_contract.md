@@ -1,15 +1,15 @@
-# Alan Coding Steward Contract
+# alan Coding Steward Contract
 
-> Status: target product-boundary contract for Alan-as-steward and
+> Status: target product-boundary contract for alan-as-steward and
 > repo-scoped child coding workers.
 
 ## Goal
 
-Alan's coding product must not be framed as a single-repo coding shell.
+alan's coding product must not be framed as a single-repo coding shell.
 
 The intended model is:
 
-1. Alan itself acts as the home-root coding steward.
+1. alan itself acts as the home-root coding steward.
 2. Focused coding execution inside a repo or directory runs through fresh child
    runtimes.
 3. Repo-scoped coding workers are product-layer compositions on top of the
@@ -35,8 +35,8 @@ The coding line should stay aligned to these product principles:
    External benchmark ladders may reveal real gaps, but they must not become
    the source of repo-specific heuristics, task-specific prompts, or
    benchmark-corpus special cases.
-2. **The repo worker is a bounded Alan child, not a disposable patch bot.**
-   A repo-scoped child runtime should preserve Alan's product strengths through
+2. **The repo worker is a bounded alan child, not a disposable patch bot.**
+   A repo-scoped child runtime should preserve alan's product strengths through
    explicit handles such as `plan`, `conversation_snapshot`, `tool_results`,
    and, when appropriate, `memory`.
 3. **Improvements should target general coding consensus.**
@@ -49,7 +49,7 @@ The coding line should stay aligned to these product principles:
 
 ## Stable Vocabulary
 
-- **Coding steward**: the parent Alan runtime that owns goal intake, workspace
+- **Coding steward**: the parent alan runtime that owns goal intake, workspace
   discovery, routing, approvals, and result integration.
 - **Repo worker**: a child runtime launched into a specific repo, directory, or
   project to perform bounded coding work.
@@ -63,7 +63,7 @@ The coding line should stay aligned to these product principles:
 
 ## Product Model
 
-Alan's coding line should be read in this order:
+alan's coding line should be read in this order:
 
 1. the parent steward accepts the user's coding-oriented goal,
 2. the parent discovers or selects the right workspace,
@@ -220,7 +220,7 @@ Recommended addition:
 
 Use this only when the repo-scoped child should share durable workspace memory
 for that project. `memory` is not the default coding handoff.
-This is how the coding child inherits Alan's durable project continuity when it
+This is how the coding child inherits alan's durable project continuity when it
 materially improves the task; it is not a benchmark-only escape hatch.
 
 ### Intentionally Not Inherited By Default
@@ -279,7 +279,7 @@ Roles inside that package:
 
 1. `repo-coding/SKILL.md` is the parent-facing capability package entry for
    repo-scoped coding work.
-2. `repo-coding/skill.yaml` expresses the Alan-native delegated execution
+2. `repo-coding/skill.yaml` expresses the alan-native delegated execution
    defaults for that package.
 3. `repo-coding/agents/repo-worker/` is the package-local child launch target
    for bounded repo execution.
@@ -361,7 +361,7 @@ Adjacent tracks:
 
 This contract is satisfied when:
 
-1. local docs clearly describe Alan coding as steward plus repo-scoped workers,
+1. local docs clearly describe alan coding as steward plus repo-scoped workers,
 2. the coding child launch contract defines recommended launch inputs and handle
    profiles,
 3. the minimum repo-worker loop and recovery constraints are defined without a
@@ -369,9 +369,9 @@ This contract is satisfied when:
 4. the target first-party package layout for the repo worker is explicit,
 5. local docs point at the productized repo-worker package path rather than a
    top-level `reference/` staging copy,
-6. adjacent docs no longer imply that Alan coding is primarily a default
+6. adjacent docs no longer imply that alan coding is primarily a default
    single-repo shell,
 7. local docs explicitly state that external benchmarks measure coding quality
    but do not define coding behavior,
-8. local docs describe the repo worker as a bounded Alan child that may inherit
+8. local docs describe the repo worker as a bounded alan child that may inherit
    explicit continuity handles, including optional `memory`.

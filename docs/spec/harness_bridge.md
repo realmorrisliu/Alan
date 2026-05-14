@@ -1,12 +1,12 @@
 # Harness Bridge Contract
 
-> Status: VNext contract (defines control and capability bridging across local/remote Alan instances).
+> Status: VNext contract (defines control and capability bridging across local/remote alan instances).
 
 ## Goals
 
-Harness Bridge extends Alan's execution and governance plane for:
+Harness Bridge extends alan's execution and governance plane for:
 
-1. Remote control of any Alan instance (local machine, home machine, cloud host).
+1. Remote control of any alan instance (local machine, home machine, cloud host).
 2. Cross-process/cross-machine hosting of capability providers.
 3. Recoverable execution under disconnects, restarts, and network jitter.
 
@@ -150,7 +150,7 @@ Recommended log fields:
 4. Unrecoverable replay gap:
    - mark `gap_detected` and rebuild from snapshot.
 
-## Alignment with Alan Philosophy
+## Alignment with alan Philosophy
 
 1. Runtime keeps Turing-machine semantics; Bridge changes execution location, not state-machine rules.
 2. UNIX-style composability: Bridge is a replaceable channel, not business-logic core.
@@ -158,7 +158,7 @@ Recommended log fields:
 
 ## Acceptance Criteria
 
-1. Mobile/remote clients can reliably control target Alan instances.
+1. Mobile/remote clients can reliably control target alan instances.
 2. Reconnect recovers calls/events via cursors without losing critical info.
 3. Redelivery does not duplicate irreversible side effects.
 4. Remote paths do not bypass target-node governance boundaries.

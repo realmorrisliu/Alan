@@ -215,19 +215,19 @@ Rules:
 
 ## Home Workspace And Path Canonicalization
 
-Alan home must not accidentally become a nested workspace that creates
+alan home must not accidentally become a nested workspace that creates
 `~/.alan/.alan/` runtime state.
 
 Rules:
 
-1. When the workspace root is Alan home, runtime state paths must resolve to
-   the canonical Alan home layout instead of appending another `.alan/`.
+1. When the workspace root is alan home, runtime state paths must resolve to
+   the canonical alan home layout instead of appending another `.alan/`.
 2. Workspace identity comparisons must use canonical paths where the platform
    can provide them.
 3. Case variants such as `/Users/name/Developer/Alan` and
    `/Users/name/Developer/alan` must not produce separate workspace identities
    on case-insensitive filesystems.
-4. Migration or cleanup tooling should detect legacy nested Alan-home state and
+4. Migration or cleanup tooling should detect legacy nested alan-home state and
    report it before removal.
 
 ## Relationship To Other Contracts
@@ -256,6 +256,6 @@ This contract is satisfied when:
 7. terminal session summaries reflect completed plan state,
 8. generated `.alan` runtime state is ignored or clearly separated from
    source-controlled workspace agent definitions,
-9. Alan home does not create nested `.alan/.alan` runtime state,
+9. alan home does not create nested `.alan/.alan` runtime state,
 10. workspace identity is canonical enough to avoid duplicate state for path
     casing variants on case-insensitive filesystems.

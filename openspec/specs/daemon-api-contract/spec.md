@@ -1,7 +1,7 @@
 # daemon-api-contract Specification
 
 ## Purpose
-Define Alan daemon API route contract requirements: endpoint metadata, shared URL
+Define alan daemon API route contract requirements: endpoint metadata, shared URL
 construction, remote access scope, relay policy, generated client helpers,
 payload drift checks, public route compatibility, and raw route-string
 guardrails.

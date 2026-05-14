@@ -29,7 +29,7 @@ use crate::{
 
 pub const OPENROUTER_BASE_URL: &str = "https://openrouter.ai/api/v1";
 
-/// Alan LLM provider backed by the `openrouter-rs` SDK.
+/// alan LLM provider backed by the `openrouter-rs` SDK.
 #[derive(Clone)]
 pub struct OpenRouterClient {
     http_client: reqwest::Client,

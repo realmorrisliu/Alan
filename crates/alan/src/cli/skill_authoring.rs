@@ -598,7 +598,7 @@ pub fn validate_skill_package(package_root: &Path) -> SkillPackageValidationRepo
         push_skill_error(
             &mut diagnostics,
             "invalid_sidecar_merge",
-            "Failed to apply Alan sidecar metadata",
+            "Failed to apply alan sidecar metadata",
             &skill_path,
             err,
         );

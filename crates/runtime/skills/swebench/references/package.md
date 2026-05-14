@@ -1,10 +1,10 @@
 # SWE-bench Package
 
-This first-party package productizes Alan's SWE-bench benchmark operator layer
+This first-party package productizes alan's SWE-bench benchmark operator layer
 under `crates/runtime/skills/swebench/`.
 
 It is separate from the coding product contract. The measured coding path
-remains Alan steward orchestration plus `$repo-coding` repo-worker delegation.
+remains alan steward orchestration plus `$repo-coding` repo-worker delegation.
 
 ## What this package contains
 

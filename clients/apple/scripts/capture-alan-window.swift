@@ -3,7 +3,7 @@ import Foundation
 import ScreenCaptureKit
 
 struct CaptureOptions {
-    var bundleID = "dev.alan.native"
+    var bundleID = "app.alanworks.macos"
     var processID: pid_t?
     var titleContains: String?
     var outputPath: String?
@@ -39,7 +39,7 @@ enum CaptureAlanWindow {
                 code: 2,
                 userInfo: [
                     NSLocalizedDescriptionKey:
-                        "No matching Alan windows were found."
+                        "No matching alan windows were found."
                 ]
             )
         }
@@ -223,7 +223,7 @@ enum CaptureAlanWindow {
 
             Options:
               --output <path>            Write PNG screenshot to this path.
-              --bundle-id <bundle_id>    Bundle identifier to match. Default: dev.alan.native
+              --bundle-id <bundle_id>    Bundle identifier to match. Default: app.alanworks.macos
               --pid <pid>                Match a specific process ID instead of bundle id.
               --title-contains <text>    Match only windows whose title contains this text.
               --list                     Print matching windows without capturing.

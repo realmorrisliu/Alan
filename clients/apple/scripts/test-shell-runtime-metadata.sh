@@ -10,30 +10,30 @@ TEST_BINARY="${BUILD_DIR}/shell-runtime-metadata-tests"
 mkdir -p "$MODULE_CACHE_DIR"
 
 CLANG_MODULE_CACHE_PATH="$MODULE_CACHE_DIR" swiftc \
-    "$REPO_ROOT/clients/apple/AlanNative/Models/Shell/ShellValueTypes.swift" \
-    "$REPO_ROOT/clients/apple/AlanNative/Models/Shell/ShellSnapshots.swift" \
-    "$REPO_ROOT/clients/apple/AlanNative/Models/Shell/ShellControlPlaneDTOs.swift" \
-    "$REPO_ROOT/clients/apple/AlanNative/Models/Shell/ShellTreeMutations.swift" \
-    "$REPO_ROOT/clients/apple/AlanNative/Models/Shell/ShellStateMutations.swift" \
-    "$REPO_ROOT/clients/apple/AlanNative/ShellModel.swift" \
-    "$REPO_ROOT/clients/apple/AlanNative/Services/Shell/ShellControlFilePoller.swift" \
-    "$REPO_ROOT/clients/apple/AlanNative/Services/Shell/ShellClipboardWriter.swift" \
-    "$REPO_ROOT/clients/apple/AlanNative/Services/Shell/ShellDiagnostics.swift" \
-    "$REPO_ROOT/clients/apple/AlanNative/Services/Shell/ShellEventStore.swift" \
-    "$REPO_ROOT/clients/apple/AlanNative/Services/Shell/ShellLocalCommandExecutor.swift" \
-    "$REPO_ROOT/clients/apple/AlanNative/Services/Shell/ShellPublishedStateMerger.swift" \
-    "$REPO_ROOT/clients/apple/AlanNative/Services/Shell/ShellSocketServer.swift" \
-    "$REPO_ROOT/clients/apple/AlanNative/ShellControlPlane.swift" \
-    "$REPO_ROOT/clients/apple/AlanNative/Services/Shell/ShellPaneProjectionService.swift" \
-    "$REPO_ROOT/clients/apple/AlanNative/Services/Shell/ShellStatePersistenceStore.swift" \
-    "$REPO_ROOT/clients/apple/AlanNative/TerminalHostRuntime.swift" \
-    "$REPO_ROOT/clients/apple/AlanNative/Services/Terminal/TerminalNativeScrollViewAdapter.swift" \
-    "$REPO_ROOT/clients/apple/AlanNative/TerminalSurfaceController.swift" \
-    "$REPO_ROOT/clients/apple/AlanNative/TerminalRuntimeService.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/Models/Shell/ShellValueTypes.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/Models/Shell/ShellSnapshots.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/Models/Shell/ShellControlPlaneDTOs.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/Models/Shell/ShellTreeMutations.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/Models/Shell/ShellStateMutations.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/ShellModel.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/Services/Shell/ShellControlFilePoller.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/Services/Shell/ShellClipboardWriter.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/Services/Shell/ShellDiagnostics.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/Services/Shell/ShellEventStore.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/Services/Shell/ShellLocalCommandExecutor.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/Services/Shell/ShellPublishedStateMerger.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/Services/Shell/ShellSocketServer.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/ShellControlPlane.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/Services/Shell/ShellPaneProjectionService.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/Services/Shell/ShellStatePersistenceStore.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/TerminalHostRuntime.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/Services/Terminal/TerminalNativeScrollViewAdapter.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/TerminalSurfaceController.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/TerminalRuntimeService.swift" \
     "$REPO_ROOT/clients/apple/scripts/test-shell-runtime-metadata-host-stubs.swift" \
-    "$REPO_ROOT/clients/apple/AlanNative/TerminalRuntimeRegistry.swift" \
-    "$REPO_ROOT/clients/apple/AlanNative/ShellHostController.swift" \
-    "$REPO_ROOT/clients/apple/AlanNative/Controllers/Shell/ShellHostControlCommandHandling.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/TerminalRuntimeRegistry.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/ShellHostController.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/Controllers/Shell/ShellHostControlCommandHandling.swift" \
     "$REPO_ROOT/clients/apple/scripts/test-shell-runtime-metadata.swift" \
     -o "$TEST_BINARY"
 

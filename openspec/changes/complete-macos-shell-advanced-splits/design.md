@@ -32,7 +32,7 @@ The main constraints are:
 - Revisit the completed #355 split ratio, divider, spatial focus, and basic
   command work except where needed for advanced workflows.
 - Add App Intents or system Shortcuts integration.
-- Change Alan's spaces/tabs IA or introduce a second window/tab model.
+- Change alan's spaces/tabs IA or introduce a second window/tab model.
 
 ## Decisions
 

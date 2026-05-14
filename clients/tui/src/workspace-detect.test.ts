@@ -17,7 +17,7 @@ describe("workspace detection", () => {
     expect(detected).toBe("/tmp/repo");
   });
 
-  test("ignores the global Alan home directory when cwd is home", () => {
+  test("ignores the global alan home directory when cwd is home", () => {
     const detected = detectWorkspaceDirFromCwd(
       "/Users/test",
       (path) => path === "/Users/test/.alan",
@@ -26,7 +26,7 @@ describe("workspace detection", () => {
     expect(detected).toBeUndefined();
   });
 
-  test("ignores the global Alan home directory when cwd is .alan", () => {
+  test("ignores the global alan home directory when cwd is .alan", () => {
     const detected = detectWorkspaceDirFromCwd(
       "/Users/test/.alan",
       (path) => path === "/Users/test/.alan",
@@ -36,7 +36,7 @@ describe("workspace detection", () => {
   });
 
   test.skipIf(process.platform === "win32")(
-    "ignores symlinked global Alan home when cwd uses canonical spelling",
+    "ignores symlinked global alan home when cwd uses canonical spelling",
     () => {
       const root = mkdtempSync(join(tmpdir(), "alan-workspace-detect-"));
       try {

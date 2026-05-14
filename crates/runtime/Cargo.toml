@@ -1,6 +1,6 @@
 [package]
 name = "alan-runtime"
-description = "Core runtime for the Alan agent"
+description = "Core runtime for the alan agent"
 version.workspace = true
 edition.workspace = true
 

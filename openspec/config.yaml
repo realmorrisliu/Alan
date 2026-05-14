@@ -1,7 +1,7 @@
 schema: spec-driven
 
 context: |
-  Alan uses OpenSpec changes for in-flight design and implementation work.
+  alan uses OpenSpec changes for in-flight design and implementation work.
   Long-lived behavior contracts belong in openspec/specs/.
 
 rules:

@@ -11,7 +11,7 @@ mkdir -p "$MODULE_CACHE_DIR"
 
 CLANG_MODULE_CACHE_PATH="$MODULE_CACHE_DIR" swiftc \
     -D ALAN_TESTING \
-    "$REPO_ROOT/clients/apple/AlanNative/Support/ShellSidebarSwipeMonitor.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/Support/ShellSidebarSwipeMonitor.swift" \
     "$REPO_ROOT/clients/apple/scripts/test-shell-sidebar-swipe-monitor.swift" \
     -o "$TEST_BINARY"
 

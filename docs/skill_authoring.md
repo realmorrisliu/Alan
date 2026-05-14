@@ -1,6 +1,6 @@
 # Skill Authoring Workflow
 
-Alan's first-party skill authoring tooling operates over the same
+alan's first-party skill authoring tooling operates over the same
 directory-backed `skill package` contract used by externally discovered skills.
 It does not introduce a second package system.
 
@@ -27,7 +27,7 @@ Use the root `SKILL.md` for the portable selection contract. Keep it lean. Move
 detailed reference material into `references/`, package-local executable tools
 into `bin/`, and glue or compatibility helpers into `scripts/`.
 
-Alan separates four things:
+alan separates four things:
 
 - host/runtime tools
 - package-local executable tools in `bin/`
@@ -113,7 +113,7 @@ exit code.
 
 ## Eval Workbench
 
-Evaluation remains explicit and package-local. Alan does not automatically load
+Evaluation remains explicit and package-local. alan does not automatically load
 grader/analyzer/comparator/review assets into runtime prompt context.
 
 `alan skills eval` first runs validation, then prefers a structured manifest:
@@ -134,7 +134,7 @@ Structured eval writes stable artifacts under the selected output directory:
 - `review/index.html`
 - per-case artifacts under `cases/<case-id>/`
 
-If no manifest is present, Alan falls back to legacy hooks:
+If no manifest is present, alan falls back to legacy hooks:
 
 - `scripts/eval.sh`
 - `scripts/eval.py`
@@ -155,7 +155,7 @@ non-fatal by default and becomes fatal with `--require-hook`.
 
 ## Shared Tooling
 
-Alan keeps reusable authoring/eval logic separate from runtime tools.
+alan keeps reusable authoring/eval logic separate from runtime tools.
 
 - `alan skills eval` uses shared internal manifest execution and artifact
   generation logic

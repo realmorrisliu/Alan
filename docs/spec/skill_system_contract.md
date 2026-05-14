@@ -2,13 +2,13 @@
 
 > Status: authoritative skill-system contract.
 >
-> This document defines the target cutover contract for Alan's skill system.
+> This document defines the target cutover contract for alan's skill system.
 > It is a breaking-change spec. The old mount-mode model is removed rather than
 > migrated in place.
 
 ## Goals
 
-Alan's skill system must optimize for seven things at the same time:
+alan's skill system must optimize for seven things at the same time:
 
 1. **Portable public alignment** with Codex- and Claude-style skill
    directories.
@@ -18,7 +18,7 @@ Alan's skill system must optimize for seven things at the same time:
 4. **Description-driven selection** with no structured trigger schema.
 5. **Small prompt footprint** through progressive disclosure and on-demand file
    reads.
-6. **Alan-native delegated execution** without polluting the public `SKILL.md`
+6. **alan-native delegated execution** without polluting the public `SKILL.md`
    portability contract.
 7. **Package-local executable tooling** that can live inside one skill package
    and preserve the same relative layout in source trees and packaged
@@ -27,14 +27,14 @@ Alan's skill system must optimize for seven things at the same time:
 ## Stable Vocabulary
 
 - **Skill package**: one directory-backed portable skill plus optional
-  Alan-native sidecars, resources, and package-local launch targets.
-- **First-party skill package**: a skill package shipped by Alan from a built-in
+  alan-native sidecars, resources, and package-local launch targets.
+- **First-party skill package**: a skill package shipped by alan from a built-in
   source. It follows the same package contract as externally discovered
   packages.
 - **Portable skill**: the shared public contract centered on `SKILL.md`.
-- **Alan sidecar**: optional `skill.yaml` / `package.yaml` metadata that extends
+- **alan sidecar**: optional `skill.yaml` / `package.yaml` metadata that extends
   runtime behavior without changing `SKILL.md`.
-- **Host tool**: a runtime capability registered through Alan's tool system and
+- **Host tool**: a runtime capability registered through alan's tool system and
   exposed uniformly to the model.
 - **Package-local executable tool**: a deterministic executable shipped under
   `bin/` inside one skill package and bound relative to that package rather
@@ -43,7 +43,7 @@ Alan's skill system must optimize for seven things at the same time:
   inside a skill package, usually under `scripts/` as glue, wrappers, or
   compatibility launchers. This is a package-private compatibility surface, not
   the preferred home for reusable first-party tooling.
-- **Package-local launch target**: an Alan-native export under `agents/<name>/`
+- **Package-local launch target**: an alan-native export under `agents/<name>/`
   that may be launched for delegated execution.
 - **Implicit invocation**: a skill is listed in the prompt catalog so the model
   may decide to use it on demand.
@@ -64,7 +64,7 @@ Alan's skill system must optimize for seven things at the same time:
 
 ### Tier 1: Portable Runtime Compatibility
 
-Alan **must** discover and run public skill directories shaped like:
+alan **must** discover and run public skill directories shaped like:
 
 ```text
 skill-name/
@@ -75,18 +75,18 @@ skill-name/
 └── assets/
 ```
 
-This package shape must work without Alan-specific manifests when installed
+This package shape must work without alan-specific manifests when installed
 under:
 
 - `~/.agents/skills/`
 - `<workspace>/.agents/skills/`
-- Alan `AgentRoot` `skills/` directories
+- alan `AgentRoot` `skills/` directories
 
 Unknown extra files must be ignored rather than treated as fatal.
 
 ### Tier 2: Compatibility Metadata
 
-Alan **should** tolerate and consume public compatibility metadata when
+alan **should** tolerate and consume public compatibility metadata when
 present, especially:
 
 - `agents/openai.yaml` from Codex-style skills for UI-facing metadata and
@@ -94,12 +94,12 @@ present, especially:
 
 This metadata is not part of the core `SKILL.md` portability contract. Unknown
 fields must remain fail-open. `SKILL.md` remains the canonical selection and
-instruction contract; Alan sidecars remain the canonical Alan-native extension
+instruction contract; alan sidecars remain the canonical alan-native extension
 surface.
 
 ### Tier 3: Authoring / Eval Companion Assets
 
-Alan **should** preserve and ignore-by-default auxiliary authoring assets such
+alan **should** preserve and ignore-by-default auxiliary authoring assets such
 as:
 
 - `evals/evals.json` and input fixtures under `evals/files/`
@@ -110,7 +110,7 @@ as:
 - benchmark / review viewers and other package-local review assets
 
 These are not part of the default runtime activation contract. They are
-authoring and evaluation surfaces. First-party Alan tooling may consume them
+authoring and evaluation surfaces. First-party alan tooling may consume them
 explicitly, but runtime discovery must not require them.
 
 ## Stable Package Layout
@@ -120,15 +120,15 @@ The stable directory-backed skill package contract is:
 ```text
 skill-name/
 ├── SKILL.md
-├── skill.yaml          # optional Alan-native skill metadata
-├── package.yaml        # optional Alan-native package defaults
+├── skill.yaml          # optional alan-native skill metadata
+├── package.yaml        # optional alan-native package defaults
 ├── bin/                # optional package-local executable tools
 ├── scripts/
 ├── references/
 ├── assets/
 ├── evals/              # optional authoring/eval manifests and fixtures
 ├── eval-viewer/        # optional authoring/eval review assets
-└── agents/             # optional Alan-native package-local launch targets
+└── agents/             # optional alan-native package-local launch targets
 ```
 
 Rules:
@@ -139,7 +139,7 @@ Rules:
    resource directories.
 3. `evals/` and `eval-viewer/` are optional authoring/evaluation surfaces for
    explicit tooling. Runtime discovery must ignore them by default.
-4. `agents/` is an Alan-native extension directory for package-local launch
+4. `agents/` is an alan-native extension directory for package-local launch
    targets and may also contain non-runtime authoring assets.
 5. Unknown additional files or directories must be ignored by runtime
    discovery.
@@ -182,14 +182,14 @@ public skill interoperability.
 - `compatibility.requirements` is advisory remediation text only. It is not a
   typed availability gate.
 
-## Alan Sidecar Contract
+## alan Sidecar Contract
 
-Alan-native sidecars extend runtime behavior without changing the public
+alan-native sidecars extend runtime behavior without changing the public
 `SKILL.md` contract.
 
 ### `skill.yaml`
 
-Stable Alan-native keys:
+Stable alan-native keys:
 
 - `runtime.execution.mode = inline | delegate`
 - `runtime.execution.target`
@@ -203,7 +203,7 @@ Stable Alan-native keys:
 
 ### `agents/openai.yaml`
 
-Alan may also consume:
+alan may also consume:
 
 - `policy.allow_implicit_invocation`
 
@@ -218,12 +218,12 @@ Precedence for implicit-invocation defaults is:
 
 - `runtime.ui`
 
-Alan may tolerate this input, but it is not part of the stable contract and is
+alan may tolerate this input, but it is not part of the stable contract and is
 not preserved in resolved runtime metadata.
 
 ## Discovery Contract
 
-Alan discovers skill packages from:
+alan discovers skill packages from:
 
 - built-in first-party packages
 - `AgentRoot` `skills/` directories
@@ -324,7 +324,7 @@ The system prompt includes a skills catalog built from skills that are:
 - `allow_implicit_invocation = true`
 - available in the current runtime
 
-This catalog is now part of the behavioral contract. It is how Alan tells the
+This catalog is now part of the behavioral contract. It is how alan tells the
 model which skills it may choose on demand.
 
 Rules:
@@ -372,7 +372,7 @@ Hard availability gates are:
 - `compatibility.dependencies`
 - resolved delegated execution state
 
-If a skill resolves to delegated execution ambiguously, Alan must mark it
+If a skill resolves to delegated execution ambiguously, alan must mark it
 unavailable rather than silently guessing or falling back inline.
 
 Advisory only:
@@ -385,18 +385,18 @@ Advisory only:
 
 ## Tool, Bin, And Helper Contract
 
-Alan separates **host tools**, **package-local executable tools**,
+alan separates **host tools**, **package-local executable tools**,
 **package-local helpers**, and **reusable skill tooling**.
 
 Rules:
 
-1. Runtime tools are host capabilities registered through Alan's tool system and
+1. Runtime tools are host capabilities registered through alan's tool system and
    exposed uniformly to the model.
 2. Skill packages do **not** create new host-global runtime tool definitions
    merely by shipping files in the package tree.
 3. Skill packages may ship package-local executable tools under `bin/`.
 4. Package-local executable tools are package-scoped rather than host-global.
-   When Alan exposes them to the model, it should bind them relative to the
+   When alan exposes them to the model, it should bind them relative to the
    canonical package root and keep them available only to the owning skill
    context or launch-root runtime.
 5. Source trees and packaged artifacts should preserve package-relative
@@ -418,12 +418,12 @@ Rules:
    package, authors should declare it through `capabilities.required_tools` or
    `compatibility.dependencies` with dependency kind `tool`.
 10. Reusable skill tooling may be shared across multiple skill packages, but it
-    remains operator-side tooling unless Alan explicitly promotes it into the
+    remains operator-side tooling unless alan explicitly promotes it into the
     runtime tool surface.
 
 ## Progressive Disclosure Contract
 
-Alan uses three disclosure levels:
+alan uses three disclosure levels:
 
 1. **Metadata**: `name`, `description`, `short-description`, tags
 2. **Primary instruction body**: `SKILL.md` body or `disclosure.level2`
@@ -458,11 +458,11 @@ Package-local inference is deterministic:
 3. exactly one skill and one launch-target export -> `delegate`
 4. otherwise -> unresolved -> unavailable
 
-Alan must not guess across ambiguous package shapes.
+alan must not guess across ambiguous package shapes.
 
 ### Delegated Execution
 
-Delegated execution is an Alan-native runtime contract:
+Delegated execution is an alan-native runtime contract:
 
 1. parent runtimes expose `invoke_delegated_skill`
 2. delegated implicit skills may be invoked directly from the catalog without a
@@ -493,7 +493,7 @@ a runtime capability fallback, not a stable author-facing execution mode.
 
 ## Launch-Target Contract
 
-Alan-native package-local launch targets live under:
+alan-native package-local launch targets live under:
 
 ```text
 skill-name/
@@ -514,7 +514,7 @@ Rules:
 
 ## Management Contract
 
-Alan's local-first management surface includes:
+alan's local-first management surface includes:
 
 - `alan skills list`
 - `alan skills packages`
@@ -541,7 +541,7 @@ Rules:
 
 ## First-Party Package Distribution
 
-Alan should ship first-party packages as **ordinary directory-backed skill
+alan should ship first-party packages as **ordinary directory-backed skill
 packages**, not as privileged always-active instruction blobs.
 
 Rules:
@@ -552,7 +552,7 @@ Rules:
    an external package.
 3. First-party package source does not imply implicit listing or explicit
    enablement overrides.
-4. Any behavior that Alan needs unconditionally must live in the base prompt,
+4. Any behavior that alan needs unconditionally must live in the base prompt,
    tool descriptions, or dedicated runtime policy rather than in always-active
    skills.
 
@@ -633,7 +633,7 @@ the following matrix.
 
 ## Acceptance Criteria
 
-1. Portable public skill directories work without Alan-specific manifests.
+1. Portable public skill directories work without alan-specific manifests.
 2. Runtime exposure is controlled through skill-level `enabled` and
    `allow_implicit_invocation`, not mount modes.
 3. Delegated execution remains explicit, deterministic, and availability-gated.

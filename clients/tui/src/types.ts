@@ -1,5 +1,5 @@
 /**
- * Type definitions for Alan TUI.
+ * Type definitions for alan TUI.
  *
  * Protocol truth source: crates/protocol/src/event.rs and crates/protocol/src/op.rs
  * This file keeps protocol events explicit and isolates local synthetic events.

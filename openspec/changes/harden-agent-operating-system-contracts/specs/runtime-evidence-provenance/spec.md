@@ -37,9 +37,9 @@ The runtime SHALL authorize evidence reads by runtime ownership and policy inste
 The runtime SHALL make final-answer provenance inspectable for turns that rely on tool or child evidence.
 
 #### Scenario: Final answer uses evidence
-- **WHEN** Alan produces a final answer after reading tool, GitHub, child, or local workspace evidence
+- **WHEN** alan produces a final answer after reading tool, GitHub, child, or local workspace evidence
 - **THEN** the rollout or session metadata records a bounded evidence summary linking the answer to the relevant tool calls, child runs, or evidence artifacts
 
 #### Scenario: Evidence is incomplete
-- **WHEN** Alan produces an answer after an evidence source failed, was unavailable, or was only partially inspected
+- **WHEN** alan produces an answer after an evidence source failed, was unavailable, or was only partially inspected
 - **THEN** the evidence summary records the limitation so a reviewer can distinguish verified facts from fallback assumptions

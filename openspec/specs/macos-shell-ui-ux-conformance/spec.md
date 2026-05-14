@@ -29,7 +29,7 @@ hover, while keeping the terminal workspace stable.
 
 #### Scenario: Narrow reveal target
 - **WHEN** the sidebar is collapsed and the pointer approaches the left edge
-- **THEN** Alan uses a narrow edge hot zone to reveal the floating sidebar panel rather than a full titlebar or header-width hover region
+- **THEN** alan uses a narrow edge hot zone to reveal the floating sidebar panel rather than a full titlebar or header-width hover region
 
 #### Scenario: Floating panel hover retention
 - **WHEN** the pointer moves from the edge hot zone onto the floating sidebar panel or collapsed titlebar controls
@@ -64,33 +64,43 @@ single-pane state.
 
 #### Scenario: Single-pane tab
 - **WHEN** a tab contains one pane
-- **THEN** the terminal appears nearly full-bleed within the content region and does not show a pane selector strip
+- **THEN** the terminal appears nearly full-bleed within the content region and
+  does not show a pane selector strip
 
 #### Scenario: Split-pane tab
 - **WHEN** a tab contains multiple panes
-- **THEN** pane chrome stays lightweight and focus is conveyed by subtle selection treatment rather than explicit engineering labels
+- **THEN** pane chrome stays lightweight and focus is conveyed by subtle
+  selection treatment rather than explicit engineering labels
 
-#### Scenario: Alan as optional capability
-- **WHEN** a terminal tab is active and no Alan-specific surface has been opened
-- **THEN** Alan appears as an optional command or attachment capability layered onto the terminal workflow, not as the structural center of the window
+#### Scenario: alan as optional capability
+- **WHEN** a terminal tab is active and no alan-specific surface has been opened
+- **THEN** alan appears as an optional command or attachment capability layered
+  onto the terminal workflow, not as the structural center of the window
 
 ### Requirement: Default UI hides implementation jargon
 The default macOS UI SHALL avoid exposing raw pane IDs, `tab_id`, binding,
 runtime phases, `window attached`, `title updated`, and other implementation
-terms outside explicit debug surfaces.
+terms outside explicit debug surfaces. It SHALL also avoid obsolete product
+labels such as `AlanNative` or `Alan Shell` in visible app chrome.
 
 #### Scenario: Normal terminal workflow
 - **WHEN** a user creates, selects, splits, or closes tabs and panes
-- **THEN** visible copy uses product terms such as Space, Tab, Split, Go to or Command, Open in Alan, and Ask Alan
+- **THEN** visible copy uses product terms such as Space, Tab, Split, Go to or
+  Command, Open in alan, and Ask alan
 
 #### Scenario: Command input routing states
-- **WHEN** the command input opens, submits a supported typed command, or reports an unresolved typed command
-- **THEN** the input and inline status use user-facing names where available and do not expose raw pane IDs, routing internals, or debug identifiers as the primary label
-- **AND** Alan does not open default tabs, panes, actions, routing-candidate, attention, best-match, or command-row sections below the field
+- **WHEN** the command input opens, submits a supported typed command, or
+  reports an unresolved typed command
+- **THEN** the input and inline status use user-facing names where available and
+  do not expose raw pane IDs, routing internals, or debug identifiers as the
+  primary label
+- **AND** alan does not open default tabs, panes, actions, routing-candidate,
+  attention, best-match, or command-row sections below the field
 
 #### Scenario: Debug surfaces
 - **WHEN** implementation details are needed
-- **THEN** they remain in explicit debug-only surfaces, logs, scripts, or snapshots rather than default shell chrome
+- **THEN** they remain in explicit debug-only surfaces, logs, scripts, or
+  snapshots rather than default shell chrome
 
 ### Requirement: Toolbar is native and restrained
 The macOS toolbar/titlebar SHALL feel like native window chrome and contain only
@@ -104,27 +114,27 @@ frequent actions.
 #### Scenario: Command entry
 - **WHEN** the user invokes the command UI
 - **THEN** the entry point is labeled and organized as `Go to or Command...`
-- **AND WHEN** the floating Ask Alan command input is presented
+- **AND WHEN** the floating Ask alan command input is presented
 - **THEN** the input surface uses the system Liquid Glass effect for its primary material instead of relying on a custom blur, opaque fill, or gradient-only imitation
 - **AND** the Liquid Glass material follows the app's current light or dark appearance instead of assuming the active terminal theme is dark
 - **AND** the active terminal theme only contributes sampled background color through the system material and MUST NOT switch the command input's light or dark foreground palette
 - **AND** foreground text and controls render above the Liquid Glass layer using system foreground hierarchy so the glass material does not blur or wash out typed content
-- **AND** Alan keeps the Liquid Glass surface mounted across hidden and visible states, disables material insertion animation, and uses an opacity-only fade instead of moving the input from an edge
-- **AND** Alan uses a transparent click-away layer rather than a visible dimming scrim behind the Liquid Glass surface so the material does not flash between undimmed and dimmed sampled backgrounds
+- **AND** alan keeps the Liquid Glass surface mounted across hidden and visible states, disables material insertion animation, and uses an opacity-only fade instead of moving the input from an edge
+- **AND** alan uses a transparent click-away layer rather than a visible dimming scrim behind the Liquid Glass surface so the material does not flash between undimmed and dimmed sampled backgrounds
 - **AND** pressing `Command-P` while the input is already open dismisses it and returns keyboard focus to the previously focused terminal pane when available
 
 #### Scenario: Empty titlebar zoom
 - **WHEN** a user double-clicks an empty, non-control area of the hidden-titlebar chrome
-- **THEN** Alan toggles the window between its previous frame and the current screen's visible work area while leaving the system traffic-light buttons, including the green button, on their normal macOS behavior
+- **THEN** alan toggles the window between its previous frame and the current screen's visible work area while leaving the system traffic-light buttons, including the green button, on their normal macOS behavior
 - **AND** empty sidebar or floating-sidebar chrome in the traffic-light/titlebar-control band participates in double-click zoom while the actual traffic-light buttons, lightweight titlebar buttons, and terminal pane titlebar controls remain clickable
 
 #### Scenario: Native fullscreen chrome
 - **WHEN** the hidden-titlebar shell window enters native macOS fullscreen and the system takes over or hides the traffic-light controls
-- **THEN** Alan moves its lightweight titlebar controls to the leading edge without reserving traffic-light space
+- **THEN** alan moves its lightweight titlebar controls to the leading edge without reserving traffic-light space
 - **AND WHEN** the window is actively live-resized
-- **THEN** Alan continuously resynchronizes the standard traffic-light controls during the resize interaction rather than only correcting the final resting position
+- **THEN** alan continuously resynchronizes the standard traffic-light controls during the resize interaction rather than only correcting the final resting position
 - **AND WHEN** the window exits native fullscreen or finishes resizing
-- **THEN** Alan keeps the standard traffic-light controls at their intended inset and returns its titlebar controls to the post-traffic-light position
+- **THEN** alan keeps the standard traffic-light controls at their intended inset and returns its titlebar controls to the post-traffic-light position
 
 ### Requirement: Default shell does not expose inspector chrome
 The default macOS shell SHALL not include a persistent right-side inspector,
@@ -186,7 +196,7 @@ owning terminal surface search controller.
 
 #### Scenario: Find opens
 - **WHEN** the user invokes `Command-F` for a focused pane
-- **THEN** Alan shows a compact Find bar for that pane, focuses the query field, and does not send printable query text to the terminal application
+- **THEN** alan shows a compact Find bar for that pane, focuses the query field, and does not send printable query text to the terminal application
 
 #### Scenario: Find navigates
 - **WHEN** the Find bar owns an active query
@@ -194,7 +204,7 @@ owning terminal surface search controller.
 
 #### Scenario: Find dismisses
 - **WHEN** the user presses Escape or clicks the close control
-- **THEN** Alan dismisses the Find interaction and returns focus to the owning terminal pane
+- **THEN** alan dismisses the Find interaction and returns focus to the owning terminal pane
 
 ### Requirement: Terminal panes have unambiguous hit-testing boundaries
 The macOS shell UI SHALL keep terminal-rendering surfaces from intercepting
@@ -245,7 +255,7 @@ card grid or debug layout.
 
 #### Scenario: Inactive split pane
 - **WHEN** a split pane is not the active terminal pane
-- **THEN** Alan may apply a preference-backed lightweight dim treatment that preserves terminal readability and pointer input while making the active pane and split boundary easier to scan
+- **THEN** alan may apply a preference-backed lightweight dim treatment that preserves terminal readability and pointer input while making the active pane and split boundary easier to scan
 
 ### Requirement: Terminal panes expose narrow title bars
 Each visible macOS terminal pane SHALL include a compact title bar at the top of
@@ -282,8 +292,8 @@ terminal title is unavailable.
 - **THEN** the title bar does not expose those terms outside explicit developer/debug-only surfaces
 
 #### Scenario: Metadata stays in title chrome
-- **WHEN** terminal status, branch, attention, or Alan binding metadata is useful in the default pane UI
-- **THEN** Alan presents it as lightweight pane-title-bar accessories rather than as a persistent bottom status strip below the terminal canvas
+- **WHEN** terminal status, branch, attention, or alan binding metadata is useful in the default pane UI
+- **THEN** alan presents it as lightweight pane-title-bar accessories rather than as a persistent bottom status strip below the terminal canvas
 
 ### Requirement: Pane close button targets its pane
 The pane title bar close button SHALL close the pane represented by that title
@@ -291,15 +301,15 @@ bar through the shared shell controller mutation path.
 
 #### Scenario: Inactive split pane closed
 - **WHEN** a user clicks the close button on a non-selected visible split pane
-- **THEN** Alan closes that pane, repairs the split tree, and keeps the remaining pane runtimes alive without closing a different selected pane
+- **THEN** alan closes that pane, repairs the split tree, and keeps the remaining pane runtimes alive without closing a different selected pane
 
 #### Scenario: Single pane tab closed
 - **WHEN** a user clicks the close button for the only pane in a tab and other tabs remain
-- **THEN** Alan applies the existing tab-close semantics for that tab and focuses a remaining terminal pane
+- **THEN** alan applies the existing tab-close semantics for that tab and focuses a remaining terminal pane
 
 #### Scenario: Last remaining pane protected
 - **WHEN** a close button targets the only pane in the only remaining tab
-- **THEN** Alan keeps the shell state valid and does not remove the final workspace surface
+- **THEN** alan keeps the shell state valid and does not remove the final workspace surface
 
 ### Requirement: Pane title bars preserve terminal input ownership
 Pane title bars SHALL own only their explicit title and button controls, and
@@ -316,16 +326,16 @@ renderer hit-testing inside the terminal canvas.
 
 #### Scenario: Title area clicked
 - **WHEN** a user clicks the non-button title area
-- **THEN** Alan may focus the pane, but it does not send text, mouse reports, or scroll events to the terminal application
+- **THEN** alan may focus the pane, but it does not send text, mouse reports, or scroll events to the terminal application
 
 ### Requirement: Corner radii are restrained and tokenized
-The default Alan macOS shell UI SHALL use a small role-based corner-radius scale
+The default alan macOS shell UI SHALL use a small role-based corner-radius scale
 for rounded rectangular surfaces and controls. It SHALL avoid large ad hoc
 radii and capsule-heavy default chrome.
 
 #### Scenario: Radius scale applied
 - **WHEN** the active macOS shell renders sidebar rows, command rows, pane title bars, terminal surrounds, inline panels, or overlay surfaces
-- **THEN** those rounded rectangular elements use the Alan shell radius scale rather than one-off numeric radii
+- **THEN** those rounded rectangular elements use the alan shell radius scale rather than one-off numeric radii
 
 #### Scenario: Default shell avoids large radii
 - **WHEN** a default shell surface is visible in normal light-mode use
@@ -344,7 +354,7 @@ radii and capsule-heavy default chrome.
 - **THEN** terminal panes keep a shared continuous terminal surround with smaller outer corners and no per-pane rounded card treatment
 
 ### Requirement: Radius normalization preserves shell hierarchy
-Radius normalization SHALL make Alan feel calmer and more precise without
+Radius normalization SHALL make alan feel calmer and more precise without
 turning the UI into a flat grid or weakening control affordances.
 
 #### Scenario: Sidebar remains skimmable
@@ -368,16 +378,16 @@ multi-section command chrome.
 
 #### Scenario: Command input opens
 - **WHEN** the user invokes `Command-P` or activates `Go to or Command...`
-- **THEN** Alan focuses a single floating command input field instead of presenting default tabs, panes, actions, routing-candidate, attention, or best-match lists
+- **THEN** alan focuses a single floating command input field instead of presenting default tabs, panes, actions, routing-candidate, attention, or best-match lists
 
 #### Scenario: Command input executes supported action
-- **WHEN** the user submits typed text that Alan can resolve to a supported workspace action or routing target
-- **THEN** Alan runs the same shell controller mutation used by menu and keyboard paths where that action is shared
+- **WHEN** the user submits typed text that alan can resolve to a supported workspace action or routing target
+- **THEN** alan runs the same shell controller mutation used by menu and keyboard paths where that action is shared
 - **AND** the command input dismisses and restores focus to the previously focused terminal pane when available
 
 #### Scenario: Command input reports unresolved text
-- **WHEN** the user submits typed text that Alan cannot resolve
-- **THEN** Alan leaves the command input open and communicates the unresolved state inline without opening candidate rows or exposing raw debug identifiers
+- **WHEN** the user submits typed text that alan cannot resolve
+- **THEN** alan leaves the command input open and communicates the unresolved state inline without opening candidate rows or exposing raw debug identifiers
 
 ### Requirement: Toolbar stays restrained during split interactions
 Advanced split, focus, resize, equalize, close, and pane lift affordances SHALL
@@ -419,15 +429,15 @@ accessibility labels rather than persistent instructional copy.
 
 #### Scenario: Sidebar swipe switches spaces
 - **WHEN** a user performs a clear horizontal swipe gesture inside the sidebar
-- **THEN** Alan previews the previous or next space with gesture-tracked motion across the sidebar header and tab list
+- **THEN** alan previews the previous or next space with gesture-tracked motion across the sidebar header and tab list
 - **AND** the preview is rendered from horizontal finger translation across the full sidebar page width rather than from threshold-derived progress
 - **AND** the active-space title pager uses the same full-width movement as the tab list rather than a narrowed header row
 - **AND** the moving pages do not expose static left or right padding gaps
 - **AND** the workspace terminal surface remains on the current space during the drag
-- **AND** Alan commits to the previewed space only after the user releases past a distance or velocity threshold
+- **AND** alan commits to the previewed space only after the user releases past a distance or velocity threshold
 - **AND** a fast horizontal flick can commit from release velocity even when the visible drag distance is short
 - **AND** the workspace terminal surface updates through the committed shell selection after the transition settles
-- **AND** Alan cancels back to the original space when the release does not meet the commit threshold
+- **AND** alan cancels back to the original space when the release does not meet the commit threshold
 - **AND** once horizontal intent is locked, vertical movement is not applied to the tab list even if the fingers move upward or downward before release
 - **AND** once vertical intent is locked, vertical tab-list scrolling remains native and is not consumed by the horizontal space pager
 
@@ -437,7 +447,7 @@ accessibility labels rather than persistent instructional copy.
 
 #### Scenario: Reduced motion space swipe
 - **WHEN** reduced motion is enabled
-- **THEN** Alan may reduce the transition to a shorter fade or lower-distance movement while preserving release-based commit and cancel semantics
+- **THEN** alan may reduce the transition to a shorter fade or lower-distance movement while preserving release-based commit and cancel semantics
 
 #### Scenario: Separate creation affordances
 - **WHEN** a user creates a new space or a new tab
@@ -448,7 +458,7 @@ accessibility labels rather than persistent instructional copy.
 - **THEN** space buttons use slim borderless icon styling with selection and hover conveyed without persistent framed cards, section chrome, or notification dots
 
 #### Scenario: Lightweight tab rows
-- **WHEN** the active-space tab list contains terminal and Alan tabs
+- **WHEN** the active-space tab list contains terminal and alan tabs
 - **THEN** each tab appears as a skimmable row with a compact marker, title, secondary context, and low-emphasis status rather than as a card or dashboard tile
 
 #### Scenario: Tab row state hierarchy
@@ -466,7 +476,7 @@ accessibility labels rather than persistent instructional copy.
 - **THEN** the active-space title appears as a quiet grayscale label without a persistent pill or control background
 - **AND** the area between the space title label and the first tab row keeps a compact quiet material gap without a persistent divider
 - **WHEN** the user scrolls the active-space tab list upward so tab rows move underneath the fixed space title region
-- **THEN** Alan gradually reveals a subtle divider and downward shadow at the title/list boundary
+- **THEN** alan gradually reveals a subtle divider and downward shadow at the title/list boundary
 - **AND** tab rows clip underneath that boundary instead of drawing over the space title
 
 #### Scenario: Visible copy is minimized
@@ -484,7 +494,7 @@ compact owner-zone controls rather than always-visible explanatory buttons.
 
 #### Scenario: Tab row default state
 - **WHEN** a tab row is visible and not hovered or keyboard focused
-- **THEN** the row prioritizes icon, title, compact context, selection, and Alan attachment without persistent close/more text buttons or notification dots
+- **THEN** the row prioritizes icon, title, compact context, selection, and alan attachment without persistent close/more text buttons or notification dots
 
 #### Scenario: Tab row interaction state
 - **WHEN** a tab row is hovered, keyboard focused, or context-clicked
@@ -523,11 +533,11 @@ candidate sections below the input.
 
 #### Scenario: Command input opens
 - **WHEN** the user presses `Command-P` or activates the sidebar command entry
-- **THEN** Alan opens a floating material-backed input field, focuses the text field, and does not show action, routing, attention, or best-match lists below it
+- **THEN** alan opens a floating material-backed input field, focuses the text field, and does not show action, routing, attention, or best-match lists below it
 
 #### Scenario: Command input toggles from shortcut
 - **WHEN** the command input is already open and the user presses `Command-P`
-- **THEN** Alan dismisses the input and returns keyboard focus to the previously focused terminal pane when available
+- **THEN** alan dismisses the input and returns keyboard focus to the previously focused terminal pane when available
 
 #### Scenario: Command input is visually restrained
 - **WHEN** the command input is visible
@@ -536,7 +546,7 @@ candidate sections below the input.
 
 #### Scenario: Command input dismisses
 - **WHEN** the user presses Escape, clicks outside the input, activates a close affordance, or successfully submits a resolved command
-- **THEN** Alan dismisses the input and returns keyboard focus to the previously focused terminal pane when available
+- **THEN** alan dismisses the input and returns keyboard focus to the previously focused terminal pane when available
 
 #### Scenario: No default voice affordance
 - **WHEN** the command input is visible
@@ -544,7 +554,7 @@ candidate sections below the input.
 
 #### Scenario: Unresolved command stays input-only
 - **WHEN** the user submits text that cannot be resolved to a supported command or destination
-- **THEN** Alan keeps the command surface input-only and communicates the unresolved state without opening candidate rows below the field
+- **THEN** alan keeps the command surface input-only and communicates the unresolved state without opening candidate rows below the field
 
 ### Requirement: Material hierarchy separates navigation from content
 The default macOS shell SHALL use material roles that distinguish the functional
@@ -560,7 +570,7 @@ readability.
 
 #### Scenario: Terminal content avoids decorative glass
 - **WHEN** the active terminal pane or terminal surround is visible
-- **THEN** Alan does not apply Liquid Glass-style decorative transparency to the terminal content layer and keeps terminal text contrast stable
+- **THEN** alan does not apply Liquid Glass-style decorative transparency to the terminal content layer and keeps terminal text contrast stable
 
 #### Scenario: Workspace backdrop is semantic
 - **WHEN** the shell renders the main workspace background outside terminal panes
@@ -577,7 +587,7 @@ opaque, or ad hoc translucent fills in default shell chrome.
 
 #### Scenario: Foreground on material
 - **WHEN** text or symbols render on top of a material-backed shell control
-- **THEN** Alan uses system-vibrant foreground styles or approved shell tokens that remain legible across light appearance, reduced transparency, and increased contrast
+- **THEN** alan uses system-vibrant foreground styles or approved shell tokens that remain legible across light appearance, reduced transparency, and increased contrast
 
 #### Scenario: AppKit bridge remains isolated
 - **WHEN** a SwiftUI shell view needs an AppKit-backed visual effect material
@@ -607,3 +617,27 @@ interaction state rather than decorate every translucent control.
 #### Scenario: Radius scale remains role-based
 - **WHEN** active shell visual chrome is updated
 - **THEN** micro indicators, compact controls, rows, floating inputs, primary surfaces, collapsed panels, and semantic pill inputs use the shared shell radius roles instead of local one-off values
+
+### Requirement: Visible macOS app copy follows product brand identity
+The default macOS app UI SHALL render the public product brand as `alan` and
+SHALL use `alan for macOS` only where platform distinction is useful.
+
+#### Scenario: App chrome is visible
+- **WHEN** the Dock name, app menu, window title, toolbar labels, command
+  palette labels, sidebar buttons, help text, or accessibility labels name the
+  product
+- **THEN** they use lowercase `alan`
+- **AND** they do not use `Alan`, `AlanNative`, `alanterm`, or `Alan Shell` as
+  visible product names
+
+#### Scenario: Terminal app category is visible
+- **WHEN** the UI or docs explain the native app's category
+- **THEN** they call it a terminal emulator or terminal workspace
+- **AND** they do not call the product a shell
+
+#### Scenario: Shell is a technical command namespace
+- **WHEN** a debug-only surface, script, or CLI-oriented help message refers to
+  the `alan shell` namespace
+- **THEN** it presents that phrase as literal command syntax or control-plane
+  implementation language
+- **AND** the default product UI remains `alan`, not `alan shell`

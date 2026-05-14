@@ -3,7 +3,7 @@
 ## Purpose
 Define workspace runtime-state hygiene requirements: generated `.alan` session
 and memory state should stay out of normal source control, authored agent
-definitions should remain trackable, Alan home should not become a nested
+definitions should remain trackable, alan home should not become a nested
 workspace, and workspace identity comparisons should use canonical paths where
 available.
 ## Requirements
@@ -19,15 +19,15 @@ Repository ignore rules SHALL ignore generated workspace `.alan` runtime state b
 - **THEN** repository ignore rules do not prevent those authored files from being tracked
 - **AND** documentation explains that `.alan/agents/default/` is the workspace default agent definition root while `.alan/agents/<name>/` is the workspace named-agent definition root
 
-### Requirement: Alan Home Workspace State
-The system SHALL prevent Alan home from being treated as a normal workspace that creates nested `~/.alan/.alan/` runtime state.
+### Requirement: alan Home Workspace State
+The system SHALL prevent alan home from being treated as a normal workspace that creates nested `~/.alan/.alan/` runtime state.
 
-#### Scenario: Alan home is selected as workspace
-- **WHEN** the resolved workspace root is Alan home
-- **THEN** runtime state paths resolve to the canonical Alan home layout rather than appending another `.alan`
+#### Scenario: alan home is selected as workspace
+- **WHEN** the resolved workspace root is alan home
+- **THEN** runtime state paths resolve to the canonical alan home layout rather than appending another `.alan`
 
 #### Scenario: Legacy nested state exists
-- **WHEN** legacy nested Alan-home runtime state is detected
+- **WHEN** legacy nested alan-home runtime state is detected
 - **THEN** the system reports the condition safely without deleting data implicitly
 
 ### Requirement: Canonical Workspace Identity

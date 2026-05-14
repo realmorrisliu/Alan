@@ -18,11 +18,11 @@ preserving pane identity and keeping the split tree valid.
 
 #### Scenario: Move pane within current tab
 - **WHEN** the user moves a pane to a valid position in the current tab
-- **THEN** Alan updates the split-tree placement and keeps the moved pane's runtime identity
+- **THEN** alan updates the split-tree placement and keeps the moved pane's runtime identity
 
 #### Scenario: Move target invalid
 - **WHEN** the requested in-tab move would create an invalid split tree or move a pane onto itself
-- **THEN** Alan rejects the move with a stable reason and leaves the current layout unchanged
+- **THEN** alan rejects the move with a stable reason and leaves the current layout unchanged
 
 ### Requirement: Drag/drop movement has a terminal-selection quality gate
 Pane drag/drop SHALL only be enabled by default after it uses the same controller
@@ -30,11 +30,11 @@ mutation path as explicit moves and preserves terminal text selection behavior.
 
 #### Scenario: Drag starts inside terminal text
 - **WHEN** the user drags inside terminal-rendered text
-- **THEN** Alan treats the drag as terminal selection or terminal input rather than pane movement
+- **THEN** alan treats the drag as terminal selection or terminal input rather than pane movement
 
 #### Scenario: Drag uses a movement affordance
 - **WHEN** the user drags a supported pane movement affordance to another valid target
-- **THEN** Alan runs the same move mutation used by explicit move commands
+- **THEN** alan runs the same move mutation used by explicit move commands
 
 ### Requirement: Copy paste and search commands route consistently
 Copy, paste, and terminal search SHALL resolve the same focused terminal target

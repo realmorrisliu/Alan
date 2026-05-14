@@ -1,6 +1,6 @@
-# Contributing to Alan
+# Contributing to alan
 
-Thanks for your interest in contributing to Alan.
+Thanks for your interest in contributing to alan.
 
 ## Before You Start
 

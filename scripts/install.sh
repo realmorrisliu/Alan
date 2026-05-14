@@ -14,7 +14,7 @@ if command -v curl >/dev/null 2>&1; then
   fi
 fi
 
-echo "Building Alan..."
+echo "Building alan..."
 
 # 1. Build Rust binary
 cd "$PROJECT_ROOT"
@@ -57,7 +57,7 @@ if [ ! -d "$ALAN_HOME/context" ]; then
 fi
 
 echo ""
-echo "✅ Alan installed to $BIN_DIR"
+echo "✅ alan installed to $BIN_DIR"
 echo ""
 echo "Next steps:"
 echo "1. Add to your shell config:"

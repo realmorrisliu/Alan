@@ -1,28 +1,28 @@
 # openrouter-provider-adapter Specification
 
 ## Purpose
-Define Alan's first-class OpenRouter provider contract, including connection
+Define alan's first-class OpenRouter provider contract, including connection
 profile identity, OpenRouter-specific settings, SDK-backed request dispatch,
 response normalization, streaming behavior, capability reporting, and
 verification expectations.
 ## Requirements
 ### Requirement: OpenRouter provider identity
-Alan SHALL expose OpenRouter as a first-class provider id named `openrouter` in
+alan SHALL expose OpenRouter as a first-class provider id named `openrouter` in
 runtime configuration, connection profiles, daemon connection catalogs, and CLI
-connection commands. Alan SHALL NOT expose the retired
+connection commands. alan SHALL NOT expose the retired
 `openrouter_openai_chat_completions_compatible` id as a provider choice.
 
 #### Scenario: Creating an OpenRouter profile
 - **WHEN** an operator runs `alan connection add openrouter --profile openrouter-main --setting model=<model-id>`
-- **THEN** Alan creates a secret-backed connection profile whose provider is `openrouter`
+- **THEN** alan creates a secret-backed connection profile whose provider is `openrouter`
 
 #### Scenario: Resolving an OpenRouter profile
 - **WHEN** a session starts with `connection_profile = "openrouter-main"`
-- **THEN** Alan resolves the runtime provider to OpenRouter rather than `openai_chat_completions_compatible`
+- **THEN** alan resolves the runtime provider to OpenRouter rather than `openai_chat_completions_compatible`
 
 #### Scenario: Creating a profile with the retired OpenRouter-compatible id
 - **WHEN** an operator runs `alan connection add openrouter_openai_chat_completions_compatible`
-- **THEN** Alan rejects the command as an unsupported provider id
+- **THEN** alan rejects the command as an unsupported provider id
 
 #### Scenario: Retired id is absent from provider catalogs
 - **WHEN** the CLI or daemon lists available connection providers
@@ -30,22 +30,22 @@ connection commands. Alan SHALL NOT expose the retired
 - **AND** `openrouter_openai_chat_completions_compatible` is absent
 
 ### Requirement: Retired OpenRouter provider removal
-Alan SHALL remove `openrouter_openai_chat_completions_compatible` as a supported
+alan SHALL remove `openrouter_openai_chat_completions_compatible` as a supported
 configuration value, provider catalog entry, and provider construction path
 without providing automatic migration or alias behavior.
 
 #### Scenario: Saved connection metadata uses the retired provider value
 - **WHEN** `~/.alan/connections.toml` contains `openrouter_openai_chat_completions_compatible` in `profiles.<id>.provider` or `credentials.<id>.provider_family`
-- **THEN** Alan treats the file as containing unsupported legacy configuration
-- **AND** Alan does not automatically rewrite the value to `openrouter`
-- **AND** Alan does not resolve or dispatch it as OpenRouter
+- **THEN** alan treats the file as containing unsupported legacy configuration
+- **AND** alan does not automatically rewrite the value to `openrouter`
+- **AND** alan does not resolve or dispatch it as OpenRouter
 
 #### Scenario: Retired id reaches provider construction
 - **WHEN** code or unresolved configuration still tries to use `openrouter_openai_chat_completions_compatible` as a provider
-- **THEN** Alan rejects it instead of treating it as an OpenRouter alias
+- **THEN** alan rejects it instead of treating it as an OpenRouter alias
 
 ### Requirement: OpenRouter connection settings
-Alan SHALL keep OpenRouter-specific settings separate from generic
+alan SHALL keep OpenRouter-specific settings separate from generic
 OpenAI-compatible settings.
 
 #### Scenario: Profile descriptor settings
@@ -56,19 +56,19 @@ OpenAI-compatible settings.
 
 #### Scenario: Default base URL
 - **WHEN** an OpenRouter profile omits `base_url`
-- **THEN** Alan uses `https://openrouter.ai/api/v1` as the resolved OpenRouter base URL
+- **THEN** alan uses `https://openrouter.ai/api/v1` as the resolved OpenRouter base URL
 
 #### Scenario: Unknown OpenRouter setting
 - **WHEN** an OpenRouter profile includes a setting that is not declared by the OpenRouter descriptor
-- **THEN** Alan rejects the profile with a provider-setting validation error
+- **THEN** alan rejects the profile with a provider-setting validation error
 
 #### Scenario: Generic compatible settings remain isolated
 - **WHEN** an operator configures `openai_chat_completions_compatible`
 - **THEN** OpenRouter-only settings such as `http_referer`, `x_title`, and `app_categories` are not accepted by the generic compatible provider
 
 ### Requirement: SDK-backed provider construction
-Alan SHALL construct OpenRouter providers through `openrouter-rs` and SHALL NOT
-route OpenRouter generation through Alan's generic OpenAI Chat Completions
+alan SHALL construct OpenRouter providers through `openrouter-rs` and SHALL NOT
+route OpenRouter generation through alan's generic OpenAI Chat Completions
 compatible client.
 
 #### Scenario: Factory creates OpenRouter SDK adapter
@@ -77,7 +77,7 @@ compatible client.
 
 #### Scenario: Retired OpenRouter-compatible factory path
 - **WHEN** code or configuration tries to construct `openrouter_openai_chat_completions_compatible`
-- **THEN** Alan rejects it because the retired compatible path is no longer supported
+- **THEN** alan rejects it because the retired compatible path is no longer supported
 
 #### Scenario: Non-streaming dispatch uses SDK
 - **WHEN** the OpenRouter provider executes a non-streaming generation request
@@ -85,10 +85,10 @@ compatible client.
 
 #### Scenario: Streaming dispatch uses SDK
 - **WHEN** the OpenRouter provider executes a streaming generation request
-- **THEN** the provider dispatches through an `openrouter-rs` streaming API and converts SDK stream events into Alan `StreamChunk` values
+- **THEN** the provider dispatches through an `openrouter-rs` streaming API and converts SDK stream events into alan `StreamChunk` values
 
 ### Requirement: OpenRouter request projection
-Alan SHALL map Alan generation requests to OpenRouter SDK chat requests without
+alan SHALL map alan generation requests to OpenRouter SDK chat requests without
 requiring runtime code to depend on OpenRouter SDK types. Reasoning control
 precedence and validation are owned by `provider-request-controls`; this
 capability covers the OpenRouter-specific wire projection. Normalized request
@@ -102,7 +102,7 @@ legacy `thinking_budget_tokens` fallback input.
 - **THEN** the OpenRouter adapter maps them to the SDK chat message roles and content fields expected by OpenRouter
 
 #### Scenario: Tool definition projection
-- **WHEN** a request contains Alan tool definitions
+- **WHEN** a request contains alan tool definitions
 - **THEN** the OpenRouter adapter maps them to OpenRouter chat tool definitions and enables automatic tool choice behavior
 
 #### Scenario: Tool result projection
@@ -111,62 +111,62 @@ legacy `thinking_budget_tokens` fallback input.
 
 #### Scenario: Reasoning effort projection
 - **WHEN** a request contains normalized effective reasoning effort
-- **THEN** the OpenRouter adapter maps the effort to OpenRouter reasoning request fields supported by the SDK without recomputing Alan-level precedence or defaults
+- **THEN** the OpenRouter adapter maps the effort to OpenRouter reasoning request fields supported by the SDK without recomputing alan-level precedence or defaults
 
 #### Scenario: Unsupported provider extra parameter
 - **WHEN** a request contains an OpenRouter `extra_params` key that the adapter does not support
 - **THEN** the adapter fails before dispatching the request or returns an explicit provider warning rather than silently dropping the parameter
 
 ### Requirement: OpenRouter response normalization
-Alan SHALL normalize OpenRouter SDK responses into Alan's provider-agnostic
+alan SHALL normalize OpenRouter SDK responses into alan's provider-agnostic
 response types.
 
 #### Scenario: Non-streaming content and reasoning
 - **WHEN** OpenRouter returns final assistant content and reasoning text
-- **THEN** Alan returns a `GenerationResponse` with `content` and `thinking` populated
+- **THEN** alan returns a `GenerationResponse` with `content` and `thinking` populated
 
 #### Scenario: Non-streaming tool call
 - **WHEN** OpenRouter returns model-issued tool calls with JSON arguments
-- **THEN** Alan returns `GenerationResponse.tool_calls` with the tool id, name, and parsed arguments
+- **THEN** alan returns `GenerationResponse.tool_calls` with the tool id, name, and parsed arguments
 
 #### Scenario: Malformed non-streaming tool arguments
 - **WHEN** OpenRouter returns a tool call whose arguments are not valid JSON
-- **THEN** Alan does not execute the malformed tool call and surfaces a provider warning
+- **THEN** alan does not execute the malformed tool call and surfaces a provider warning
 
 #### Scenario: Usage and finish reason
 - **WHEN** OpenRouter returns token usage and a finish reason
-- **THEN** Alan preserves both values in `GenerationResponse`
+- **THEN** alan preserves both values in `GenerationResponse`
 
 #### Scenario: Provider response id
 - **WHEN** OpenRouter returns a provider-native response id
-- **THEN** Alan stores that id in `provider_response_id`
+- **THEN** alan stores that id in `provider_response_id`
 
 ### Requirement: OpenRouter stream normalization
-Alan SHALL normalize OpenRouter SDK streaming events into Alan `StreamChunk`
+alan SHALL normalize OpenRouter SDK streaming events into alan `StreamChunk`
 values and emit a terminal chunk.
 
 #### Scenario: Streaming text delta
 - **WHEN** OpenRouter streams assistant content
-- **THEN** Alan emits `StreamChunk.text` deltas in provider order
+- **THEN** alan emits `StreamChunk.text` deltas in provider order
 
 #### Scenario: Streaming reasoning delta
 - **WHEN** OpenRouter streams reasoning content
-- **THEN** Alan emits `StreamChunk.thinking` deltas in provider order
+- **THEN** alan emits `StreamChunk.thinking` deltas in provider order
 
 #### Scenario: Streaming tool-call delta
 - **WHEN** OpenRouter streams a model-issued tool call over multiple events
-- **THEN** Alan emits `StreamChunk.tool_call_delta` values that allow the runtime to assemble the final tool call
+- **THEN** alan emits `StreamChunk.tool_call_delta` values that allow the runtime to assemble the final tool call
 
 #### Scenario: Streaming completion metadata
 - **WHEN** the OpenRouter stream reaches completion
-- **THEN** Alan emits a final chunk with `is_finished = true`, finish reason, usage when available, and provider response id when available
+- **THEN** alan emits a final chunk with `is_finished = true`, finish reason, usage when available, and provider response id when available
 
 #### Scenario: Streaming error after partial output
 - **WHEN** the OpenRouter SDK stream returns an error after partial output
-- **THEN** Alan propagates the stream failure through the provider stream channel so runtime partial-stream recovery policy can handle it
+- **THEN** alan propagates the stream failure through the provider stream channel so runtime partial-stream recovery policy can handle it
 
 ### Requirement: OpenRouter capability matrix
-Alan SHALL declare OpenRouter capabilities explicitly instead of inheriting the
+alan SHALL declare OpenRouter capabilities explicitly instead of inheriting the
 generic OpenAI-compatible capability matrix.
 
 #### Scenario: Capability query
@@ -182,19 +182,19 @@ generic OpenAI-compatible capability matrix.
 - **THEN** OpenRouter remains documented as a compatibility-tier provider with a first-class SDK-backed adapter
 
 ### Requirement: Generic compatible provider preservation
-Alan SHALL preserve the existing generic OpenAI Chat Completions-compatible
+alan SHALL preserve the existing generic OpenAI Chat Completions-compatible
 provider for non-OpenRouter endpoints.
 
 #### Scenario: Generic compatible factory path
 - **WHEN** `ProviderConfig::openai_chat_completions_compatible(...)` is passed to the provider factory
-- **THEN** Alan still constructs the generic OpenAI-compatible provider path
+- **THEN** alan still constructs the generic OpenAI-compatible provider path
 
 #### Scenario: OpenRouter does not alter compatible defaults
 - **WHEN** a generic compatible profile omits optional OpenRouter metadata settings
-- **THEN** Alan resolves the profile exactly as it did before this change
+- **THEN** alan resolves the profile exactly as it did before this change
 
 ### Requirement: Verification and documentation
-Alan SHALL include focused automated coverage and documentation for the
+alan SHALL include focused automated coverage and documentation for the
 OpenRouter SDK-backed provider path.
 
 #### Scenario: Unit and integration coverage

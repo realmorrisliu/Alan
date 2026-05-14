@@ -79,7 +79,7 @@ function buildRows(events: EventEnvelope[]) {
   const flushText = () => {
     if (!textBuffer) return;
 
-    rows.push(eventRow(`text:${textKey}`, textTimestamp, "Alan", "blue", textBuffer, "white"));
+    rows.push(eventRow(`text:${textKey}`, textTimestamp, "alan", "blue", textBuffer, "white"));
 
     textBuffer = "";
     textKey = "";

@@ -12,7 +12,7 @@
 
 ## Overview
 
-In the AI Turing Machine model, the core runtime is a generic state-transition engine. **Tools** are the side-effect interface — how the agent operates on the external world. **Skills** are dynamic instruction extensions — Markdown documents that reshape the agent's behavior at runtime. Together they let Alan remain a small, generic core while supporting arbitrarily rich capabilities.
+In the AI Turing Machine model, the core runtime is a generic state-transition engine. **Tools** are the side-effect interface — how the agent operates on the external world. **Skills** are dynamic instruction extensions — Markdown documents that reshape the agent's behavior at runtime. Together they let alan remain a small, generic core while supporting arbitrarily rich capabilities.
 
 | Concept     | TM Role               | Implementation                                        |
 | ----------- | --------------------- | ----------------------------------------------------- |
@@ -127,7 +127,7 @@ binding/context. See
 
 ### Tool Governance: HITE First, Execution Backend Second
 
-Alan V2 governance is:
+alan V2 governance is:
 
 1. **Policy gate**: per-call decision (`allow`, `deny`, `escalate`).
 2. **Execution backend**: the current `workspace_path_guard` backend is a best-effort execution guard, not a strict OS sandbox. Daemon session APIs surface it as `execution_backend`.
@@ -141,7 +141,7 @@ Target V2 design and policy file format: [HITE Governance](./spec/hite_governanc
 
 Runtime prompt guidance now pushes the model to probe before claiming that
 tools or current/external data are unavailable. That prompt nudge is only the
-first layer. Alan also applies a runtime response guardrail before assistant
+first layer. alan also applies a runtime response guardrail before assistant
 text is emitted:
 
 - if a draft claims tools are unavailable while tools are registered, runtime
@@ -161,7 +161,7 @@ the post-guardrail draft, not the first contradictory draft.
 
 ### Durable Tool Payloads
 
-Alan distinguishes between:
+alan distinguishes between:
 
 - **live tool payloads on tape**: full in-session tool results used for the
   current runtime's reasoning and replay inside the same process
@@ -196,26 +196,26 @@ must not depend on it.
 
 ### Design
 
-Alan's definition layer works with filesystem-based capability packages. The
+alan's definition layer works with filesystem-based capability packages. The
 current stable directory-backed shape is a single-skill package with optional
-Alan-native extensions:
+alan-native extensions:
 
 ```
 my-skill/
 ├── SKILL.md              # Required: YAML frontmatter + Markdown instructions
-├── skill.yaml            # Optional: Alan-native machine metadata for this skill
-├── package.yaml          # Optional: package-level defaults for Alan-native metadata
+├── skill.yaml            # Optional: alan-native machine metadata for this skill
+├── package.yaml          # Optional: package-level defaults for alan-native metadata
 ├── bin/                  # Optional: package-local executable tools
 ├── scripts/              # Optional: executable code the agent can invoke via bash
 ├── references/           # Optional: reference documentation
 ├── assets/               # Optional: templates, resources
 ├── evals/                # Optional: explicit authoring/eval manifests and fixtures
 ├── eval-viewer/          # Optional: static review/viewer assets
-└── agents/               # Optional: Alan-native package-local launch targets
+└── agents/               # Optional: alan-native package-local launch targets
 ```
 
 Public `.agents/skills/<skill-id>/` installs are adapted automatically as
-single-skill packages. Alan-native extensions currently live inside that same
+single-skill packages. alan-native extensions currently live inside that same
 directory, most importantly sidecars, launch targets under `agents/`, and
 explicit authoring/eval assets under `evals/` and `eval-viewer/`.
 The stable package contract also reserves `bin/` for package-local executable
@@ -244,12 +244,12 @@ Portable skill selection is driven by `name` and `description`. Hosts may still
 offer their own force-select controls at runtime, but portable skills do not
 define their own alias, keyword, or regex trigger metadata.
 
-### Alan Sidecar Metadata
+### alan Sidecar Metadata
 
-Alan also supports optional machine-readable sidecars that do not change the
+alan also supports optional machine-readable sidecars that do not change the
 `SKILL.md` portability contract:
 
-- `skill.yaml`: skill-specific Alan-native runtime metadata
+- `skill.yaml`: skill-specific alan-native runtime metadata
 - `package.yaml`: package-level runtime defaults applied before the skill sidecar
 
 Stable sidecar keys are intentionally narrow:
@@ -268,10 +268,10 @@ runtime metadata:
 
 This is fail-open: when sidecar files are absent, discovery and activation still
 work from `SKILL.md` alone. Invalid sidecars are recorded as non-fatal load
-errors and Alan skips only the broken overlay while keeping any other valid
+errors and alan skips only the broken overlay while keeping any other valid
 sidecar layers.
 
-Alan currently uses sidecar runtime metadata for two product behaviors:
+alan currently uses sidecar runtime metadata for two product behaviors:
 
 - `runtime.permission_hints` can be attached to active-skill confirmation and
   approval surfaces as advisory context before privileged actions
@@ -281,7 +281,7 @@ Alan currently uses sidecar runtime metadata for two product behaviors:
   package-local launch target
 
 Unavailable-skill remediation for missing tools, typed dependencies, or minimum
-Alan version still comes from `SKILL.md` frontmatter rather than from sidecars.
+alan version still comes from `SKILL.md` frontmatter rather than from sidecars.
 
 ### Current Status And Partial Areas
 
@@ -310,7 +310,7 @@ contract:
 
 The following inputs are not part of the stable runtime contract:
 
-- `viewers/` directories are tolerated in package trees, but Alan does not
+- `viewers/` directories are tolerated in package trees, but alan does not
   export them through the capability view, CLI, or daemon skill catalog
 - package-local `bin/` entries are part of the stable package shape, but direct
   runtime tool binding for those executables remains a future surface; packages
@@ -322,15 +322,15 @@ The following inputs are not part of the stable runtime contract:
 - `agents/openai.yaml` compatibility metadata is ingested for catalog/UI-facing
   interface fields and dependency hints, but those hints remain
   compatibility-only metadata in the current runtime. Unknown hints, including
-  MCP-oriented hints in the current Alan runtime, are ignored for availability
-  gating. The file does not replace `SKILL.md` or Alan sidecars as the
+  MCP-oriented hints in the current alan runtime, are ignored for availability
+  gating. The file does not replace `SKILL.md` or alan sidecars as the
   canonical runtime contract
-- authoring assets such as `agents/*.md` are tolerated, but Alan does not load
+- authoring assets such as `agents/*.md` are tolerated, but alan does not load
   them as runtime capabilities by default
 
 ### Delegated Skill Execution
 
-Alan now resolves a package-local execution contract for each discovered skill.
+alan now resolves a package-local execution contract for each discovered skill.
 
 The current resolved states are:
 
@@ -338,7 +338,7 @@ The current resolved states are:
 - `delegate(target=...)`
 - `unresolved(...)`
 
-Execution metadata lives in Alan sidecars rather than `SKILL.md`, for example:
+Execution metadata lives in alan sidecars rather than `SKILL.md`, for example:
 
 ```yaml
 runtime:
@@ -358,8 +358,8 @@ Default inference is package-local and deterministic:
 
 This keeps delegated execution strict and predictable.
 
-When an active skill resolves to `delegate(target=...)`, parent Alan runtimes
-expose delegated invocation by default. Alan no longer injects the full
+When an active skill resolves to `delegate(target=...)`, parent alan runtimes
+expose delegated invocation by default. alan no longer injects the full
 `SKILL.md` body into the parent prompt. Instead, the parent runtime sees a
 lightweight delegated-capability stub with:
 
@@ -382,7 +382,7 @@ steward flows may explicitly bind additional handles such as `plan`,
 `conversation_snapshot`, `tool_results`, or `memory` when the parent needs a
 stronger handoff into a repo-scoped child worker.
 
-Alan still preserves a compatibility fallback for runtimes that do not expose
+alan still preserves a compatibility fallback for runtimes that do not expose
 delegated invocation, for example launch-root runtimes where nested delegated
 execution is intentionally disabled in V1. In those runtimes, delegated skills
 keep their inline `SKILL.md` instructions and surface a short runtime-fallback
@@ -435,13 +435,13 @@ request termination through the child-run control plane.
 execution mode and flag unresolved delegated-package shapes with explicit
 diagnostics.
 
-If execution resolves to `unresolved(...)`, Alan treats that skill as
+If execution resolves to `unresolved(...)`, alan treats that skill as
 unavailable and surfaces diagnostics in CLI, catalog, and remediation paths
 rather than silently falling back to inline behavior.
 
 ### Progressive Disclosure
 
-Alan now consumes `capabilities.disclosure` during prompt assembly instead of
+alan now consumes `capabilities.disclosure` during prompt assembly instead of
 leaving it schema-only.
 
 ```yaml
@@ -457,7 +457,7 @@ capabilities:
 Runtime behavior:
 
 - `level2` chooses the primary instruction document injected for the active
-  skill. When omitted, Alan uses the `SKILL.md` body.
+  skill. When omitted, alan uses the `SKILL.md` body.
 - `level3` lists package resources that may be expanded when the active
   instruction text actually references them.
 - Relative resource references already mentioned in the active instruction text,
@@ -470,18 +470,18 @@ Runtime behavior:
 
 ### Capability-Package Sources
 
-Alan now resolves skills through one `ResolvedCapabilityView` instead of a
+alan now resolves skills through one `ResolvedCapabilityView` instead of a
 separate `repo/user/builtin` loading path. The current capability sources are:
 
 | Source         | Location / Form                                         | Role                          |
 | -------------- | ------------------------------------------------------- | ----------------------------- |
-| **Built-in**   | Embedded first-party package assets                     | Core Alan capabilities        |
+| **Built-in**   | Embedded first-party package assets                     | Core alan capabilities        |
 | **User public skills** | `~/.agents/skills/`                              | Zero-conversion public installs |
-| **User roots** | `~/.alan/agents/default/skills/` and `~/.alan/agents/<name>/skills/` | Alan-native cross-project capability sources |
+| **User roots** | `~/.alan/agents/default/skills/` and `~/.alan/agents/<name>/skills/` | alan-native cross-project capability sources |
 | **Workspace public skills** | `<workspace>/.agents/skills/`              | Zero-conversion workspace installs |
-| **Workspace roots** | `.alan/agents/default/skills/` and `.alan/agents/<name>/skills/` | Alan-native project/workspace capability sources |
+| **Workspace roots** | `.alan/agents/default/skills/` and `.alan/agents/<name>/skills/` | alan-native project/workspace capability sources |
 
-Within the user and workspace sources, Alan follows the resolved `AgentRoot`
+Within the user and workspace sources, alan follows the resolved `AgentRoot`
 overlay chain, and later roots override earlier ones when skill IDs collide.
 Here `agent/` is the default definition root and `agents/<name>/` is one named
 definition root selected by `agent_name`; named roots extend the default roots.
@@ -551,7 +551,7 @@ resolved capability view:
 | **memory** | Persistent pure-text memory across sessions (`{workspace_alan_dir}/memory/`) |
 | **plan**   | Structured execution plans for complex tasks (`.alan/plans/`) |
 | **repo-coding** | First-party bounded repo-local coding package for steward-owned child execution |
-| **alan-shell-control** | Native Alan terminal shell layout and pane control |
+| **alan-shell-control** | Native alan terminal shell layout and pane control |
 | **skill-creator** | First-party authoring and eval workflow guidance |
 | **workspace-inspect** | First-party read-only workspace inspection delegation and child reader package |
 | **workspace-manager** | Workspace lifecycle operations and recovery guidance |
@@ -569,7 +569,7 @@ These are exposed through the same package + skill-override model as every
 other capability. Built-ins are a distribution source, not a separate runtime
 skill kind.
 
-Built-ins are no longer `always_active` by default. Any baseline behavior Alan
+Built-ins are no longer `always_active` by default. Any baseline behavior alan
 needs unconditionally now belongs in the base prompt or runtime/tool
 descriptions.
 
@@ -588,9 +588,9 @@ alan skills validate path/to/my-skill
 alan skills eval path/to/my-skill
 ```
 
-`alan skills eval` is now manifest-first. When `evals/evals.json` exists, Alan
+`alan skills eval` is now manifest-first. When `evals/evals.json` exists, alan
 runs the structured eval suite and writes `run.json`, `benchmark.json`, a
-static review bundle, and per-case artifacts. When no manifest exists, Alan
+static review bundle, and per-case artifacts. When no manifest exists, alan
 falls back to legacy `scripts/eval.sh` or `scripts/eval.py`.
 
 For coding packages such as `repo-coding`, external benchmark ladders sit on
@@ -598,7 +598,7 @@ top of this local eval surface as adapter layers. They measure transfer
 quality, but they do not define runtime behavior or justify benchmark-specific
 prompt rules.
 
-Alan now exposes the same local-first management surface from the daemon:
+alan now exposes the same local-first management surface from the daemon:
 
 - `GET /api/v1/skills/catalog` resolves the current packages, skills, skill
   exposure state, execution state, and availability snapshot for a workspace +
@@ -643,7 +643,7 @@ The active-skill envelope now carries:
 - resolved execution state
 
 Prompt injection consumes that structured shape instead of pathless Markdown
-fragments. Active skill sections therefore include an `Alan Runtime Context`
+fragments. Active skill sections therefore include an `alan Runtime Context`
 block before the skill body so downstream resource resolution can be
 deterministic.
 
@@ -658,7 +658,7 @@ Skill availability is also filtered by declared runtime requirements:
 - `compatibility.dependencies`
 - `compatibility.min_version`
 
-If a skill fails those checks, Alan keeps the package in the resolved
+If a skill fails those checks, alan keeps the package in the resolved
 definition layer but excludes the skill from runtime activation. Explicit
 mentions then surface a concrete unavailable reason instead of silently
 injecting an unusable skill.

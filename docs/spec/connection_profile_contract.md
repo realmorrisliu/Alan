@@ -46,7 +46,7 @@ Still in migration:
 
 ## Problem Statement
 
-Historically Alan split the user-facing model-access story across three
+Historically alan split the user-facing model-access story across three
 unrelated surfaces:
 
 1. `agent.toml` selects `llm_provider` and carries most provider config.
@@ -67,7 +67,7 @@ surface in compatibility paths.
 
 ## Goals
 
-Alan's connection-management contract must satisfy all of the following:
+alan's connection-management contract must satisfy all of the following:
 
 1. Present one uniform operator model for provider setup across CLI, TUI, and
    onboarding.
@@ -108,7 +108,7 @@ This contract does not require:
 - **Pinned profile**: an optional `connection_profile` stored in an
   `agent.toml` file that overrides the default profile for the corresponding
   global or workspace agent scope.
-- **Effective profile**: the profile Alan will use for the next session after
+- **Effective profile**: the profile alan will use for the next session after
   resolving explicit session input, pin state, and default-profile state.
 - **Session binding**: the frozen association between a session and the
   connection profile used to create it.
@@ -223,7 +223,7 @@ Rules:
 
 ### Session Binding
 
-When a session starts, Alan resolves a single profile and freezes a binding:
+When a session starts, alan resolves a single profile and freezes a binding:
 
 ```text
 session_id
@@ -243,7 +243,7 @@ Rules:
 
 ### Selection Resolution
 
-For new-session creation, Alan resolves profiles in this precedence order:
+For new-session creation, alan resolves profiles in this precedence order:
 
 1. explicit session-create `profile_id`
 2. workspace pin from `{workspace}/.alan/agents/default/agent.toml`
@@ -339,7 +339,7 @@ V1 logical storage contract:
 V1 concrete backend choices:
 
 1. Existing ChatGPT managed login continues to use `~/.alan/auth.json`.
-2. New `secret_string` credentials use a host-managed secret store under Alan
+2. New `secret_string` credentials use a host-managed secret store under alan
    home with file permissions equivalent to `0600`.
 3. Future host implementations may replace the secret backend with keychain or
    keyring integration without changing the logical contract.
@@ -382,7 +382,7 @@ Rules:
 
 ## Resolved Configuration Rules
 
-Alan must resolve the active profile for a new session in this order:
+alan must resolve the active profile for a new session in this order:
 
 1. explicit session `profile_id`
 2. workspace agent config `connection_profile`
@@ -451,7 +451,7 @@ Provider descriptor response shape:
 ```
 
 ChatGPT/Codex model identifiers must track upstream Codex bundled model
-metadata. Alan must not invent synthetic ChatGPT model slugs. At the time of
+metadata. alan must not invent synthetic ChatGPT model slugs. At the time of
 this spec revision, upstream bundled examples include `gpt-5.3-codex`,
 `gpt-5.2-codex`, `gpt-5.1-codex-max`, and `gpt-5.1-codex-mini`.
 

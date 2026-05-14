@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # ============================================================
-# Alan live provider harness
+# alan live provider harness
 # Runs ignored provider integration tests against real upstreams.
 # ============================================================
 

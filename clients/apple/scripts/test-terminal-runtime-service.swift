@@ -46,8 +46,8 @@ private enum TerminalRuntimeServiceTests {
             "boot profile must pass Ghostty terminfo to terminal child processes"
         )
         expect(
-            profile.environment["TERM_PROGRAM"] == "Alan",
-            "boot profile must identify Alan as the terminal program"
+            profile.environment["TERM_PROGRAM"] == "alan",
+            "boot profile must identify alan as the terminal program"
         )
         expect(
             profile.environment["COLORTERM"] == "truecolor",

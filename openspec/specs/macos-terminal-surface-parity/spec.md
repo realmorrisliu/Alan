@@ -98,4 +98,4 @@ recoverable fallback states.
 
 #### Scenario: Bell occurs in background pane
 - **WHEN** a background pane emits a bell or attention event
-- **THEN** Alan records pane attention and surfaces it through sidebar/status affordances without stealing focus
+- **THEN** alan records pane attention and surfaces it through sidebar/status affordances without stealing focus

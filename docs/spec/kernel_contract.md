@@ -1,4 +1,4 @@
-# Alan Kernel Contract
+# alan Kernel Contract
 
 > Status: V1 contract for long-term stability.
 > Scope: `alan-runtime` core behavior and invariants.

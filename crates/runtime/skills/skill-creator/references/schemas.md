@@ -1,6 +1,6 @@
 # Structured Eval Manifest
 
-Alan's structured eval entrypoint looks for `evals/evals.json`.
+alan's structured eval entrypoint looks for `evals/evals.json`.
 
 Current case kinds:
 

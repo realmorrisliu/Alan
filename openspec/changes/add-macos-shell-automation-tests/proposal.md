@@ -1,17 +1,17 @@
 ## Why
 
-Alan's macOS shell has an agent-readable control plane, but it lacks the
+alan's macOS shell has an agent-readable control plane, but it lacks the
 automation and test coverage expected from a native terminal-grade app. To make
-future terminal work safe, Alan needs App Intents/automation surfaces and real
+future terminal work safe, alan needs App Intents/automation surfaces and real
 Apple-client tests around shell state, runtime delivery, control-plane behavior,
 and UI smoke flows.
 
 ## What Changes
 
-- Add App Intents for core shell actions: create terminal tab, create Alan tab,
+- Add App Intents for core shell actions: create terminal tab, create alan tab,
   split pane, focus pane, close pane/tab, send text, read pane summary, and open
   attention items.
-- Keep Alan's file/socket control plane as the agent-facing automation contract,
+- Keep alan's file/socket control plane as the agent-facing automation contract,
   while using App Intents for user/system automation via Shortcuts, Spotlight,
   and future macOS surfaces.
 - Add Apple-client unit tests for shell model mutations, runtime registry/service
@@ -28,7 +28,7 @@ and UI smoke flows.
 
 ### New Capabilities
 - `macos-shell-automation-surfaces`: Defines App Intents and user/system
-  automation behavior for Alan's macOS shell.
+  automation behavior for alan's macOS shell.
 
 ### Modified Capabilities
 - `macos-shell-build-test-contract`: Apple client tests become a required part
@@ -47,5 +47,5 @@ and UI smoke flows.
   scripts gain focused build/test commands.
 - Runtime boundaries: test seams around terminal runtime service, control-plane
   command execution, and boot profile resolution must be stable enough for mocks.
-- User/system automation: Shortcuts and Spotlight can drive Alan shell actions
+- User/system automation: Shortcuts and Spotlight can drive alan shell actions
   without depending on private socket details.

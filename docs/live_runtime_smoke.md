@@ -4,7 +4,7 @@
 
 ## Purpose
 
-This smoke layer validates Alan's real runtime turn path against a live
+This smoke layer validates alan's real runtime turn path against a live
 provider. It exists to catch bugs that the provider-only harness cannot see,
 such as runtime-default request fields leaking into provider-specific request
 shaping, or regressions in runtime-owned memory surfaces.

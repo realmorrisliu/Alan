@@ -1,11 +1,11 @@
 ## ADDED Requirements
 
 ### Requirement: Account-bound device enrollment
-Alan SHALL bind each remote-capable Mac and iPhone app installation to an Alan
-account and a stable device identity before allowing Alan Anywhere access.
+alan SHALL bind each remote-capable Mac and iPhone app installation to an alan
+account and a stable device identity before allowing alan Anywhere access.
 
 #### Scenario: Mac enrolls after account login
-- **WHEN** a user signs in to Alan Desktop on macOS
+- **WHEN** a user signs in to alan Desktop on macOS
 - **THEN** the Mac is registered as a device owned by that account
 - **AND** the Mac receives device-bound credentials suitable for remote
   availability
@@ -13,18 +13,18 @@ account and a stable device identity before allowing Alan Anywhere access.
   in workspace files
 
 #### Scenario: iPhone signs in to the same account
-- **WHEN** a user signs in to Alan on iPhone with the same account as the Mac
+- **WHEN** a user signs in to alan on iPhone with the same account as the Mac
 - **THEN** the iPhone is registered as a device owned by that account
 - **AND** the iPhone can request access only to devices associated with that
   account
 
 ### Requirement: Automatic Mac remote availability
-Alan Desktop SHALL automatically keep the signed-in Mac remotely connectable
-while the app is running and the user has not disabled Alan Anywhere.
+alan Desktop SHALL automatically keep the signed-in Mac remotely connectable
+while the app is running and the user has not disabled alan Anywhere.
 
 #### Scenario: Desktop starts while signed in
-- **WHEN** Alan Desktop starts with a valid signed-in account and device binding
-- **THEN** it establishes an outbound encrypted connection to the Alan remote
+- **WHEN** alan Desktop starts with a valid signed-in account and device binding
+- **THEN** it establishes an outbound encrypted connection to the alan remote
   service without requiring inbound network configuration
 - **AND** the user is not asked for public IP, router, VPN, tunnel, SSH, or port
   forwarding settings
@@ -32,16 +32,16 @@ while the app is running and the user has not disabled Alan Anywhere.
 #### Scenario: Desktop loses remote connectivity
 - **WHEN** the Mac loses network connectivity or its outbound remote connection
   drops
-- **THEN** Alan Desktop retries connection in the background
-- **AND** Alan Cloud marks the device stale or offline without changing local
+- **THEN** alan Desktop retries connection in the background
+- **AND** alan Cloud marks the device stale or offline without changing local
   runtime state
 
 ### Requirement: User-owned device discovery
-Alan SHALL let a signed-in iPhone discover the user's own online Alan Desktop
+alan SHALL let a signed-in iPhone discover the user's own online alan Desktop
 devices without exposing relay or tunnel implementation details.
 
 #### Scenario: iPhone lists available Macs
-- **WHEN** the iPhone app requests Alan Anywhere devices for the signed-in
+- **WHEN** the iPhone app requests alan Anywhere devices for the signed-in
   account
 - **THEN** the response includes only devices owned by that account
 - **AND** each device includes product-facing status such as online/offline,
@@ -50,17 +50,17 @@ devices without exposing relay or tunnel implementation details.
   public IP, tunnel URL, or relay node token
 
 #### Scenario: Device is offline
-- **WHEN** a previously enrolled Mac is not connected to Alan Cloud
+- **WHEN** a previously enrolled Mac is not connected to alan Cloud
 - **THEN** the iPhone may show the Mac as offline or unavailable
 - **AND** the iPhone MUST NOT offer state-advancing actions against that Mac
   until it reconnects
 
 ### Requirement: Session and work-context status discovery
-Alan SHALL expose enough Mac-authored session and work-context status for
+alan SHALL expose enough Mac-authored session and work-context status for
 iPhone users to choose what to continue remotely.
 
 #### Scenario: Mac publishes connectable work status
-- **WHEN** Alan Desktop is online
+- **WHEN** alan Desktop is online
 - **THEN** it publishes connectable work status for the signed-in user
 - **AND** status includes whether a local context is connectable and whether an
   agent/session is currently active
@@ -71,16 +71,16 @@ iPhone users to choose what to continue remotely.
 - **WHEN** the iPhone user selects an online Mac
 - **THEN** the iPhone can list or select the Mac-authored connectable sessions
   or work contexts
-- **AND** the UI presents the action as continuing work on another Alan device
+- **AND** the UI presents the action as continuing work on another alan device
   rather than connecting to infrastructure
 
 ### Requirement: Remote session control
-Alan SHALL allow iPhone to continue a Mac session or work context by sending
-normal Alan control operations to the Mac through the remote service.
+alan SHALL allow iPhone to continue a Mac session or work context by sending
+normal alan control operations to the Mac through the remote service.
 
 #### Scenario: iPhone sends a message
 - **WHEN** the iPhone user sends a message to a Mac session or work context through
-  Alan Anywhere
+  alan Anywhere
 - **THEN** the request is routed to the selected Mac
 - **AND** the Mac validates authorization and applies the operation through the
   same session/runtime path used by local clients
@@ -98,7 +98,7 @@ normal Alan control operations to the Mac through the remote service.
 - **AND** the Mac validates the pending request before advancing execution
 
 ### Requirement: Realtime remote event flow
-Alan SHALL support realtime remote delivery of session events and streamed
+alan SHALL support realtime remote delivery of session events and streamed
 assistant output from the Mac to the iPhone.
 
 #### Scenario: Session streams output remotely
@@ -110,37 +110,37 @@ assistant output from the Mac to the iPhone.
   IDs remain authored by the Mac
 
 #### Scenario: Relay transports events
-- **WHEN** realtime events are delivered through Alan Cloud relay
+- **WHEN** realtime events are delivered through alan Cloud relay
 - **THEN** the relay forwards event transport without becoming the authority for
   event ordering or runtime state
 - **AND** the iPhone can still recover missed events with the Mac-authored
   cursor replay APIs
 
 ### Requirement: Reconnect and gap recovery
-Alan SHALL recover remote iPhone sessions after app backgrounding, network
+alan SHALL recover remote iPhone sessions after app backgrounding, network
 changes, and relay reconnects without duplicating execution.
 
 #### Scenario: iPhone reconnects with a valid cursor
 - **WHEN** the iPhone reconnects with its latest observed event cursor
-- **THEN** Alan returns events after that cursor
+- **THEN** alan returns events after that cursor
 - **AND** runtime execution is not restarted or re-driven by reconnect
 
 #### Scenario: iPhone cursor has a gap
 - **WHEN** the iPhone reconnects after its cursor is no longer in the replay
   buffer
-- **THEN** Alan returns a gap indication
+- **THEN** alan returns a gap indication
 - **AND** the iPhone can rebuild actionable state from the reconnect snapshot
   before continuing event consumption
 
 ### Requirement: Node-authoritative execution boundary
-Alan SHALL keep Alan Anywhere execution, tool access, governance, and local
+alan SHALL keep alan Anywhere execution, tool access, governance, and local
 workspace reads authoritative on the user's Mac.
 
 #### Scenario: Cloud receives a state-changing remote request
-- **WHEN** Alan Cloud receives a request to submit, interrupt, resume, fork,
+- **WHEN** alan Cloud receives a request to submit, interrupt, resume, fork,
   compact, roll back, or delete a remote session
-- **THEN** Alan Cloud routes the request to the selected Mac
-- **AND** Alan Cloud MUST NOT execute tools, read local workspace files, decide
+- **THEN** alan Cloud routes the request to the selected Mac
+- **AND** alan Cloud MUST NOT execute tools, read local workspace files, decide
   policy outcomes, or mutate runtime state on behalf of the Mac
 
 #### Scenario: Mac rejects unauthorized request
@@ -151,33 +151,33 @@ workspace reads authoritative on the user's Mac.
 - **AND** no runtime state is advanced
 
 ### Requirement: Remote access security and revocation
-Alan SHALL protect Alan Anywhere with encrypted transport, device binding,
+alan SHALL protect alan Anywhere with encrypted transport, device binding,
 scoped short-lived authorization, and revocation.
 
 #### Scenario: Remote connection is established
-- **WHEN** iPhone connects to a Mac through Alan Anywhere
+- **WHEN** iPhone connects to a Mac through alan Anywhere
 - **THEN** the connection uses encrypted transport
 - **AND** access tokens are scoped to the signed-in account, client device,
   target Mac device, selected workspace/session, and permitted operations
 
 #### Scenario: Device is revoked
 - **WHEN** a user revokes a Mac or iPhone device
-- **THEN** Alan invalidates future remote access for that device
+- **THEN** alan invalidates future remote access for that device
 - **AND** active remote connections using that device credential are closed or
   rejected before additional state-changing operations are accepted
 
 ### Requirement: Zero-configuration product language
-Alan SHALL present Alan Anywhere as device-to-device Alan continuation, not as
+alan SHALL present alan Anywhere as device-to-device alan continuation, not as
 remote desktop or user-managed networking.
 
-#### Scenario: User opens Alan Anywhere on iPhone
-- **WHEN** the iPhone user opens the Alan Anywhere surface
-- **THEN** the primary UI language describes online Alan devices, current work,
+#### Scenario: User opens alan Anywhere on iPhone
+- **WHEN** the iPhone user opens the alan Anywhere surface
+- **THEN** the primary UI language describes online alan devices, current work,
   sessions, runs, messages, and approvals
 - **AND** it does not require or foreground VPN, tunnel, Cloudflare, SSH, port
   mapping, router configuration, public IP, or daemon URL concepts
 
 #### Scenario: Debug details are needed
 - **WHEN** a developer opens an explicit debug or diagnostics surface
-- **THEN** Alan may expose relay, node, routing, and connection diagnostics
+- **THEN** alan may expose relay, node, routing, and connection diagnostics
 - **AND** those diagnostics remain outside the default user workflow

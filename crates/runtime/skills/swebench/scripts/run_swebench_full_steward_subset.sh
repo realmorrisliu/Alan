@@ -311,7 +311,7 @@ jq -n \
     --argjson official_harness_requested "$official_harness_requested" \
     --argjson official_harness_exit_code "$official_harness_exit_code" \
     --argjson official_harness "$official_harness_summary_json" \
-    --arg scoring_semantics "passed/failed counts reflect Alan-native orchestration case results; official resolved/unresolved status comes from the SWE-bench harness manifest when present" \
+    --arg scoring_semantics "passed/failed counts reflect alan-native orchestration case results; official resolved/unresolved status comes from the SWE-bench harness manifest when present" \
     '{
         suite: $suite,
         dataset: $dataset,
@@ -352,7 +352,7 @@ jq -n \
     --argjson official_harness_requested "$official_harness_requested" \
     --argjson official_harness_exit_code "$official_harness_exit_code" \
     --argjson official_harness "$official_harness_summary_json" \
-    --arg scoring_semantics "passed/failed counts reflect Alan-native orchestration case results; official resolved/unresolved status comes from the SWE-bench harness manifest when present" \
+    --arg scoring_semantics "passed/failed counts reflect alan-native orchestration case results; official resolved/unresolved status comes from the SWE-bench harness manifest when present" \
     '{
         suite: $suite,
         dataset: $dataset,

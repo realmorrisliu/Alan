@@ -1,5 +1,5 @@
 /**
- * Daemon Manager - manages Alan daemon lifecycle via `alan daemon` commands.
+ * Daemon Manager - manages alan daemon lifecycle via `alan daemon` commands.
  *
  * This keeps the TUI aligned with the current packaging model where `alan`
  * is the only shipped binary and daemon runs as `alan daemon start`.

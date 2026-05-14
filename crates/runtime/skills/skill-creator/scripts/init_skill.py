@@ -6,7 +6,7 @@ import sys
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Initialize an Alan skill package.")
+    parser = argparse.ArgumentParser(description="Initialize an alan skill package.")
     parser.add_argument("path", help="Directory where the skill package should be created")
     parser.add_argument(
         "--template",

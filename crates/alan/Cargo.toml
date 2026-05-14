@@ -1,6 +1,6 @@
 [package]
 name = "alan"
-description = "Alan — AI Turing Machine CLI & daemon"
+description = "alan — AI Turing Machine CLI & daemon"
 version.workspace = true
 edition.workspace = true
 

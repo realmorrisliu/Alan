@@ -1,6 +1,6 @@
 //! Content symbols — the alphabet of the tape.
 //!
-//! `ContentPart` is the basic unit of content in the Alan protocol.
+//! `ContentPart` is the basic unit of content in the alan protocol.
 //! It lives in `alan-protocol` so that `Op` can reference it directly,
 //! and `alan-runtime`'s tape re-exports it.
 

@@ -1,4 +1,4 @@
-//! LLM provider adapters for Alan.
+//! LLM provider adapters for alan.
 //!
 //! This crate provides a unified, trait-based interface for different LLM providers
 //! (Google Gemini GenerateContent API, OpenAI Responses API, OpenAI Chat Completions API,
@@ -1478,7 +1478,7 @@ mod tests {
         let openrouter =
             factory::ProviderConfig::openrouter("sk-or-xxx", "anthropic/claude-3-opus")
                 .with_http_referer("https://alan.local")
-                .with_x_title("Alan")
+                .with_x_title("alan")
                 .with_app_categories(["cli-agent"]);
         assert_eq!(openrouter.provider_type, factory::ProviderType::OpenRouter);
         assert_eq!(openrouter.api_key, Some("sk-or-xxx".to_string()));
@@ -1490,7 +1490,7 @@ mod tests {
             openrouter.http_referer.as_deref(),
             Some("https://alan.local")
         );
-        assert_eq!(openrouter.x_title.as_deref(), Some("Alan"));
+        assert_eq!(openrouter.x_title.as_deref(), Some("alan"));
         assert_eq!(
             openrouter.app_categories,
             Some(vec!["cli-agent".to_string()])

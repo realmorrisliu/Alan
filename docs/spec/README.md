@@ -1,6 +1,6 @@
 # Spec Index
 
-This directory contains Alan's target contracts and product specs.
+This directory contains alan's target contracts and product specs.
 
 It is not identical to "current behavior" documentation. Before using a spec as
 the source of truth, check its `Status` line and cross-reference the current
@@ -108,7 +108,7 @@ steps, it is probably a plan rather than a spec.
 
 ## Remote, Distributed, And Reliability
 
-- [harness_bridge.md](./harness_bridge.md): bridge contract across Alan nodes.
+- [harness_bridge.md](./harness_bridge.md): bridge contract across alan nodes.
 - [remote_control_architecture.md](./remote_control_architecture.md): node,
   app-server, relay, reconnect, and notification layering.
 - [remote_control_security.md](./remote_control_security.md): trust boundaries

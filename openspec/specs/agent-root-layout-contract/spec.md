@@ -8,7 +8,7 @@ semantics and owns code-level centralization, non-Rust mirror constraints, and
 guardrails.
 ## Requirements
 ### Requirement: Runtime-owned agent-root layout
-Alan SHALL expose a runtime-owned typed API for canonical agent-root layout
+alan SHALL expose a runtime-owned typed API for canonical agent-root layout
 construction. Production Rust code outside the layout owner SHALL use that API for
 default roots, named roots, and standard agent-root asset paths.
 
@@ -23,7 +23,7 @@ default roots, named roots, and standard agent-root asset paths.
 - **AND** the returned path uses the canonical agent-root layout
 
 ### Requirement: Centralized agent-name semantics
-Alan SHALL centralize agent-name normalization, validation, and `default` reservation
+alan SHALL centralize agent-name normalization, validation, and `default` reservation
 semantics in the runtime layout contract.
 
 #### Scenario: Explicit default name is normalized once
@@ -37,7 +37,7 @@ semantics in the runtime layout contract.
 - **AND** callers do not duplicate path traversal checks for agent-root layout decisions
 
 ### Requirement: Writers and readers use the same layout contract
-Alan SHALL use the same runtime layout contract for agent-root reads and writes. Setup
+alan SHALL use the same runtime layout contract for agent-root reads and writes. Setup
 and mutation flows MUST NOT construct default agent-root paths independently from the
 runtime resolver.
 
@@ -52,7 +52,7 @@ runtime resolver.
 - **AND** runtime discovery can load those assets from the same roots
 
 ### Requirement: Client path mirrors are constrained
-Alan SHALL keep non-Rust mirrors of canonical setup paths isolated and explicitly
+alan SHALL keep non-Rust mirrors of canonical setup paths isolated and explicitly
 tested. Daemon responses that already include canonical paths SHALL be preferred over
 client-side recomputation for online flows.
 
@@ -67,7 +67,7 @@ client-side recomputation for online flows.
 - **AND** the TUI does not recompute an equivalent path from duplicated layout rules
 
 ### Requirement: Raw layout-string guardrail
-Alan SHALL provide a mechanical guardrail that detects new raw canonical agent-root
+alan SHALL provide a mechanical guardrail that detects new raw canonical agent-root
 layout strings in Rust production code outside approved layout-owner locations.
 
 #### Scenario: Production code adds a raw default-root string

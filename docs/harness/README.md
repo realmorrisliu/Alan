@@ -1,10 +1,10 @@
-# Alan Harness
+# alan Harness
 
 > Status: VNext validation framework blueprint.
 
 ## Goals
 
-Harness is Alan's system-level validation framework, not a collection of unit tests for one crate.
+Harness is alan's system-level validation framework, not a collection of unit tests for one crate.
 
 It focuses on:
 
@@ -74,7 +74,7 @@ Harness turns these runtime risks into reproducible regression scenarios.
 
 ### 10) Coding Steward Orchestration
 
-- Validate Alan's home-root orchestration path separately from repo-worker-only checks.
+- Validate alan's home-root orchestration path separately from repo-worker-only checks.
 - Focus: delegated launch shape, handle handoff, workspace boundaries, and bounded result integration.
 
 ## Unified Artifacts

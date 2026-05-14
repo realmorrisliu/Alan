@@ -3,7 +3,7 @@ name: memory
 description: |
   Manage persistent memory across sessions for long-running tasks.
 
-  Alan's target direction is runtime-owned pure-text memory bootstrap and recall.
+  alan's target direction is runtime-owned pure-text memory bootstrap and recall.
   This skill helps the model work with that file-backed memory intentionally
   when durable updates or deeper inspection are needed.
 
@@ -13,7 +13,7 @@ description: |
   - User references prior decisions, context, or history
   - Important facts, preferences, or decisions need to be preserved
 
-  Alan ships this as a built-in capability package.
+  alan ships this as a built-in capability package.
 
 metadata:
   short-description: Persistent memory across sessions
@@ -30,7 +30,7 @@ For the active target contract, see `docs/spec/pure_text_memory_contract.md`.
 
 ## Memory Layout
 
-All memory files live under the active workspace Alan state directory's `memory/` folder.
+All memory files live under the active workspace alan state directory's `memory/` folder.
 
 Examples:
 

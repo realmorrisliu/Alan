@@ -80,7 +80,7 @@ pub async fn start_daemon_background() -> Result<()> {
 
     let alan_bin = std::env::current_exe().context("Cannot determine own executable path")?;
 
-    eprintln!("Starting Alan daemon...");
+    eprintln!("Starting alan daemon...");
 
     let child = std::process::Command::new(&alan_bin)
         .args(["daemon", "start", "--foreground"])

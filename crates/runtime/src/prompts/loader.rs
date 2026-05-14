@@ -72,7 +72,7 @@ mod tests {
     fn test_load_system_prompt() {
         let loader = PromptLoader::new();
         let prompt = loader.system_prompt();
-        assert!(prompt.contains("You are Alan"));
+        assert!(prompt.contains("You are alan"));
     }
 
     #[test]
@@ -132,7 +132,7 @@ mod tests {
 
         // Should fall back to builtin for system prompt
         let system_prompt = loader.load("system");
-        assert!(system_prompt.contains("You are Alan"));
+        assert!(system_prompt.contains("You are alan"));
     }
 
     #[test]
@@ -160,7 +160,7 @@ mod tests {
 
         // Should fall back to builtin since custom dir is empty
         let prompt = loader.load("system");
-        assert!(prompt.contains("You are Alan"));
+        assert!(prompt.contains("You are alan"));
     }
 
     #[test]

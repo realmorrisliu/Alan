@@ -12,7 +12,7 @@ Use this guide when shaping or reviewing a skill package.
 
 ## Authoring Layers
 
-- Runtime tools: host capabilities registered by Alan
+- Runtime tools: host capabilities registered by alan
 - Package-local helpers: scripts inside one package
 - Reusable skill tooling: shared authoring helpers used by multiple packages
 

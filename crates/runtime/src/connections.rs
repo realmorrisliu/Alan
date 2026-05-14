@@ -141,7 +141,7 @@ impl SecretStore {
 
     pub fn detect() -> anyhow::Result<Self> {
         let home_paths = AlanHomePaths::detect()
-            .ok_or_else(|| anyhow::anyhow!("Could not determine Alan home directory"))?;
+            .ok_or_else(|| anyhow::anyhow!("Could not determine alan home directory"))?;
         Self::from_home_paths(&home_paths)
     }
 
@@ -244,7 +244,7 @@ impl ConnectionsFile {
 
     pub fn load_global() -> anyhow::Result<(Self, Option<PathBuf>)> {
         let home_paths = AlanHomePaths::detect()
-            .ok_or_else(|| anyhow::anyhow!("Could not determine Alan home directory"))?;
+            .ok_or_else(|| anyhow::anyhow!("Could not determine alan home directory"))?;
         Self::load_from_home_paths(&home_paths)
     }
 
@@ -284,7 +284,7 @@ impl ConnectionsFile {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).with_context(|| {
                 format!(
-                    "failed to create Alan config directory {}",
+                    "failed to create alan config directory {}",
                     parent.display()
                 )
             })?;
@@ -296,7 +296,7 @@ impl ConnectionsFile {
 
     pub fn save_global(&self) -> anyhow::Result<()> {
         let home_paths = AlanHomePaths::detect()
-            .ok_or_else(|| anyhow::anyhow!("Could not determine Alan home directory"))?;
+            .ok_or_else(|| anyhow::anyhow!("Could not determine alan home directory"))?;
         self.save_to_home_paths(&home_paths)
     }
 
@@ -639,18 +639,18 @@ fn secret_store_file_path(home_paths: &AlanHomePaths) -> anyhow::Result<PathBuf>
 }
 
 fn normalized_home_paths(home_paths: &AlanHomePaths) -> anyhow::Result<AlanHomePaths> {
-    validate_safe_absolute_path("Alan home parent directory", &home_paths.home_dir)?;
+    validate_safe_absolute_path("alan home parent directory", &home_paths.home_dir)?;
     let normalized = AlanHomePaths::from_home_dir(&home_paths.home_dir);
     if normalized != *home_paths {
         anyhow::bail!(
-            "invalid Alan home layout; expected paths under {}",
+            "invalid alan home layout; expected paths under {}",
             normalized.alan_home_dir.display()
         );
     }
-    validate_safe_absolute_path("Alan home directory", &normalized.alan_home_dir)?;
-    validate_safe_absolute_path("Alan connections path", &normalized.global_connections_path)?;
+    validate_safe_absolute_path("alan home directory", &normalized.alan_home_dir)?;
+    validate_safe_absolute_path("alan connections path", &normalized.global_connections_path)?;
     validate_safe_absolute_path(
-        "Alan credentials directory",
+        "alan credentials directory",
         &normalized.global_credentials_dir,
     )?;
 
@@ -670,7 +670,7 @@ fn normalized_home_paths(home_paths: &AlanHomePaths) -> anyhow::Result<AlanHomeP
         || connections_name != Some(CONNECTIONS_FILE_NAME)
         || credentials_name != Some(CREDENTIALS_DIR_NAME)
     {
-        anyhow::bail!("invalid Alan home path layout");
+        anyhow::bail!("invalid alan home path layout");
     }
     Ok(normalized)
 }
@@ -965,7 +965,7 @@ mod tests {
                     source: default_profile_source(),
                     settings: BTreeMap::from([
                         ("http_referer".to_string(), "https://alan.local".to_string()),
-                        ("x_title".to_string(), "Alan".to_string()),
+                        ("x_title".to_string(), "alan".to_string()),
                         (
                             "app_categories".to_string(),
                             "cli-agent,devtool".to_string(),
@@ -990,7 +990,7 @@ mod tests {
             config.openrouter_http_referer.as_deref(),
             Some("https://alan.local")
         );
-        assert_eq!(config.openrouter_x_title.as_deref(), Some("Alan"));
+        assert_eq!(config.openrouter_x_title.as_deref(), Some("alan"));
         assert_eq!(
             config.openrouter_app_categories,
             vec!["cli-agent", "devtool"]

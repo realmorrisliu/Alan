@@ -20,7 +20,7 @@ fn display_identifier(value: &str) -> String {
 }
 
 fn connection_control() -> Result<Arc<ConnectionControlState>> {
-    let home_paths = AlanHomePaths::detect().context("Cannot determine Alan home directory")?;
+    let home_paths = AlanHomePaths::detect().context("Cannot determine alan home directory")?;
     let auth_manager = alan_auth::ChatgptAuthManager::new(ChatgptAuthConfig::with_storage_path(
         home_paths.alan_home_dir.join("auth.json"),
     ))?;
@@ -29,7 +29,7 @@ fn connection_control() -> Result<Arc<ConnectionControlState>> {
 }
 
 fn load_connections() -> Result<(AlanHomePaths, ConnectionsFile)> {
-    let home_paths = AlanHomePaths::detect().context("Cannot determine Alan home directory")?;
+    let home_paths = AlanHomePaths::detect().context("Cannot determine alan home directory")?;
     let (connections, _) = ConnectionsFile::load_global()?;
     Ok((home_paths, connections))
 }

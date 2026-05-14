@@ -1,13 +1,13 @@
 ## Context
 
-Alan's target memory direction is pure-text, file-backed, auditable memory. The
+alan's target memory direction is pure-text, file-backed, auditable memory. The
 runtime already has turn-end memory promotion, memory recall bundles, and
 pre-compaction memory flushes, but stable memory writes are not yet a complete
 product surface: writes are difficult to inspect, revert, or connect to a clear
 evidence trail.
 
 The desired behavior is more proactive than "only remember when the user says
-remember this." Alan may learn from direct user statements, repeated behavior,
+remember this." alan may learn from direct user statements, repeated behavior,
 and external or repository evidence, but the system must stay quiet by default
 and must not become a hidden provider-memory black box.
 
@@ -85,7 +85,7 @@ Alternatives considered:
 
 ### Decision: Use low-disturbance review by default
 
-Alan writes eligible stable memory without interrupting the user. Review happens
+alan writes eligible stable memory without interrupting the user. Review happens
 through `alan memory recent`, `alan memory show`, `alan memory revert`, and
 daemon equivalents. Daemon memory write APIs must bind every recent, show, and
 revert request to an explicit workspace or session scope before reading or
@@ -96,7 +96,7 @@ needed by the operation.
 
 Alternatives considered:
 
-- Confirm all writes. This prevents bad memory but makes Alan feel needy and
+- Confirm all writes. This prevents bad memory but makes alan feel needy and
   slows normal work.
 - Never auto-promote inferred facts. This is safer but fails the product goal of
   proactive intelligence.

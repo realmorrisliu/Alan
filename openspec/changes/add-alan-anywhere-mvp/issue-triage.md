@@ -11,7 +11,7 @@
 
 ## Summary
 
-Define and implement Alan Anywhere MVP: a signed-in Mac automatically
+Define and implement alan Anywhere MVP: a signed-in Mac automatically
 becomes remotely connectable, and a signed-in iPhone using the same account can
 discover that Mac, choose a session or work context, stream events, send messages,
 interrupt execution, resume pending yields, and recover after reconnect without
@@ -20,7 +20,7 @@ forwarding.
 
 The user-facing product framing is:
 
-> Alan, anywhere you need to continue.
+> alan, anywhere you need to continue.
 
 Not:
 
@@ -49,7 +49,7 @@ Not:
 
 ## Issue Cleanup
 
-- Close `#9` as superseded by `#349`, this OpenSpec-backed Alan Anywhere MVP issue.
+- Close `#9` as superseded by `#349`, this OpenSpec-backed alan Anywhere MVP issue.
   The lower-level Agent Node / Relay / Client architecture remains the
   transport foundation, but this issue becomes the product contract.
 - Keep `#75` open as the iOS task-manager/product IA follow-up. It should

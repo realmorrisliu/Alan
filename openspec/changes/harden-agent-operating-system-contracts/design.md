@@ -1,7 +1,7 @@
 ## Context
 
 The analyzed session exposed a product boundary problem rather than a single
-bug. Alan has separate machinery for delegated runtimes, workspace guards,
+bug. alan has separate machinery for delegated runtimes, workspace guards,
 rollout persistence, approval checkpoints, task-store status, daemon APIs, and
 memory surfaces. Those subsystems are individually useful, but the user
 experience is not yet a coherent agent operating system:
@@ -46,7 +46,7 @@ delegation, auditable evidence, and human-visible lifecycle state.
 
 ### 1. Capability matching is a runtime contract, not only prompt guidance
 
-Alan should derive a bounded capability requirement record before launching
+alan should derive a bounded capability requirement record before launching
 delegated work or choosing a recovery path for a failed delegated result. The
 record can start small: workspace read/write, shell, network, GitHub, browser,
 side effects, target workspace, and artifact access.

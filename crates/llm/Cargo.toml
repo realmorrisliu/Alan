@@ -1,6 +1,6 @@
 [package]
 name = "alan-llm"
-description = "LLM providers and protocol adapters for Alan"
+description = "LLM providers and protocol adapters for alan"
 version.workspace = true
 edition.workspace = true
 

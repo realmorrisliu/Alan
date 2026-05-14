@@ -1,6 +1,6 @@
 ## Context
 
-Alan already has connection profiles, model catalog metadata, and runtime-owned
+alan already has connection profiles, model catalog metadata, and runtime-owned
 reasoning-effort resolution for a selected model. That lets an operator choose a
 provider-backed model and effort, but it does not let the agent behave like a two-speed system:
 normally quick and inexpensive, while able to recognize when a task deserves
@@ -8,7 +8,7 @@ deeper reasoning.
 
 The desired model is inspired by System 1/System 2 from "Thinking, Fast and
 Slow": System 1 is fast, automatic, and pattern-driven; System 2 is slower,
-more deliberate, and used for complex reasoning or high-cost errors. Alan should
+more deliberate, and used for complex reasoning or high-cost errors. alan should
 borrow the useful structure without reproducing the human failure mode where the
 fast system is overconfident and the slow system fails to engage.
 
@@ -40,7 +40,7 @@ fast system is overconfident and the slow system fails to engage.
 Configuration should have two conceptual layers:
 
 1. provider/credential availability, which describes authenticated AI providers
-   and the models Alan can use through them,
+   and the models alan can use through them,
 2. cognitive model binding, which selects which available model acts as System 1
    and which acts as System 2.
 
@@ -129,7 +129,7 @@ the active governance or tool policy would have required it anyway.
 Alternatives considered:
 
 - Ask System 1 to emit a JSON preamble. This is easier to parse but less aligned
-  with Alan's action-oriented machine model.
+  with alan's action-oriented machine model.
 - Let System 1 answer and append a note that deeper reasoning is needed. This
   leaks low-confidence output and weakens the user experience.
 - Treat runtime acceptance as human approval. This would preserve safety but
@@ -163,7 +163,7 @@ Alternatives considered:
 
 ### Decision: Treat provider-native continuation as an optimization partitioned by model binding
 
-Alan's tape-level continuation remains compatible across System 1 and System 2
+alan's tape-level continuation remains compatible across System 1 and System 2
 because runtime can project the accepted tape into whichever model binding is
 selected. Provider-native continuation state, such as a Responses
 `previous_response_id`, is not assumed to be portable across different cognitive

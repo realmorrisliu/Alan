@@ -307,7 +307,7 @@ impl ChatgptAuthManager {
                     StatusCode::OK,
                     &render_html(
                         "ChatGPT Login Complete",
-                        "Alan captured your ChatGPT session. You can close this window.",
+                        "alan captured your ChatGPT session. You can close this window.",
                     ),
                 )
                 .await

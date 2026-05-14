@@ -1,8 +1,8 @@
 ## Why
 
-Alan already has pure-text memory, turn-end memory promotion, recall bundles,
+alan already has pure-text memory, turn-end memory promotion, recall bundles,
 and pre-compaction memory flushes, but the behavior is still too conservative
-and too hard to audit as a first-class product surface. Alan should feel more
+and too hard to audit as a first-class product surface. alan should feel more
 intelligent by proactively remembering durable user and workspace facts while
 keeping every write inspectable and reversible.
 

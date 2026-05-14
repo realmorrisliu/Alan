@@ -374,7 +374,7 @@ async fn smoke_cross_workspace_reading_surfaces_workspace_delegation_path() {
         .submission_tx
         .send(Submission::new(Op::Turn {
             parts: vec![ContentPart::text(
-                "去另一个本地 workspace 看 Alan 的 steward 设计文档，告诉我 full steward mode 是什么意思。",
+                "去另一个本地 workspace 看 alan 的 steward 设计文档，告诉我 full steward mode 是什么意思。",
             )],
             context: None,
         }))

@@ -2,7 +2,7 @@
 
 > Status: authoritative current implementation contract
 >
-> Scope: current Alan runtime / daemon / built-in tools. This document describes
+> Scope: current alan runtime / daemon / built-in tools. This document describes
 > what the repository guarantees today. VNext target docs may describe broader
 > HITE governance semantics and optional stronger containment, but they must not
 > be read as statements about current behavior unless they explicitly say so.
@@ -10,7 +10,7 @@
 ## Purpose
 
 This document pins the current governance semantics so design, docs, and code
-can stay aligned while Alan evolves toward fuller HITE governance.
+can stay aligned while alan evolves toward fuller HITE governance.
 
 ## Current Decisions
 
@@ -31,7 +31,7 @@ Named agents extend that chain with:
 - `~/.alan/agents/<name>/policy.yaml -> {workspace}/.alan/agents/<name>/policy.yaml`
 
 When a policy file is found, its `rules` and `default_action` replace the
-builtin profile rule set for that session. Alan does not implicitly merge a
+builtin profile rule set for that session. alan does not implicitly merge a
 policy file with builtin profile rules.
 
 Rationale:
@@ -58,7 +58,7 @@ Rationale:
 
 ### 3. No Session-Scoped Approval Cache
 
-Alan does not keep a session-wide approval cache for governance escalations.
+alan does not keep a session-wide approval cache for governance escalations.
 Each `escalate` outcome yields an explicit confirmation request and each approval
 applies only to the pending checkpoint being resumed.
 
@@ -96,7 +96,7 @@ execution backend honestly without implying strict containment.
 
 ### 5. Current Policy Matchers Include Path Prefix Rules
 
-Alan's current `policy.yaml` matcher surface includes:
+alan's current `policy.yaml` matcher surface includes:
 
 1. `tool`
 2. `capability`
@@ -105,12 +105,12 @@ Alan's current `policy.yaml` matcher surface includes:
 
 `match_path_prefix` currently applies to common file-oriented arguments such as
 `path`, `paths`, `directory`, `cwd`, and `workspace_root`.
-Before matching, Alan lexically normalizes `.` / `..` segments and lets
+Before matching, alan lexically normalizes `.` / `..` segments and lets
 relative policy prefixes still match absolute tool paths on component
 boundaries.
 When the runtime has a current tool `cwd`, relative path arguments are also
 evaluated against that base so parent-traversal paths do not bypass policy.
-Alan also case-folds path-prefix comparisons conservatively so case variants do
+alan also case-folds path-prefix comparisons conservatively so case variants do
 not bypass policy on case-insensitive hosts.
 
 This is useful for coding-governance boundaries on sensitive paths such as

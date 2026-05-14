@@ -1,6 +1,6 @@
 ## Why
 
-Alan can already delegate work, persist rollouts, gate tools, and refresh memory
+alan can already delegate work, persist rollouts, gate tools, and refresh memory
 surfaces, but those pieces do not yet form a closed product contract for a
 long-running agent. Recent session analysis showed that capability mismatch,
 unreadable child artifacts, truncated evidence, invisible delegated progress,
@@ -9,7 +9,7 @@ opaque or unreliable.
 
 ## What Changes
 
-- Add capability-aware delegation so Alan matches task requirements against
+- Add capability-aware delegation so alan matches task requirements against
   available tools, skills, child targets, and escalation paths before launching
   delegated work.
 - Add an auditable evidence pipeline so tool outputs, delegated outputs, and

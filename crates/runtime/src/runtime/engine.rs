@@ -703,7 +703,7 @@ pub struct WorkspaceRuntimeConfig {
     pub launch_root_dir: Option<std::path::PathBuf>,
     /// Optional default cwd override for the runtime tool context.
     pub default_cwd_override: Option<std::path::PathBuf>,
-    /// Optional Alan home-path override for agent-root resolution in advanced hosts/tests.
+    /// Optional alan home-path override for agent-root resolution in advanced hosts/tests.
     pub agent_home_paths: Option<crate::AlanHomePaths>,
     /// Optional host-selected ChatGPT auth storage path shared with provider auth flows.
     pub chatgpt_auth_storage_path: Option<std::path::PathBuf>,

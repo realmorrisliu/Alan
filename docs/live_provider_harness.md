@@ -4,7 +4,7 @@
 
 ## Purpose
 
-This harness validates Alan's real upstream protocol paths against live providers
+This harness validates alan's real upstream protocol paths against live providers
 without making those tests part of the default CI-safe suite.
 
 It is intentionally narrow:
@@ -13,7 +13,7 @@ It is intentionally narrow:
 2. streaming generation completion,
 3. server-managed continuation where the provider declares support.
 
-The shared harness request intentionally mirrors Alan's normal runtime baseline
+The shared harness request intentionally mirrors alan's normal runtime baseline
 by setting a small `max_tokens` cap and the default `temperature` value.
 
 Code-level adapter tests still own detailed payload-shape assertions. The live
@@ -78,7 +78,7 @@ Notes:
 
 1. the auth storage path must end with `auth.json`;
 2. this path should point at a real managed-login credential store created by
-   Alan's ChatGPT auth flow.
+   alan's ChatGPT auth flow.
 
 ### OpenAI Chat Completions
 
@@ -132,7 +132,7 @@ Current live-verified note:
 
 1. On April 13, 2026, the managed `chatgpt` surface was observed to require
    `stream=true`, require `store=false`, reject `temperature`, reject
-   `max_output_tokens`, and reject `previous_response_id`, so Alan no longer
+   `max_output_tokens`, and reject `previous_response_id`, so alan no longer
    runs continuation assertions for `chatgpt`.
 
 ## Recommended Usage

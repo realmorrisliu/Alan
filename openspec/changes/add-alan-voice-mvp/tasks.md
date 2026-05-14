@@ -1,23 +1,23 @@
 ## 1. Product Boundary And Legacy Cleanup
 
-- [ ] 1.1 Confirm Alan Voice / Hold to Talk naming in user-facing strings,
+- [ ] 1.1 Confirm alan Voice / Hold to Talk naming in user-facing strings,
   settings, menu items, and docs.
 - [ ] 1.2 Remove or disable the legacy `ShellVoiceCommandController`
   fixed-command voice path in `MacShellRootView.swift`.
 - [ ] 1.3 Remove user-facing affordances that expose the old fixed command
   vocabulary as a parallel voice feature.
 - [ ] 1.4 Document which legacy shell command phrases are expected to route
-  through Alan Voice app-command intents.
+  through alan Voice app-command intents.
 
 ## 2. Voice State And Settings Model
 
-- [ ] 2.1 Add an Alan Voice state model covering idle, recording, processing,
+- [ ] 2.1 Add an alan Voice state model covering idle, recording, processing,
   review, success, cancelled, unavailable, and error states.
 - [ ] 2.2 Add a typed `VoiceIntent` model with transcript, normalized text,
   intent type, target context, confidence, safety level, and proposed action.
 - [ ] 2.3 Add settings for Hold to Talk shortcut, default recognition mode,
   language/locale, Cloud Mode provider, credential status, and mode visibility.
-- [ ] 2.4 Store voice provider credentials in Keychain or Alan's host secret
+- [ ] 2.4 Store voice provider credentials in Keychain or alan's host secret
   store rather than workspace files.
 
 ## 3. Hold To Talk Capture Lifecycle
@@ -48,10 +48,10 @@
 
 - [ ] 5.1 Implement first-pass intent resolution for capture, agent command,
   task creation, search, and app command intents.
-- [ ] 5.2 Include active Alan context, terminal pane/session state, and current
+- [ ] 5.2 Include active alan context, terminal pane/session state, and current
   surface metadata in intent resolution.
 - [ ] 5.3 Route capture intents to the current context or a safe capture fallback.
-- [ ] 5.4 Route agent command intents through the normal Alan runtime/session
+- [ ] 5.4 Route agent command intents through the normal alan runtime/session
   submission path.
 - [ ] 5.5 Route task intents to the current task surface or a compatible fallback
   capture surface.
@@ -62,20 +62,20 @@
 
 ## 6. Voice Capture UI And Permissions
 
-- [ ] 6.1 Add a compact Alan Voice capture layer for recording, processing,
+- [ ] 6.1 Add a compact alan Voice capture layer for recording, processing,
   review, success, cancellation, unavailable, and error states.
-- [ ] 6.2 Keep the active terminal or Alan content visible while the capture
+- [ ] 6.2 Keep the active terminal or alan content visible while the capture
   layer is shown.
 - [ ] 6.3 Make the primary recording and cancellation flow fully keyboard
   accessible.
 - [ ] 6.4 Add microphone, speech recognition, shortcut, and accessibility
   permission prompts with purpose-specific repair instructions.
-- [ ] 6.5 Show current recognition mode and cloud provider state in Alan Voice
+- [ ] 6.5 Show current recognition mode and cloud provider state in alan Voice
   settings and capture feedback when relevant.
 
 ## 7. Verification
 
-- [ ] 7.1 Add tests for Alan Voice state transitions: idle, recording,
+- [ ] 7.1 Add tests for alan Voice state transitions: idle, recording,
   processing, cancel, success, unavailable, and error.
 - [ ] 7.2 Add tests for Local Mode no-upload behavior and unavailable fallback.
 - [ ] 7.3 Add tests for Cloud Mode provider selection, missing credentials, and
@@ -88,7 +88,7 @@
 
 ## 8. Documentation And OpenSpec Closure
 
-- [ ] 8.1 Update product and maintainer docs to describe Alan Voice as
+- [ ] 8.1 Update product and maintainer docs to describe alan Voice as
   push-to-talk speech-to-intent, not dictation or always listening.
 - [ ] 8.2 Document Local Mode and Cloud Mode privacy/provider behavior.
 - [ ] 8.3 Run `openspec validate add-alan-voice-mvp --type change --strict --json`.

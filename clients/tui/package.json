@@ -1,7 +1,7 @@
 {
   "name": "alan-tui",
   "version": "0.1.0",
-  "description": "Terminal UI for Alan Agent Runtime",
+  "description": "Terminal UI for alan Agent Runtime",
   "type": "module",
   "main": "src/index.tsx",
   "scripts": {

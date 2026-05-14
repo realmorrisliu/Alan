@@ -1161,7 +1161,7 @@ mod tests {
             &source_repo,
             [
                 "-c",
-                "user.name=Alan Test",
+                "user.name=alan Test",
                 "-c",
                 "user.email=alan@example.com",
                 "commit",

@@ -50,5 +50,5 @@ if resolved_tool="$(find_path_tool)"; then
     exec "$resolved_tool" "$@"
 fi
 
-echo "error: could not find repo-local $tool_name build, Alan source checkout, alan skills $tool_name, or $tool_name on PATH" >&2
+echo "error: could not find repo-local $tool_name build, alan source checkout, alan skills $tool_name, or $tool_name on PATH" >&2
 exit 127

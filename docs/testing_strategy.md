@@ -2,7 +2,7 @@
 
 ## Goals
 
-Alan's event stream is a cross-client contract. The testing strategy aims to ensure:
+alan's event stream is a cross-client contract. The testing strategy aims to ensure:
 
 1. Events emitted by the server are always consumable and renderable by clients.
 2. Protocol evolution has explicit compatibility boundaries instead of implicit assumptions.

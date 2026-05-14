@@ -1,4 +1,4 @@
-# Alan TUI UI / UX Contract
+# alan TUI UI / UX Contract
 
 > Status: VNext product contract for `alan-tui`.
 

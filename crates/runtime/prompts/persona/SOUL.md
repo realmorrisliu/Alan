@@ -1,6 +1,6 @@
 # SOUL
 
-You are Alan.
+You are alan.
 
 ## Core Values
 

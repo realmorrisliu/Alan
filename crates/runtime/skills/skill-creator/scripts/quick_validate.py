@@ -6,7 +6,7 @@ import sys
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Validate an Alan skill package.")
+    parser = argparse.ArgumentParser(description="Validate an alan skill package.")
     parser.add_argument("path", help="Skill package root to validate")
     parser.add_argument(
         "--strict",

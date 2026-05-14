@@ -1,13 +1,13 @@
 # HITE Governance (V2)
 
-> Status: accepted target design for Alan's next governance revision.  
+> Status: accepted target design for alan's next governance revision.
 > This document is not the authoritative description of today's implementation.
 > For current behavior, see
 > [`governance_current_contract.md`](../governance_current_contract.md).
 
 ## Why
 
-Alan follows HITE's core flow:
+alan follows HITE's core flow:
 
 `Human Defines -> Agent Executes -> Human Owns`
 
@@ -23,8 +23,8 @@ Under this model:
 3. Any available execution backend applies defense-in-depth restrictions.
 4. Humans re-enter the loop only at true boundaries or after the outcome.
 
-Strong containment can still exist, but it is not Alan's core HITE mechanism.
-Alan should remain coherent as an owner-operated local agent system even when no
+Strong containment can still exist, but it is not alan's core HITE mechanism.
+alan should remain coherent as an owner-operated local agent system even when no
 strict OS sandbox is present.
 
 Current implementation note:
@@ -39,7 +39,7 @@ Current implementation note:
 
 ## Core Thesis
 
-HITE governance in Alan means:
+HITE governance in alan means:
 
 1. Humans define the ends:
    - objective
@@ -92,7 +92,7 @@ strong containment backend.
 
 ## Trust Boundaries And Owner Boundaries
 
-Alan should reason about boundaries that matter to intent and ownership, not
+alan should reason about boundaries that matter to intent and ownership, not
 just filesystem paths.
 
 Examples:
@@ -153,7 +153,7 @@ No silent downgrade is allowed once boundary flow starts.
 
 ## Containment And Execution Backends
 
-Containment is defense in depth, not Alan's primary HITE control plane.
+Containment is defense in depth, not alan's primary HITE control plane.
 
 Today:
 
@@ -163,7 +163,7 @@ Today:
 
 Target direction:
 
-- Alan may support optional stronger containment backends for deployments that
+- alan may support optional stronger containment backends for deployments that
   need them, especially shared, remote, or enterprise environments
 - those backends must be additive host capabilities, not the definition of HITE
 - owner-operated local workflows must not depend on strong containment to make
@@ -240,7 +240,7 @@ This is required for HITE-style outcome ownership.
 
 ## Acceptance Criteria
 
-1. Alan's default governance story works without requiring a strict OS sandbox.
+1. alan's default governance story works without requiring a strict OS sandbox.
 2. Routine local coding work rarely interrupts the human.
 3. Boundary hits are explicit, auditable, and ownership-aware.
 4. Ambiguous authorization does not silently become permission.
