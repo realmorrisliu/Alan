@@ -6,26 +6,6 @@ organization, terminal-first layout, native light-mode material treatment,
 restrained toolbar behavior, pane-scoped terminal controls, and progressive
 disclosure that keeps debug surfaces out of the default shell.
 ## Requirements
-### Requirement: Sidebar matches space rail plus tab list
-The default macOS sidebar SHALL present spaces as a compact vertical rail and
-tabs for the active space as the primary sidebar list.
-
-#### Scenario: Default sidebar reading order
-- **WHEN** a user opens the macOS app
-- **THEN** the sidebar reads as a space switcher plus active-space tab list, not as unrelated dashboard sections
-
-#### Scenario: Space selection
-- **WHEN** a user selects a space in the rail
-- **THEN** the tab list updates to show only tabs belonging to that active space
-
-#### Scenario: Separate creation affordances
-- **WHEN** a user creates a new space or a new tab
-- **THEN** space creation is presented as a compact rail affordance and tab creation is presented in the active-space tab list or toolbar context
-
-#### Scenario: Lightweight tab rows
-- **WHEN** the active-space tab list contains terminal and Alan tabs
-- **THEN** each tab appears as a skimmable row with a compact marker, title, secondary context, and low-emphasis status rather than as a card or dashboard tile
-
 ### Requirement: Visual system follows native material guidance
 The default macOS shell SHALL use a light-mode-first native material visual
 system that feels calm, precise, and terminal-oriented. It SHALL avoid
@@ -34,13 +14,13 @@ theme panels, and ornamental controls.
 
 #### Scenario: Material sidebar
 - **WHEN** the app window is visible in the default light appearance
-- **THEN** the space rail and tab list use material-backed surfaces, subtle separators, and restrained selection states rather than an opaque themed sidebar panel
+- **THEN** the unified sidebar column, active-space tab list, bottom space switcher, and compact sidebar controls use material-backed surfaces, subtle separators where useful, and restrained selection states rather than an opaque themed sidebar panel or separate space rail
 
 #### Scenario: Stable compact controls
 - **WHEN** the user hovers, selects, inserts, closes, or switches tabs and spaces
 - **THEN** rows, icon controls, counters, and status marks keep stable dimensions and do not resize the sidebar or terminal content
-- **AND** the bottom space dock aligns its visible controls to the sidebar edge inset so the leading and bottom margins match optically
-- **AND** the bottom space dock add button directly creates a standard new space instead of opening a menu of space variants
+- **AND** the bottom space switcher aligns its visible controls to the sidebar edge inset so the leading and bottom margins match optically
+- **AND** the bottom space switcher add button directly creates a standard new space instead of opening a menu of space variants
 
 ### Requirement: Collapsed sidebar uses a lightweight floating panel
 When the sidebar is collapsed, the macOS shell SHALL reveal navigation through a
@@ -103,9 +83,10 @@ terms outside explicit debug surfaces.
 - **WHEN** a user creates, selects, splits, or closes tabs and panes
 - **THEN** visible copy uses product terms such as Space, Tab, Split, Go to or Command, Open in Alan, and Ask Alan
 
-#### Scenario: Command search results
-- **WHEN** the command UI shows tabs, panes, actions, routing candidates, or attention items
-- **THEN** result titles and summaries use user-facing names where available and do not expose raw pane IDs as the primary label unless the user is in a debug context
+#### Scenario: Command input routing states
+- **WHEN** the command input opens, submits a supported typed command, or reports an unresolved typed command
+- **THEN** the input and inline status use user-facing names where available and do not expose raw pane IDs, routing internals, or debug identifiers as the primary label
+- **AND** Alan does not open default tabs, panes, actions, routing-candidate, attention, best-match, or command-row sections below the field
 
 #### Scenario: Debug surfaces
 - **WHEN** implementation details are needed
@@ -163,7 +144,7 @@ the UI conformance tasks are marked complete.
 
 #### Scenario: Default screenshot review
 - **WHEN** a UI conformance implementation pass is ready for review
-- **THEN** maintainers can inspect a running-app screenshot of the default light-mode window showing the space rail, active-space tab list, terminal-first content area, and no inspector surface
+- **THEN** maintainers can inspect a running-app screenshot of the default light-mode window showing the narrow command entry, active-space tab list, bottom space switcher, terminal-first content area, and no inspector surface
 
 #### Scenario: Removed-inspector review
 - **WHEN** inspector-removal UI tasks are marked complete
@@ -370,26 +351,33 @@ turning the UI into a flat grid or weakening control affordances.
 - **WHEN** sidebar spaces, tabs, command entry, and creation controls are visible
 - **THEN** smaller radii preserve row scanning, hover states, selected states, and stable dimensions
 
-#### Scenario: Command UI remains readable
-- **WHEN** the command palette is open
-- **THEN** the outer overlay, search field, and result rows use distinct but restrained radii so hierarchy is visible without large bubble-like cards
+#### Scenario: Command input remains readable
+- **WHEN** the command input is open
+- **THEN** the floating input surface, text field, close control, and inline unresolved state use distinct but restrained radii so hierarchy is visible without turning the command input into a large palette or decorative card
 
 #### Scenario: Overlays remain secondary
-- **WHEN** the command palette or another remaining default-shell overlay is visible
+- **WHEN** the command input, Find bar, or another remaining default-shell overlay is visible
 - **THEN** that surface uses restrained radii and does not read as a large decorative card competing with the terminal
 
 ### Requirement: Command UI owns navigation and shell actions
-The default command entry SHALL present tabs, panes, spaces, routing candidates,
-attention items, and common shell workspace actions through `Go to or Command...`
-using user-facing labels and compact rows.
+The default command entry SHALL provide a typed `Go to or Command...` input for
+supported shell workspace actions and routing targets. It SHALL execute
+resolved typed submissions through the shared shell controller mutation path
+where the action is shared, and it SHALL avoid default visible candidate rows or
+multi-section command chrome.
 
-#### Scenario: Command results include panes
-- **WHEN** command search lists pane targets
-- **THEN** results use tab title, pane title, cwd, process context, or routing context as the primary label rather than raw pane IDs
+#### Scenario: Command input opens
+- **WHEN** the user invokes `Command-P` or activates `Go to or Command...`
+- **THEN** Alan focuses a single floating command input field instead of presenting default tabs, panes, actions, routing-candidate, attention, or best-match lists
 
-#### Scenario: Command result invokes split action
-- **WHEN** the user selects a split, focus, equalize, close, or pane lift action from command UI
+#### Scenario: Command input executes supported action
+- **WHEN** the user submits typed text that Alan can resolve to a supported workspace action or routing target
 - **THEN** Alan runs the same shell controller mutation used by menu and keyboard paths where that action is shared
+- **AND** the command input dismisses and restores focus to the previously focused terminal pane when available
+
+#### Scenario: Command input reports unresolved text
+- **WHEN** the user submits typed text that Alan cannot resolve
+- **THEN** Alan leaves the command input open and communicates the unresolved state inline without opening candidate rows or exposing raw debug identifiers
 
 ### Requirement: Toolbar stays restrained during split interactions
 Advanced split, focus, resize, equalize, close, and pane lift affordances SHALL
@@ -402,3 +390,220 @@ not turn the toolbar into a dense control strip.
 #### Scenario: Pane lift available
 - **WHEN** pane lift is available through command UI or another explicit non-terminal affordance
 - **THEN** the default toolbar does not add a persistent pane-management strip
+
+### Requirement: Sidebar matches single-column space/tab navigation
+The default macOS sidebar SHALL remain a single vertical navigation column that
+aligns cleanly around the macOS traffic-light area, with a restrained initial
+width around 264 pt. Spaces SHALL be switched through a compact bottom
+borderless icon switcher and horizontal sidebar swipe gestures, while tabs for
+the active space remain the primary sidebar list.
+The sidebar surface SHALL read as a unified tinted macOS material stack, with
+visual effect material, cool translucent wash, control alpha, and row shadows
+working together rather than as an opaque white panel with independent cards.
+Horizontal sidebar swipe SHALL feel like direct manipulation: content tracks the
+gesture inside the sidebar, previews the adjacent space there, and commits or
+cancels on release rather than acting as a threshold-only trigger. The workspace
+surface SHALL remain visually stable during the sidebar swipe and update only
+after the switch commits. The sidebar SHALL be self-explaining through spatial
+structure, iconography, selection treatment, hover/focus affordances, and
+accessibility labels rather than persistent instructional copy.
+
+#### Scenario: Default sidebar reading order
+- **WHEN** a user opens the macOS app
+- **THEN** the sidebar reads as a narrow command entry, active-space tab list, and bottom space switcher in one vertical column rather than as unrelated dashboard sections or a two-column sidebar
+- **AND** the sidebar surface has a cool material tint that remains coherent across empty space, controls, rows, and the bottom switcher
+
+#### Scenario: Space selection
+- **WHEN** a user selects a space in the bottom switcher
+- **THEN** the tab list updates to show only tabs belonging to that active space
+
+#### Scenario: Sidebar swipe switches spaces
+- **WHEN** a user performs a clear horizontal swipe gesture inside the sidebar
+- **THEN** Alan previews the previous or next space with gesture-tracked motion across the sidebar header and tab list
+- **AND** the preview is rendered from horizontal finger translation across the full sidebar page width rather than from threshold-derived progress
+- **AND** the active-space title pager uses the same full-width movement as the tab list rather than a narrowed header row
+- **AND** the moving pages do not expose static left or right padding gaps
+- **AND** the workspace terminal surface remains on the current space during the drag
+- **AND** Alan commits to the previewed space only after the user releases past a distance or velocity threshold
+- **AND** a fast horizontal flick can commit from release velocity even when the visible drag distance is short
+- **AND** the workspace terminal surface updates through the committed shell selection after the transition settles
+- **AND** Alan cancels back to the original space when the release does not meet the commit threshold
+- **AND** once horizontal intent is locked, vertical movement is not applied to the tab list even if the fingers move upward or downward before release
+- **AND** once vertical intent is locked, vertical tab-list scrolling remains native and is not consumed by the horizontal space pager
+
+#### Scenario: Space swipe reaches an edge
+- **WHEN** a user swipes beyond the first or last space
+- **THEN** the sidebar uses a resisted edge motion instead of wrapping or abruptly changing selection
+
+#### Scenario: Reduced motion space swipe
+- **WHEN** reduced motion is enabled
+- **THEN** Alan may reduce the transition to a shorter fade or lower-distance movement while preserving release-based commit and cancel semantics
+
+#### Scenario: Separate creation affordances
+- **WHEN** a user creates a new space or a new tab
+- **THEN** space creation is presented as a compact bottom-switcher affordance and tab creation is presented in the active-space tab list or toolbar context
+
+#### Scenario: Space switcher is borderless
+- **WHEN** the bottom space switcher is visible
+- **THEN** space buttons use slim borderless icon styling with selection and hover conveyed without persistent framed cards, section chrome, or notification dots
+
+#### Scenario: Lightweight tab rows
+- **WHEN** the active-space tab list contains terminal and Alan tabs
+- **THEN** each tab appears as a skimmable row with a compact marker, title, secondary context, and low-emphasis status rather than as a card or dashboard tile
+
+#### Scenario: Tab row state hierarchy
+- **WHEN** tab rows are displayed in normal, hover, keyboard-focus, and selected states
+- **THEN** normal rows sit directly on the sidebar material without a persistent container
+- **AND** hover and keyboard-focus rows use only a subtle translucent backing without shadow or scale changes
+- **AND** keyboard focus does not introduce the system blue focus ring over the tab row selection surface
+- **AND** the selected row uses the strongest rounded selection surface with a light shadow while preserving stable text and accessory alignment
+- **AND** selected row surfaces are inset into the sidebar gutter rather than flush to the window edge
+- **AND** trailing close affordances appear for selected, hover, or focus states without resizing the row or shifting neighboring rows
+- **AND** compact creation rows remain muted by default and gain a subtle backing only on hover or focus
+
+#### Scenario: Space title scroll boundary
+- **WHEN** the active-space tab list is at its resting top position
+- **THEN** the active-space title appears as a quiet grayscale label without a persistent pill or control background
+- **AND** the area between the space title label and the first tab row keeps a compact quiet material gap without a persistent divider
+- **WHEN** the user scrolls the active-space tab list upward so tab rows move underneath the fixed space title region
+- **THEN** Alan gradually reveals a subtle divider and downward shadow at the title/list boundary
+- **AND** tab rows clip underneath that boundary instead of drawing over the space title
+
+#### Scenario: Visible copy is minimized
+- **WHEN** the default sidebar has at least one space and one tab
+- **THEN** the sidebar does not rely on persistent explanatory paragraphs, product slogans, keyboard-shortcut labels, redundant `Tabs` and `Spaces` headings, or always-visible creation icons in the space-title row to explain normal operation
+
+#### Scenario: Accessibility remains explicit
+- **WHEN** visible explanatory copy is removed from the sidebar
+- **THEN** controls, space switcher items, tab rows, creation buttons, and reduced state cues retain accessibility labels, help text, or menu labels that expose their purpose to assistive technologies
+
+### Requirement: Sidebar actions are progressively disclosed
+The default macOS sidebar SHALL keep repeated tab and space rows visually quiet
+by showing secondary actions through hover, keyboard focus, context menu, or
+compact owner-zone controls rather than always-visible explanatory buttons.
+
+#### Scenario: Tab row default state
+- **WHEN** a tab row is visible and not hovered or keyboard focused
+- **THEN** the row prioritizes icon, title, compact context, selection, and Alan attachment without persistent close/more text buttons or notification dots
+
+#### Scenario: Tab row interaction state
+- **WHEN** a tab row is hovered, keyboard focused, or context-clicked
+- **THEN** close, more, move, or related secondary actions become available without resizing the row or shifting neighboring content
+
+#### Scenario: Empty sidebar state
+- **WHEN** the sidebar has no user-created spaces or no tabs in the active space
+- **THEN** the owning zone exposes a compact creation affordance without showing paragraph-style onboarding copy in the default shell
+
+### Requirement: Split tabs expose compact topology
+The default macOS sidebar SHALL show a compact split topology indicator on tab
+rows whose active tab contains multiple terminal panes. The indicator SHALL
+communicate pane count, dominant split direction when useful, and the currently
+focused pane without attempting to render exact split ratios in the tab row.
+
+#### Scenario: Single-pane tab row
+- **WHEN** a tab contains one terminal pane
+- **THEN** the tab row does not show a split topology indicator
+
+#### Scenario: Two-pane tab row
+- **WHEN** a tab contains two visible terminal panes
+- **THEN** the tab row shows a compact two-segment indicator that reflects the root split direction and marks the focused pane
+
+#### Scenario: Complex split tab row
+- **WHEN** a tab contains three or more visible terminal panes or nested split branches
+- **THEN** the tab row summarizes the split with a compact topology mark or pane count instead of a proportional miniature layout
+
+#### Scenario: Split tab avoids notification dots
+- **WHEN** a non-focused pane inside a split tab needs attention
+- **THEN** the split indicator and tab row do not add notification dots, expose raw pane IDs, or add a separate sidebar attention block
+
+### Requirement: Command input opens as a Liquid Glass input
+The macOS shell SHALL present `Command-P` as a single floating Liquid
+Glass-style input layer that captures text entry without rendering default
+candidate sections below the input.
+
+#### Scenario: Command input opens
+- **WHEN** the user presses `Command-P` or activates the sidebar command entry
+- **THEN** Alan opens a floating material-backed input field, focuses the text field, and does not show action, routing, attention, or best-match lists below it
+
+#### Scenario: Command input toggles from shortcut
+- **WHEN** the command input is already open and the user presses `Command-P`
+- **THEN** Alan dismisses the input and returns keyboard focus to the previously focused terminal pane when available
+
+#### Scenario: Command input is visually restrained
+- **WHEN** the command input is visible
+- **THEN** the surface uses a restrained native material treatment, stable geometry, and compact controls rather than a large card, dashboard panel, or multi-section palette
+- **AND** it appears and disappears with an opacity-only fade instead of moving down from the top edge
+
+#### Scenario: Command input dismisses
+- **WHEN** the user presses Escape, clicks outside the input, activates a close affordance, or successfully submits a resolved command
+- **THEN** Alan dismisses the input and returns keyboard focus to the previously focused terminal pane when available
+
+#### Scenario: No default voice affordance
+- **WHEN** the command input is visible
+- **THEN** the input does not show a microphone or voice-listening affordance unless a future voice-specific requirement explicitly adds one
+
+#### Scenario: Unresolved command stays input-only
+- **WHEN** the user submits text that cannot be resolved to a supported command or destination
+- **THEN** Alan keeps the command surface input-only and communicates the unresolved state without opening candidate rows below the field
+
+### Requirement: Material hierarchy separates navigation from content
+The default macOS shell SHALL use material roles that distinguish the functional
+navigation/control layer from the content layer. Liquid Glass-style treatment
+SHALL be reserved for navigation, command entry, compact controls, and transient
+interactive affordances, while workspace and terminal content surfaces SHALL use
+standard materials, tonal surfaces, or stable opaque fills that preserve
+readability.
+
+#### Scenario: Sidebar uses functional material
+- **WHEN** the default shell renders the sidebar command entry, active-space tab list, bottom space switcher, and compact sidebar controls
+- **THEN** those navigation surfaces use a consistent functional material treatment with legible foreground content and restrained selection states
+
+#### Scenario: Terminal content avoids decorative glass
+- **WHEN** the active terminal pane or terminal surround is visible
+- **THEN** Alan does not apply Liquid Glass-style decorative transparency to the terminal content layer and keeps terminal text contrast stable
+
+#### Scenario: Workspace backdrop is semantic
+- **WHEN** the shell renders the main workspace background outside terminal panes
+- **THEN** the background uses a semantic material or tonal role chosen for hierarchy rather than hard-coded theme color dominance
+
+### Requirement: Active shell controls use semantic material roles
+Buttons, key hints, close controls, hover affordances, and command-entry controls SHALL use
+shared semantic material/control roles in the active macOS shell and MUST avoid one-off white,
+opaque, or ad hoc translucent fills in default shell chrome.
+
+#### Scenario: Compact icon button
+- **WHEN** a compact icon button appears in the sidebar, title bar, terminal chrome, or command entry
+- **THEN** its background, hover, pressed, disabled, and selected appearances come from shared shell control roles and keep stable dimensions
+
+#### Scenario: Foreground on material
+- **WHEN** text or symbols render on top of a material-backed shell control
+- **THEN** Alan uses system-vibrant foreground styles or approved shell tokens that remain legible across light appearance, reduced transparency, and increased contrast
+
+#### Scenario: AppKit bridge remains isolated
+- **WHEN** a SwiftUI shell view needs an AppKit-backed visual effect material
+- **THEN** the view uses a reusable support-layer wrapper rather than creating `NSVisualEffectView` bridge details inline
+
+### Requirement: Active shell surfaces use semantic elevation
+The active macOS shell SHALL pair its material roles with a small semantic
+radius and shadow scale. Surface elevation MUST communicate hierarchy and
+interaction state rather than decorate every translucent control.
+
+#### Scenario: Primary terminal surface anchors elevation
+- **WHEN** the active terminal surface is visible
+- **THEN** it uses the primary content-surface treatment with continuous 12pt corners, a focused adaptive contact shadow, and restrained rim/highlight treatment
+
+#### Scenario: Static controls stay quiet
+- **WHEN** sidebar command launchers, titlebar ghost buttons, or compact static controls are idle
+- **THEN** they avoid default shadows and use material tint, stroke, hover, or highlight to show affordance
+
+#### Scenario: Selected navigation uses light elevation
+- **WHEN** a sidebar row or space switcher item is selected or previewed
+- **THEN** it may use a very light adaptive contact shadow that is smaller than floating overlay shadows and does not produce dirty dark halos in light mode
+
+#### Scenario: Floating surfaces carry stronger elevation
+- **WHEN** the command input, pane Find bar, or collapsed sidebar panel floats above the shell
+- **THEN** it uses semantic floating-surface shadows that are visible, focused, and adaptive while keeping the terminal content visually dominant
+
+#### Scenario: Radius scale remains role-based
+- **WHEN** active shell visual chrome is updated
+- **THEN** micro indicators, compact controls, rows, floating inputs, primary surfaces, collapsed panels, and semantic pill inputs use the shared shell radius roles instead of local one-off values

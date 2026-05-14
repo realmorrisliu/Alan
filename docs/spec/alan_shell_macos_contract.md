@@ -31,8 +31,9 @@ humans and agents.
 ## Companion UI / UX Contract
 
 The detailed user-facing layout, sidebar model, toolbar behavior, terminology,
-and visual hierarchy for the macOS app are defined in
-`docs/spec/alan_macos_shell_ui_ux.md`.
+and visual hierarchy for the macOS app are defined in OpenSpec long-lived
+capabilities, especially `openspec/specs/macos-shell-ui-ux-conformance/spec.md`
+and `openspec/specs/macos-shell-workspace-interactions/spec.md`.
 
 This document remains authoritative for:
 
@@ -42,9 +43,12 @@ This document remains authoritative for:
 
 The companion UI / UX contract is authoritative for:
 
-1. what a user sees and names as a space, tab, pane, or inspector,
-2. how the sidebar, toolbar, content area, and inspector are organized,
+1. what a user sees and names as a space, tab, pane, or explicit debug surface,
+2. how the sidebar, toolbar, content area, and default debug surfaces are organized,
 3. how attention and Alan-specific status appear in the native app.
+
+`docs/spec/alan_macos_shell_ui_ux.md` is kept only as a superseded bridge for
+older links and must not override the OpenSpec contract.
 
 The macOS product therefore has two first-class operators:
 

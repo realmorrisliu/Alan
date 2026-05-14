@@ -45,6 +45,8 @@ jobs:
 
       - name: Cache Cargo dependencies
         uses: Swatinem/rust-cache@v2
+        with:
+          cache-bin: false
 
       - name: Run clippy
         run: cargo clippy --workspace --all-targets --all-features -- -D warnings
@@ -66,6 +68,8 @@ jobs:
 
       - name: Cache Cargo dependencies
         uses: Swatinem/rust-cache@v2
+        with:
+          cache-bin: false
 
       - name: Build
         run: cargo build --workspace --all-targets
@@ -84,6 +88,8 @@ jobs:
 
       - name: Cache Cargo dependencies
         uses: Swatinem/rust-cache@v2
+        with:
+          cache-bin: false
 
       - name: Run autonomy blocking suite
         run: bash scripts/harness/run_autonomy_suite.sh --ci-blocking
@@ -101,6 +107,8 @@ jobs:
 
       - name: Cache Cargo dependencies
         uses: Swatinem/rust-cache@v2
+        with:
+          cache-bin: false
 
       - name: Run self-eval gate
         run: bash scripts/harness/run_self_eval_suite.sh --mode ci
@@ -116,6 +124,8 @@ jobs:
 
       - name: Cache Cargo dependencies
         uses: Swatinem/rust-cache@v2
+        with:
+          cache-bin: false
 
       - name: Run coding reference blocking suite
         run: bash scripts/harness/run_coding_reference_suite.sh --ci-blocking
@@ -131,6 +141,8 @@ jobs:
 
       - name: Cache Cargo dependencies
         uses: Swatinem/rust-cache@v2
+        with:
+          cache-bin: false
 
       - name: Run compaction blocking suite
         run: bash scripts/harness/run_compaction_suite.sh --ci-blocking
@@ -173,6 +185,8 @@ jobs:
 
       - name: Cache Cargo dependencies
         uses: Swatinem/rust-cache@v2
+        with:
+          cache-bin: false
 
       - name: Generate coverage report
         run: cargo llvm-cov --workspace --lcov --output-path lcov.info
@@ -204,6 +218,8 @@ jobs:
 
       - name: Cache Cargo dependencies
         uses: Swatinem/rust-cache@v2
+        with:
+          cache-bin: false
 
       - name: Build release binary
         run: cargo build --workspace --release --target ${{ matrix.target }}
@@ -226,6 +242,8 @@ jobs:
 
       - name: Cache Cargo dependencies
         uses: Swatinem/rust-cache@v2
+        with:
+          cache-bin: false
 
       - name: Build documentation
         run: cargo doc --workspace --no-deps --document-private-items
