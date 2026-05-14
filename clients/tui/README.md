@@ -1,6 +1,8 @@
 # Alan TUI
 
-Terminal client for Alan (Bun + Ink). By default it auto-manages the backend via `alan daemon`.
+Terminal client for Alan (Ink on Bun). The build chain is Oxc/Oxfmt/Oxlint for
+frontend checks, Rolldown for bundling, and `bun compile` for the standalone
+executable. By default it auto-manages the backend via `alan daemon`.
 
 ## Features
 
@@ -55,6 +57,8 @@ just build
 cd clients/tui
 bun install
 bun run dev
+bun run lint
+bun run build:binary
 ```
 
 ## Common Commands

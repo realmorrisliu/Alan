@@ -7,12 +7,15 @@
   "scripts": {
     "start": "bun run src/index.tsx",
     "dev": "bun --watch run src/index.tsx",
-    "build": "NODE_PATH=./.shims bun build src/index.tsx --outfile=dist/alan-tui.js --target=bun",
-    "build:binary": "NODE_PATH=./.shims bun build src/index.tsx --outfile=dist/alan-tui --target=bun --compile",
+    "build": "bun run build:js",
+    "build:js": "rolldown -c",
+    "build:standalone": "bun run scripts/build-standalone.mjs",
+    "build:binary": "bun run build:js && bun run build:standalone",
+    "smoke:standalone": "bun run scripts/smoke-standalone-websocket.mjs",
     "test": "bun test src",
-    "typecheck": "tsc --noEmit",
-    "lint": "tsc --noEmit && bun test src && prettier --check src/**/*.{ts,tsx}",
-    "format": "prettier --write src/**/*.{ts,tsx}"
+    "typecheck": "oxlint --type-aware --type-check src",
+    "lint": "bun run typecheck && bun test src && oxfmt --check src package.json tsconfig.json rolldown.config.mjs scripts/build-standalone.mjs scripts/smoke-standalone-websocket.mjs",
+    "format": "oxfmt src package.json tsconfig.json rolldown.config.mjs scripts/build-standalone.mjs scripts/smoke-standalone-websocket.mjs"
   },
   "dependencies": {
     "ink": "^7.0.0",
@@ -25,11 +28,9 @@
     "@types/react": "^19.2.14",
     "@types/ws": "^8.5.10",
     "bun-types": "latest",
-    "eslint": "^10.0.2",
-    "prettier": "^3.2.0",
-    "typescript": "^6.0.2"
-  },
-  "peerDependencies": {
-    "typescript": "^5.0.0"
+    "oxfmt": "^0.49.0",
+    "oxlint": "^1.64.0",
+    "oxlint-tsgolint": "^0.22.1",
+    "rolldown": "^1.0.1"
   }
 }

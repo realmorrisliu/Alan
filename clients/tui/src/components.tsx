@@ -79,16 +79,7 @@ function buildRows(events: EventEnvelope[]) {
   const flushText = () => {
     if (!textBuffer) return;
 
-    rows.push(
-      eventRow(
-        `text:${textKey}`,
-        textTimestamp,
-        "Alan",
-        "blue",
-        textBuffer,
-        "white",
-      ),
-    );
+    rows.push(eventRow(`text:${textKey}`, textTimestamp, "Alan", "blue", textBuffer, "white"));
 
     textBuffer = "";
     textKey = "";
@@ -222,13 +213,8 @@ function buildRows(events: EventEnvelope[]) {
               ? "success"
               : preview?.trim().toLowerCase().startsWith("error:")
                 ? "failed"
-              : "completed";
-        const color =
-          status === "failed"
-            ? "red"
-            : status === "success"
-              ? "green"
-              : "green";
+                : "completed";
+        const color = status === "failed" ? "red" : status === "success" ? "green" : "green";
 
         rows.push(
           eventRow(
@@ -256,8 +242,7 @@ function buildRows(events: EventEnvelope[]) {
               "yellow",
               `confirmation (${shortId(envelope.request_id)})`,
               "yellow",
-              confirmationSummary(envelope.payload) ||
-                "Use /approve, /reject, or /modify <text>",
+              confirmationSummary(envelope.payload) || "Use /approve, /reject, or /modify <text>",
             ),
           );
           break;

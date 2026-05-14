@@ -40,30 +40,20 @@ interface InitWizardProps {
   hostConfigPath: string;
 }
 
-type WizardStep =
-  | "welcome"
-  | "service"
-  | "advanced_provider"
-  | "config"
-  | "done";
+type WizardStep = "welcome" | "service" | "advanced_provider" | "config" | "done";
 type ConfigReturnStep = "service" | "advanced_provider";
 
 function displayPath(path: string): string {
   const home = homedir();
   if (path === home) return "~";
   const homePrefix = `${home}/`;
-  return path.startsWith(homePrefix)
-    ? `~/${path.slice(homePrefix.length)}`
-    : path;
+  return path.startsWith(homePrefix) ? `~/${path.slice(homePrefix.length)}` : path;
 }
 
 const DEFAULT_TARGET =
-  SERVICE_CATALOG.find(isConfigurableSetupOption) ??
-  ADVANCED_PROVIDER_CATALOG[0];
+  SERVICE_CATALOG.find(isConfigurableSetupOption) ?? ADVANCED_PROVIDER_CATALOG[0];
 
-function completionForSetup(
-  option: ConfigurableSetupOption,
-): InitWizardCompletion {
+function completionForSetup(option: ConfigurableSetupOption): InitWizardCompletion {
   return {
     selectedProfileId: defaultProfileIdForSetup(option),
     selectedProvider: option.provider,
@@ -71,32 +61,21 @@ function completionForSetup(
   };
 }
 
-export function InitWizard({
-  onComplete,
-  agentConfigPath,
-  hostConfigPath,
-}: InitWizardProps) {
+export function InitWizard({ onComplete, agentConfigPath, hostConfigPath }: InitWizardProps) {
   const connectionsConfigPath = join(homedir(), ".alan", "connections.toml");
   const [step, setStep] = useState<WizardStep>("welcome");
-  const [selectedTarget, setSelectedTarget] =
-    useState<ConfigurableSetupOption>(DEFAULT_TARGET);
-  const [configReturnStep, setConfigReturnStep] =
-    useState<ConfigReturnStep>("service");
+  const [selectedTarget, setSelectedTarget] = useState<ConfigurableSetupOption>(DEFAULT_TARGET);
+  const [configReturnStep, setConfigReturnStep] = useState<ConfigReturnStep>("service");
   const [config, setConfig] = useState<ConfigValues>(DEFAULT_CONFIG);
 
   const [serviceCursor, setServiceCursor] = useState(0);
   const [advancedProviderCursor, setAdvancedProviderCursor] = useState(0);
   const [configFieldIndex, setConfigFieldIndex] = useState(0);
   const [inputValue, setInputValue] = useState("");
-  const [hostConfigStatus, setHostConfigStatus] = useState<
-    "created" | "preserved" | null
-  >(null);
+  const [hostConfigStatus, setHostConfigStatus] = useState<"created" | "preserved" | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
 
-  const beginConfig = (
-    option: ConfigurableSetupOption,
-    returnStep: ConfigReturnStep,
-  ) => {
+  const beginConfig = (option: ConfigurableSetupOption, returnStep: ConfigReturnStep) => {
     const nextConfig = configForSetupSelection(config, selectedTarget, option);
     const fields = configFieldsForSetup(option);
     setSelectedTarget(option);
@@ -109,10 +88,7 @@ export function InitWizard({
     setStep("config");
   };
 
-  const saveConfig = (
-    option: ConfigurableSetupOption,
-    values: ConfigValues,
-  ): boolean => {
+  const saveConfig = (option: ConfigurableSetupOption, values: ConfigValues): boolean => {
     const agentConfigContent = buildConfigContent(option, values);
     const connectionsConfigContent = buildConnectionsContent(option, values);
     const setupSecret = buildSetupSecretMaterial(option, values);
@@ -137,9 +113,7 @@ export function InitWizard({
     } catch (error) {
       setHostConfigStatus(null);
       setSaveError(
-        error instanceof Error
-          ? error.message
-          : "Failed to write Alan configuration files.",
+        error instanceof Error ? error.message : "Failed to write Alan configuration files.",
       );
       return false;
     }
@@ -155,13 +129,9 @@ export function InitWizard({
 
     if (step === "service") {
       if (key.upArrow) {
-        setServiceCursor((cursor) =>
-          cursor > 0 ? cursor - 1 : SERVICE_CATALOG.length - 1,
-        );
+        setServiceCursor((cursor) => (cursor > 0 ? cursor - 1 : SERVICE_CATALOG.length - 1));
       } else if (key.downArrow) {
-        setServiceCursor((cursor) =>
-          cursor < SERVICE_CATALOG.length - 1 ? cursor + 1 : 0,
-        );
+        setServiceCursor((cursor) => (cursor < SERVICE_CATALOG.length - 1 ? cursor + 1 : 0));
       } else if (key.return) {
         const option = SERVICE_CATALOG[serviceCursor];
         if (isConfigurableSetupOption(option)) {
@@ -185,10 +155,7 @@ export function InitWizard({
       } else if (key.escape) {
         setStep("service");
       } else if (key.return) {
-        beginConfig(
-          ADVANCED_PROVIDER_CATALOG[advancedProviderCursor],
-          "advanced_provider",
-        );
+        beginConfig(ADVANCED_PROVIDER_CATALOG[advancedProviderCursor], "advanced_provider");
       }
       return;
     }
@@ -241,10 +208,9 @@ export function InitWizard({
         <Text>First, choose the service you want Alan to connect to.</Text>
         <Text> </Text>
         <Text color="gray">
-          Alan will write the canonical agent config and, when host.toml is
-          missing, create it so the daemon keeps the wizard's loopback default.
-          It also prepares ~/.agents/skills/ as the default zero-conversion
-          public skill install directory. Existing host config is preserved.
+          Alan will write the canonical agent config and, when host.toml is missing, create it so
+          the daemon keeps the wizard's loopback default. It also prepares ~/.agents/skills/ as the
+          default zero-conversion public skill install directory. Existing host config is preserved.
           Advanced / custom setup is still available.
         </Text>
         <Text> </Text>
@@ -294,8 +260,7 @@ export function InitWizard({
       <Box flexDirection="column" padding={1}>
         <Text bold>Advanced / custom setup</Text>
         <Text color="gray">
-          Choose the raw API family only if you need manual endpoint-level
-          control.
+          Choose the raw API family only if you need manual endpoint-level control.
         </Text>
         <Text> </Text>
         {ADVANCED_PROVIDER_CATALOG.map((option, index) => (
@@ -308,9 +273,7 @@ export function InitWizard({
             <Text color="gray"> {option.detail}</Text>
           </Box>
         ))}
-        <Text color="gray">
-          ↑↓ to select, Enter to continue, Esc to go back
-        </Text>
+        <Text color="gray">↑↓ to select, Enter to continue, Esc to go back</Text>
       </Box>
     );
   }
@@ -318,9 +281,7 @@ export function InitWizard({
   if (step === "config") {
     const fields = configFieldsForSetup(selectedTarget);
     const currentField = fields[configFieldIndex];
-    const exposesBaseUrl = fields.some((field) =>
-      field.key.includes("base_url"),
-    );
+    const exposesBaseUrl = fields.some((field) => field.key.includes("base_url"));
 
     return (
       <Box flexDirection="column" padding={1}>
@@ -328,26 +289,22 @@ export function InitWizard({
         <Text color="gray">{selectedTarget.desc}</Text>
         <Text color="gray">{selectedTarget.detail}</Text>
         <Text color="gray">
-          Alan writes canonical agent config plus connections.toml, and
-          preserves any existing host config for {selectedTarget.provider}. If
-          host.toml is missing, setup must create it so the daemon keeps the
-          wizard's loopback defaults.
+          Alan writes canonical agent config plus connections.toml, and preserves any existing host
+          config for {selectedTarget.provider}. If host.toml is missing, setup must create it so the
+          daemon keeps the wizard's loopback defaults.
         </Text>
         {selectedTarget.provider === "chatgpt" && (
           <Text color="gray">
-            This preset uses managed login instead of an API key. After setup,
-            Alan will open browser login for{" "}
-            {defaultProfileIdForSetup(selectedTarget)} automatically.
+            This preset uses managed login instead of an API key. After setup, Alan will open
+            browser login for {defaultProfileIdForSetup(selectedTarget)} automatically.
           </Text>
         )}
-        {!exposesBaseUrl &&
-          selectedTarget.provider !== "google_gemini_generate_content" && (
-            <Text color="gray">
-              Endpoint defaults are prefilled for this service. Use Advanced /
-              custom setup if you need to edit raw base URLs or switch API
-              families.
-            </Text>
-          )}
+        {!exposesBaseUrl && selectedTarget.provider !== "google_gemini_generate_content" && (
+          <Text color="gray">
+            Endpoint defaults are prefilled for this service. Use Advanced / custom setup if you
+            need to edit raw base URLs or switch API families.
+          </Text>
+        )}
         <Text color="gray">
           Step {configFieldIndex + 1} of {fields.length}
         </Text>
@@ -413,8 +370,7 @@ export function InitWizard({
       </Text>
       {selectedTarget.provider === "chatgpt" && (
         <Text>
-          Next step: Alan will open browser login for{" "}
-          {defaultProfileIdForSetup(selectedTarget)}.
+          Next step: Alan will open browser login for {defaultProfileIdForSetup(selectedTarget)}.
         </Text>
       )}
       <Text> </Text>

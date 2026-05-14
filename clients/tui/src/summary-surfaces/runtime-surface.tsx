@@ -29,9 +29,7 @@ export function RuntimeSurface({ summary }: RuntimeSurfaceProps) {
       ) : summary.recentTool ? (
         <Text color={toolStatusColor(summary.recentTool.status)}>
           Recent tool: {summary.recentTool.name} {summary.recentTool.status}
-          {summary.recentTool.resultPreview
-            ? ` | ${summary.recentTool.resultPreview}`
-            : ""}
+          {summary.recentTool.resultPreview ? ` | ${summary.recentTool.resultPreview}` : ""}
         </Text>
       ) : null}
       {summary.recoverableError ? (

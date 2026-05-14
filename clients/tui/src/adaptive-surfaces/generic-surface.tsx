@@ -43,9 +43,7 @@ function schemaYieldTitle(pendingYield: PendingYield): string {
   return "Action required: custom yield";
 }
 
-function dynamicToolContextRows(
-  payload: unknown,
-): Array<{ label: string; value: string }> {
+function dynamicToolContextRows(payload: unknown): Array<{ label: string; value: string }> {
   const data = parseDynamicToolYieldPayload(payload);
   if (!data) {
     return [];
@@ -60,45 +58,29 @@ function dynamicToolContextRows(
   ];
 }
 
-function renderSchemaDrivenSurface({
-  pendingYield,
-  schemaForm,
-}: AdaptiveSurfaceRenderContext) {
+function renderSchemaDrivenSurface({ pendingYield, schemaForm }: AdaptiveSurfaceRenderContext) {
   const activeQuestion = schemaForm?.activeQuestion ?? null;
   const formState = schemaForm?.formState ?? null;
   const questions = schemaForm?.questions ?? [];
   const formError =
-    formState && questions.length > 0
-      ? structuredFormValidationError(formState, questions)
-      : null;
+    formState && questions.length > 0 ? structuredFormValidationError(formState, questions) : null;
   const contextRows = dynamicToolContextRows(pendingYield.payload);
 
   return (
-    <AdaptiveSurfacePanel
-      title={schemaYieldTitle(pendingYield)}
-      requestId={pendingYield.requestId}
-    >
+    <AdaptiveSurfacePanel title={schemaYieldTitle(pendingYield)} requestId={pendingYield.requestId}>
       <Text>{schemaForm?.title ?? "Provide structured input"}</Text>
-      {schemaForm?.prompt ? (
-        <Text color="gray">{schemaForm.prompt}</Text>
-      ) : null}
+      {schemaForm?.prompt ? <Text color="gray">{schemaForm.prompt}</Text> : null}
       {contextRows.map((row) => (
         <Box key={row.label} flexDirection="column">
           <Text color="gray">{row.label}</Text>
-          <Text color={row.label === "tool" ? "cyan" : "gray"}>
-            {row.value}
-          </Text>
+          <Text color={row.label === "tool" ? "cyan" : "gray"}>{row.value}</Text>
         </Box>
       ))}
       {activeQuestion && formState ? (
         <>
           <Text color="gray">
-            {structuredQuestionPositionLabel(
-              formState.activeQuestionIndex,
-              questions,
-            )}{" "}
-            | {activeQuestion.required ? "required" : "optional"} |{" "}
-            {activeQuestion.kind}
+            {structuredQuestionPositionLabel(formState.activeQuestionIndex, questions)} |{" "}
+            {activeQuestion.required ? "required" : "optional"} | {activeQuestion.kind}
           </Text>
           {questions.map((question, index) => {
             const isActive = index === formState.activeQuestionIndex;
@@ -118,20 +100,15 @@ function renderSchemaDrivenSurface({
               </Box>
             );
           })}
-          {activeQuestion.helpText ? (
-            <Text color="gray">{activeQuestion.helpText}</Text>
-          ) : null}
-          {structuredQuestionHints(activeQuestion, "schema_fallback").map(
-            (hint) => (
-              <Text key={hint.text} color={hint.color}>
-                {hint.text}
-              </Text>
-            ),
-          )}
+          {activeQuestion.helpText ? <Text color="gray">{activeQuestion.helpText}</Text> : null}
+          {structuredQuestionHints(activeQuestion, "schema_fallback").map((hint) => (
+            <Text key={hint.text} color={hint.color}>
+              {hint.text}
+            </Text>
+          ))}
           {structuredQuestionToggleSummary(activeQuestion, formState) ? (
             <Text color="gray">
-              Toggle:{" "}
-              {structuredQuestionToggleSummary(activeQuestion, formState)}
+              Toggle: {structuredQuestionToggleSummary(activeQuestion, formState)}
             </Text>
           ) : null}
           {activeQuestion.options?.map((option, index) => {
@@ -139,8 +116,7 @@ function renderSchemaDrivenSurface({
             const isSelected = Array.isArray(answer)
               ? answer.includes(option.value)
               : answer === option.value;
-            const isCursor =
-              getStructuredOptionCursor(formState, activeQuestion) === index;
+            const isCursor = getStructuredOptionCursor(formState, activeQuestion) === index;
             const marker = usesMultiSelectKind(activeQuestion.kind)
               ? isSelected
                 ? "[x]"
@@ -161,15 +137,11 @@ function renderSchemaDrivenSurface({
           ) : (
             <Text color="green">Form ready to submit.</Text>
           )}
-          <Text color="gray">
-            {structuredQuestionControls(activeQuestion, "schema_fallback")}
-          </Text>
+          <Text color="gray">{structuredQuestionControls(activeQuestion, "schema_fallback")}</Text>
           <Text color="gray">Manual fallback: /resume &lt;json-object&gt;</Text>
         </>
       ) : (
-        <Text color="gray">
-          Loading schema-driven form... /resume &lt;json-object&gt;
-        </Text>
+        <Text color="gray">Loading schema-driven form... /resume &lt;json-object&gt;</Text>
       )}
     </AdaptiveSurfacePanel>
   );
@@ -190,9 +162,7 @@ function renderGenericSurface(context: AdaptiveSurfaceRenderContext) {
   );
 }
 
-function buildGenericAnnouncement(
-  pendingYield: AdaptiveSurfaceRenderContext["pendingYield"],
-) {
+function buildGenericAnnouncement(pendingYield: AdaptiveSurfaceRenderContext["pendingYield"]) {
   const schemaForm = parseSchemaDrivenYieldForm(pendingYield.payload);
   const messages: AdaptiveSurfaceEventMessage[] = [
     {
@@ -235,18 +205,12 @@ function buildGenericAnnouncement(
 
 function genericFooterHint(context: AdaptiveSurfaceRenderContext) {
   if (context.schemaForm) {
-    return structuredQuestionControls(
-      context.schemaForm.activeQuestion,
-      "schema_fallback",
-    );
+    return structuredQuestionControls(context.schemaForm.activeQuestion, "schema_fallback");
   }
   return "Resolve: /resume <json>";
 }
 
-function genericInputLabel({
-  schemaForm,
-  inputValue,
-}: AdaptiveSurfaceInputContext) {
+function genericInputLabel({ schemaForm, inputValue }: AdaptiveSurfaceInputContext) {
   if (!schemaForm) {
     return "Action";
   }
@@ -257,18 +221,14 @@ function genericInputPlaceholder({ schemaForm }: AdaptiveSurfaceInputContext) {
   if (!schemaForm) {
     return "Resolve pending yield with command...";
   }
-  return schemaForm.activeQuestion &&
-    usesTextEntryKind(schemaForm.activeQuestion.kind)
+  return schemaForm.activeQuestion && usesTextEntryKind(schemaForm.activeQuestion.kind)
     ? questionHasPresentationHint(schemaForm.activeQuestion, "multiline")
       ? `Long answer: ${schemaForm.activeQuestion.label} (or /resume fallback)`
       : `Answer: ${schemaForm.activeQuestion.label} (or /resume fallback)`
     : "Use adaptive controls above, or type /resume <json>";
 }
 
-function genericInputFocus({
-  schemaForm,
-  inputValue,
-}: AdaptiveSurfaceInputContext) {
+function genericInputFocus({ schemaForm, inputValue }: AdaptiveSurfaceInputContext) {
   if (!schemaForm) {
     return true;
   }
@@ -282,11 +242,7 @@ function genericInputFocus({
 
 function handleSchemaDrivenKey(context: AdaptiveSurfaceKeyContext) {
   const schemaForm = context.schemaForm;
-  if (
-    !schemaForm?.formState ||
-    !schemaForm.activeQuestion ||
-    !context.schemaFormControls
-  ) {
+  if (!schemaForm?.formState || !schemaForm.activeQuestion || !context.schemaFormControls) {
     return false;
   }
 
@@ -330,9 +286,7 @@ function handleSchemaDrivenKey(context: AdaptiveSurfaceKeyContext) {
     (context.key.leftArrow || context.input === "h")
   ) {
     setFormState((previous) =>
-      previous
-        ? moveStructuredSingleSelection(previous, activeQuestion, -1)
-        : previous,
+      previous ? moveStructuredSingleSelection(previous, activeQuestion, -1) : previous,
     );
     return true;
   }
@@ -342,9 +296,7 @@ function handleSchemaDrivenKey(context: AdaptiveSurfaceKeyContext) {
     (context.key.rightArrow || context.input === "l")
   ) {
     setFormState((previous) =>
-      previous
-        ? moveStructuredSingleSelection(previous, activeQuestion, 1)
-        : previous,
+      previous ? moveStructuredSingleSelection(previous, activeQuestion, 1) : previous,
     );
     return true;
   }
@@ -387,11 +339,7 @@ function handleSchemaDrivenKey(context: AdaptiveSurfaceKeyContext) {
 
   if (usesMultiSelectKind(activeQuestion.kind) && context.input === " ") {
     const cursor = getStructuredOptionCursor(formState, activeQuestion);
-    const nextState = toggleStructuredMultiOption(
-      formState,
-      activeQuestion,
-      cursor,
-    );
+    const nextState = toggleStructuredMultiOption(formState, activeQuestion, cursor);
     if (nextState === formState) {
       context.addSystemEvent(
         "system_warning",

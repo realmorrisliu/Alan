@@ -12,15 +12,9 @@ function pendingYield(kind: PendingYield["kind"]): PendingYield {
 
 describe("adaptive surface registry", () => {
   test("returns the matching surface for each pending yield kind", () => {
-    expect(getAdaptiveSurface(pendingYield("confirmation"))?.kind).toBe(
-      "confirmation",
-    );
-    expect(getAdaptiveSurface(pendingYield("structured_input"))?.kind).toBe(
-      "structured_input",
-    );
-    expect(getAdaptiveSurface(pendingYield("dynamic_tool"))?.kind).toBe(
-      "dynamic_tool",
-    );
+    expect(getAdaptiveSurface(pendingYield("confirmation"))?.kind).toBe("confirmation");
+    expect(getAdaptiveSurface(pendingYield("structured_input"))?.kind).toBe("structured_input");
+    expect(getAdaptiveSurface(pendingYield("dynamic_tool"))?.kind).toBe("dynamic_tool");
     expect(getAdaptiveSurface(pendingYield("custom"))?.kind).toBe("custom");
   });
 

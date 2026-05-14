@@ -53,17 +53,14 @@ export type LocalClientEventType =
   | "system_warning"
   | "user_message";
 
-export type EventType =
-  | ProtocolEventType
-  | LegacyCompatEventType
-  | LocalClientEventType;
+export type EventType = ProtocolEventType | LegacyCompatEventType | LocalClientEventType;
 
 export interface ToolDecisionAudit {
   policy_source: string;
   rule_id?: string;
-  action: "allow" | "deny" | "escalate" | string;
+  action: "allow" | "deny" | "escalate" | (string & {});
   reason?: string;
-  capability: "read" | "write" | "network" | "unknown" | string;
+  capability: "read" | "write" | "network" | "unknown" | (string & {});
   sandbox_backend: string;
 }
 
@@ -165,13 +162,7 @@ export interface GovernanceConfig {
 
 export type StreamingMode = "auto" | "on" | "off";
 export type PartialStreamRecoveryMode = "continue_once" | "off";
-export type ReasoningEffort =
-  | "none"
-  | "minimal"
-  | "low"
-  | "medium"
-  | "high"
-  | "xhigh";
+export type ReasoningEffort = "none" | "minimal" | "low" | "medium" | "high" | "xhigh";
 export type ProviderId =
   | "chatgpt"
   | "google_gemini_generate_content"
@@ -179,10 +170,7 @@ export type ProviderId =
   | "openai_chat_completions"
   | "openai_chat_completions_compatible"
   | "anthropic_messages";
-export type CredentialKind =
-  | "managed_oauth"
-  | "secret_string"
-  | "ambient_cloud_auth";
+export type CredentialKind = "managed_oauth" | "secret_string" | "ambient_cloud_auth";
 export type ConnectionCredentialStatusKind =
   | "missing"
   | "available"
@@ -377,11 +365,7 @@ export interface ConnectionProfileSummary {
 
 export type ConnectionPinScope = "global" | "workspace";
 
-export type ConnectionSelectionSource =
-  | "none"
-  | "default_profile"
-  | "global_pin"
-  | "workspace_pin";
+export type ConnectionSelectionSource = "none" | "default_profile" | "global_pin" | "workspace_pin";
 
 export interface ConnectionPinState {
   scope: ConnectionPinScope;

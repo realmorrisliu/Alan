@@ -1,9 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { createStructuredFormState } from "./structured-input";
-import {
-  buildSchemaDrivenYieldPayload,
-  parseSchemaDrivenYieldForm,
-} from "./schema-driven-yield";
+import { buildSchemaDrivenYieldPayload, parseSchemaDrivenYieldForm } from "./schema-driven-yield";
 
 describe("schema driven yield helpers", () => {
   test("parses a typed adaptive form contract from dynamic tool payloads", () => {

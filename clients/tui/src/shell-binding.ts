@@ -23,9 +23,7 @@ interface ShellBindingPayload {
 
 const pendingShellBindingMutations = new Map<string, Promise<void>>();
 
-export function readShellBindingTarget(
-  env: NodeJS.ProcessEnv,
-): ShellBindingTarget | null {
+export function readShellBindingTarget(env: NodeJS.ProcessEnv): ShellBindingTarget | null {
   const filePath = env.ALAN_SHELL_BINDING_FILE?.trim();
   if (!filePath) {
     return null;
@@ -65,9 +63,7 @@ export async function writeShellBinding(
   });
 }
 
-export async function clearShellBinding(
-  target: ShellBindingTarget | null,
-): Promise<void> {
+export async function clearShellBinding(target: ShellBindingTarget | null): Promise<void> {
   if (!target?.filePath) {
     return;
   }

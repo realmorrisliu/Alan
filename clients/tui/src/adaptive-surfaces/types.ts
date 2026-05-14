@@ -5,10 +5,7 @@ import type { StructuredFormState } from "../structured-input.js";
 import type { StructuredQuestion } from "../yield.js";
 import type { PendingYield, PendingYieldKind } from "./yield-state.js";
 
-export type SystemEventType =
-  | "system_message"
-  | "system_warning"
-  | "system_error";
+export type SystemEventType = "system_message" | "system_warning" | "system_error";
 
 export interface AdaptiveSurfaceEventMessage {
   type: SystemEventType;
@@ -73,9 +70,7 @@ export interface AdaptiveSurfaceKeyContext {
 
 export interface AdaptiveSurfaceDefinition {
   kind: PendingYieldKind;
-  buildAnnouncement: (
-    pendingYield: PendingYield,
-  ) => AdaptiveSurfaceEventMessage[];
+  buildAnnouncement: (pendingYield: PendingYield) => AdaptiveSurfaceEventMessage[];
   render: (context: AdaptiveSurfaceRenderContext) => React.ReactNode;
   footerHint: (context: AdaptiveSurfaceRenderContext) => string;
   inputLabel: (context: AdaptiveSurfaceInputContext) => string;

@@ -26,6 +26,7 @@ import type {
   ConnectionCredentialStatus,
   ConnectionPinScope,
   ConnectionProfileSummary,
+  CreateSessionRequest,
   DaemonStatus,
   EventEnvelope,
   ProviderId,
@@ -33,13 +34,8 @@ import type {
 import { MessageList } from "./components.js";
 import { InitWizard, type InitWizardCompletion } from "./init.js";
 import { getAdaptiveSurface } from "./adaptive-surfaces/registry.js";
-import {
-  buildSchemaDrivenYieldPayload,
-} from "./schema-driven-yield.js";
-import {
-  parsePendingYieldKind,
-  type PendingYield,
-} from "./adaptive-surfaces/yield-state.js";
+import { buildSchemaDrivenYieldPayload } from "./schema-driven-yield.js";
+import { parsePendingYieldKind, type PendingYield } from "./adaptive-surfaces/yield-state.js";
 import {
   buildAdaptiveSurfaceViewModel,
   isAdaptiveSurfaceReadyForInput,
@@ -65,11 +61,7 @@ import {
   usesSingleSelectKind,
   usesTextEntryKind,
 } from "./yield.js";
-import {
-  clearShellBinding,
-  readShellBindingTarget,
-  writeShellBinding,
-} from "./shell-binding.js";
+import { clearShellBinding, readShellBindingTarget, writeShellBinding } from "./shell-binding.js";
 import {
   mergeHydratedCurrentPlanState,
   reduceCurrentPlanState,
@@ -96,15 +88,10 @@ function displayPath(path: string): string {
     return "~";
   }
   const homePrefix = `${home}/`;
-  return path.startsWith(homePrefix)
-    ? `~/${path.slice(homePrefix.length)}`
-    : path;
+  return path.startsWith(homePrefix) ? `~/${path.slice(homePrefix.length)}` : path;
 }
 
-const CONFIG_PATH_CANDIDATES = resolveConfigPathCandidates(
-  homedir(),
-  process.env,
-);
+const CONFIG_PATH_CANDIDATES = resolveConfigPathCandidates(homedir(), process.env);
 const CONFIG_PATH =
   selectExistingConfigPath(CONFIG_PATH_CANDIDATES, isExistingConfigFile) ??
   CONFIG_PATH_CANDIDATES[0];
@@ -146,18 +133,14 @@ function formatChildRun(run: ChildRunRecord): string {
 }
 
 function isActiveChildRun(run: ChildRunRecord): boolean {
-  return ["starting", "running", "blocked", "terminating"].includes(
-    run.status,
-  );
+  return ["starting", "running", "blocked", "terminating"].includes(run.status);
 }
 
 function countActiveChildRuns(runs: ChildRunRecord[]): number {
   return runs.filter(isActiveChildRun).length;
 }
 
-function parseGovernanceProfile(
-  input: string | undefined,
-): "autonomous" | "conservative" | null {
+function parseGovernanceProfile(input: string | undefined): "autonomous" | "conservative" | null {
   if (!input) return null;
   const value = input.trim().toLowerCase();
   if (value === "autonomous" || value === "conservative") {
@@ -181,9 +164,7 @@ function parseAgentSelector(input: string | undefined): string | null {
   return normalizeAgentName(rest.join("="));
 }
 
-function parseStreamingMode(
-  input: string | undefined,
-): "auto" | "on" | "off" | null {
+function parseStreamingMode(input: string | undefined): "auto" | "on" | "off" | null {
   if (!input) return null;
   const value = input.trim().toLowerCase();
   if (value === "auto" || value === "on" || value === "off") {
@@ -192,9 +173,7 @@ function parseStreamingMode(
   return null;
 }
 
-function parsePartialStreamRecoveryMode(
-  input: string | undefined,
-): "continue_once" | "off" | null {
+function parsePartialStreamRecoveryMode(input: string | undefined): "continue_once" | "off" | null {
   if (!input) return null;
   const value = input.trim().toLowerCase();
   if (value === "continue_once") {
@@ -298,9 +277,7 @@ function summarizeConnectionProfile(
   return details.join(" | ");
 }
 
-function summarizeCredentialStatus(
-  status: ConnectionCredentialStatus,
-): string {
+function summarizeCredentialStatus(status: ConnectionCredentialStatus): string {
   const details = [
     `profile=${status.profile_id}`,
     `credential=${status.status}`,
@@ -333,9 +310,7 @@ function summarizePinState(label: string, pin?: ConnectionCurrentState["global_p
   return `${label}: ${pin.profile_id} (${pin.scope}) [${displayPath(pin.config_path)}]`;
 }
 
-function summarizeConnectionCurrentState(
-  current: ConnectionCurrentState,
-): string[] {
+function summarizeConnectionCurrentState(current: ConnectionCurrentState): string[] {
   const lines: string[] = [];
   if (current.workspace_dir) {
     lines.push(`workspace: ${displayPath(current.workspace_dir)}`);
@@ -356,35 +331,30 @@ function summarizeConnectionCurrentState(
 }
 
 function App() {
-  const { exit } = useApp();
+  const app = useApp();
 
   const [needsSetup, setNeedsSetup] = useState(needsFirstTimeSetup());
   const [inputValue, setInputValue] = useState("");
-  const [status, setStatus] = useState<"connecting" | "connected" | "error">(
-    "connecting",
-  );
+  const [status, setStatus] = useState<"connecting" | "connected" | "error">("connecting");
   const [statusMessage, setStatusMessage] = useState("Starting...");
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
-  const [currentSessionBinding, setCurrentSessionBinding] =
-    useState<SessionBindingSummary | null>(null);
-  const [events, setEvents] = useState<EventEnvelope[]>([]);
-  const [currentPlan, setCurrentPlan] = useState<CurrentPlanState | null>(null);
-  const [activeChildRunCount, setActiveChildRunCount] = useState<number | null>(
+  const [currentSessionBinding, setCurrentSessionBinding] = useState<SessionBindingSummary | null>(
     null,
   );
+  const [events, setEvents] = useState<EventEnvelope[]>([]);
+  const [currentPlan, setCurrentPlan] = useState<CurrentPlanState | null>(null);
+  const [activeChildRunCount, setActiveChildRunCount] = useState<number | null>(null);
   const [currentRuntimeState, setCurrentRuntimeState] =
     useState<CurrentRuntimeState>(createCurrentRuntimeState);
   const [daemonStatus, setDaemonStatus] = useState<DaemonStatus | null>(null);
   const [pendingYield, setPendingYield] = useState<PendingYield | null>(null);
-  const [shellRunStatus, setShellRunStatus] =
-    useState<ShellRunStatus>("starting");
+  const [shellRunStatus, setShellRunStatus] = useState<ShellRunStatus>("starting");
   const [confirmationActionIndex, setConfirmationActionIndex] = useState(0);
-  const [confirmationActionRequestId, setConfirmationActionRequestId] =
-    useState<string | null>(null);
-  const [schemaFormState, setSchemaFormState] =
-    useState<StructuredFormState | null>(null);
-  const [structuredFormState, setStructuredFormState] =
-    useState<StructuredFormState | null>(null);
+  const [confirmationActionRequestId, setConfirmationActionRequestId] = useState<string | null>(
+    null,
+  );
+  const [schemaFormState, setSchemaFormState] = useState<StructuredFormState | null>(null);
+  const [structuredFormState, setStructuredFormState] = useState<StructuredFormState | null>(null);
 
   const clientRef = useRef<AlanClient | null>(null);
   const sessionIdRef = useRef<string>("");
@@ -436,10 +406,7 @@ function App() {
   }, [currentSessionId, pendingYield, shellBindingTarget, shellRunStatus]);
 
   useEffect(() => {
-    if (
-      pendingYield?.kind !== "dynamic_tool" &&
-      pendingYield?.kind !== "custom"
-    ) {
+    if (pendingYield?.kind !== "dynamic_tool" && pendingYield?.kind !== "custom") {
       setSchemaFormState(null);
       return;
     }
@@ -460,10 +427,7 @@ function App() {
       ) {
         return previous;
       }
-      return createStructuredFormState(
-        pendingYield.requestId,
-        pendingSchemaForm.questions,
-      );
+      return createStructuredFormState(pendingYield.requestId, pendingSchemaForm.questions);
     });
   }, [pendingSchemaForm, pendingYield]);
 
@@ -475,14 +439,7 @@ function App() {
 
     const questions = structuredQuestions(pendingYield.payload);
     setStructuredFormState((previous) => {
-      if (
-        previous &&
-        shouldReuseStructuredFormState(
-          previous,
-          pendingYield.requestId,
-          questions,
-        )
-      ) {
+      if (previous && shouldReuseStructuredFormState(previous, pendingYield.requestId, questions)) {
         return previous;
       }
       return createStructuredFormState(pendingYield.requestId, questions);
@@ -507,10 +464,7 @@ function App() {
         return "";
       }
 
-      const answer = getStructuredAnswer(
-        structuredFormState,
-        activeStructuredQuestion,
-      );
+      const answer = getStructuredAnswer(structuredFormState, activeStructuredQuestion);
       return typeof answer === "string" ? answer : "";
     });
   }, [activeStructuredQuestion, pendingYield, structuredFormState]);
@@ -538,9 +492,7 @@ function App() {
   const pushEvent = (event: EventEnvelope) => {
     setEvents((prev) => {
       const base =
-        prev.length >= MAX_EVENT_HISTORY
-          ? prev.slice(prev.length - MAX_EVENT_HISTORY + 1)
-          : prev;
+        prev.length >= MAX_EVENT_HISTORY ? prev.slice(prev.length - MAX_EVENT_HISTORY + 1) : prev;
       return [...base, event];
     });
   };
@@ -610,9 +562,7 @@ function App() {
     email?: string,
     plan?: string,
   ) => {
-    const details = [
-      `${providerDisplayName(provider)} login complete for profile ${profileId}.`,
-    ];
+    const details = [`${providerDisplayName(provider)} login complete for profile ${profileId}.`];
     if (email) {
       details.push(`email=${email}`);
     }
@@ -622,10 +572,7 @@ function App() {
     addSystemEvent("system_message", details.join(" "));
   };
 
-  const announceConnectionSessionGap = (
-    profileId: string,
-    provider: ProviderId,
-  ) => {
+  const announceConnectionSessionGap = (profileId: string, provider: ProviderId) => {
     const binding = currentSessionBindingRef.current;
     if (!binding?.profileId || binding.profileId === profileId) {
       return;
@@ -688,9 +635,7 @@ function App() {
 
     try {
       while (Number.isNaN(deadline) || Date.now() <= deadline + 1_000) {
-        const status = await client.getConnectionCredentialStatus(
-          profile.profile_id,
-        );
+        const status = await client.getConnectionCredentialStatus(profile.profile_id);
         if (status.status === "available") {
           announceConnectionLoginSuccess(
             profile.profile_id,
@@ -739,10 +684,7 @@ function App() {
     const status = await client.getConnectionCredentialStatus(profileId);
     if (status.status === "available") {
       printConnectionStatus(profile, status);
-      addSystemEvent(
-        "system_warning",
-        `Profile ${profileId} already has available credentials.`,
-      );
+      addSystemEvent("system_warning", `Profile ${profileId} already has available credentials.`);
       return true;
     }
 
@@ -780,20 +722,10 @@ function App() {
         "system_message",
         "Waiting for managed login to complete before creating the first session...",
       );
-      return await watchConnectionBrowserLogin(
-        client,
-        profile,
-        start.login_id,
-        start.expires_at,
-      );
+      return await watchConnectionBrowserLogin(client, profile, start.login_id, start.expires_at);
     }
 
-    void watchConnectionBrowserLogin(
-      client,
-      profile,
-      start.login_id,
-      start.expires_at,
-    );
+    void watchConnectionBrowserLogin(client, profile, start.login_id, start.expires_at);
     return false;
   };
 
@@ -808,10 +740,7 @@ function App() {
     activeConnectionLoginsRef.current.add(loginId);
 
     try {
-      const login = await client.completeConnectionDeviceLogin(
-        profile.profile_id,
-        loginId,
-      );
+      const login = await client.completeConnectionDeviceLogin(profile.profile_id, loginId);
       announceConnectionLoginSuccess(
         profile.profile_id,
         profile.provider,
@@ -874,9 +803,7 @@ function App() {
         setShellRunStatus("ready");
       }
       setStatusMessage(
-        STARTUP_INFO.mode === "embedded"
-          ? "Ready"
-          : `Connected to ${STARTUP_INFO.url}`,
+        STARTUP_INFO.mode === "embedded" ? "Ready" : `Connected to ${STARTUP_INFO.url}`,
       );
 
       if (sessionIdRef.current) {
@@ -904,11 +831,7 @@ function App() {
         reduceCurrentPlanState(previous, envelope, sessionIdRef.current || null),
       );
       setCurrentRuntimeState((previous) =>
-        reduceCurrentRuntimeState(
-          previous,
-          envelope,
-          sessionIdRef.current || null,
-        ),
+        reduceCurrentRuntimeState(previous, envelope, sessionIdRef.current || null),
       );
 
       if (envelope.type === "turn_started") {
@@ -935,10 +858,7 @@ function App() {
           const options = confirmationActionOptions(incoming.payload);
           setConfirmationActionRequestId(incoming.requestId);
           setConfirmationActionIndex(
-            preferredConfirmationActionIndex(
-              options,
-              confirmationDefaultOption(incoming.payload),
-            ),
+            preferredConfirmationActionIndex(options, confirmationDefaultOption(incoming.payload)),
           );
         } else {
           setConfirmationActionRequestId(null);
@@ -977,9 +897,7 @@ function App() {
     const init = async () => {
       try {
         setStatusMessage(
-          STARTUP_INFO.mode === "embedded"
-            ? "Starting daemon..."
-            : "Connecting to agent...",
+          STARTUP_INFO.mode === "embedded" ? "Starting daemon..." : "Connecting to agent...",
         );
 
         await client.connect();
@@ -995,10 +913,14 @@ function App() {
         pendingSetupBrowserLoginRef.current = null;
         if (setupBrowserLoginProfileId) {
           try {
-            const completed = await startConnectionBrowserLogin(client, setupBrowserLoginProfileId, {
-              source: "setup",
-              waitForAvailability: true,
-            });
+            const completed = await startConnectionBrowserLogin(
+              client,
+              setupBrowserLoginProfileId,
+              {
+                source: "setup",
+                waitForAvailability: true,
+              },
+            );
             if (!completed) {
               addSystemEvent(
                 "system_warning",
@@ -1017,15 +939,9 @@ function App() {
           const workspaceDir = detectWorkspaceDir();
 
           if (workspaceDir) {
-            addSystemEvent(
-              "system_message",
-              `Creating session for workspace: ${workspaceDir}...`,
-            );
+            addSystemEvent("system_message", `Creating session for workspace: ${workspaceDir}...`);
           } else {
-            addSystemEvent(
-              "system_message",
-              "Auto-creating session on default workspace...",
-            );
+            addSystemEvent("system_message", "Auto-creating session on default workspace...");
           }
 
           const session = await client.createSession({
@@ -1044,11 +960,13 @@ function App() {
           setShellRunStatus("ready");
           addSystemEvent(
             "system_message",
-            `Alan ready. Type your request directly or /help. (${session.agent_name ? `agent=${session.agent_name}, ` : ""}${summarizeSessionBinding({
-              profileId: session.profile_id,
-              provider: session.provider,
-              resolvedModel: session.resolved_model,
-            })}, streaming=${session.streaming_mode}, recovery=${session.partial_stream_recovery_mode})`,
+            `Alan ready. Type your request directly or /help. (${session.agent_name ? `agent=${session.agent_name}, ` : ""}${summarizeSessionBinding(
+              {
+                profileId: session.profile_id,
+                provider: session.provider,
+                resolvedModel: session.resolved_model,
+              },
+            )}, streaming=${session.streaming_mode}, recovery=${session.partial_stream_recovery_mode})`,
           );
         } catch (error) {
           const msg = (error as Error).message;
@@ -1062,27 +980,18 @@ function App() {
             msg.includes("model") ||
             msg.includes("key")
           ) {
-            addSystemEvent(
-              "system_message",
-              "Hint: this looks like an LLM configuration issue.",
-            );
+            addSystemEvent("system_message", "Hint: this looks like an LLM configuration issue.");
             addSystemEvent(
               "system_message",
               `Please check ${CONFIG_PATH_HINT} (or ALAN_CONFIG_PATH).`,
             );
-          } else if (
-            msg.includes("500") ||
-            msg.includes("Internal Server Error")
-          ) {
+          } else if (msg.includes("500") || msg.includes("Internal Server Error")) {
             addSystemEvent(
               "system_message",
               "Hint: daemon internal error, please check daemon logs.",
             );
           }
-          addSystemEvent(
-            "system_message",
-            "Type /new to try again, or /help for commands.",
-          );
+          addSystemEvent("system_message", "Type /new to try again, or /help for commands.");
         }
       } catch (error) {
         const message = (error as Error).message;
@@ -1099,7 +1008,7 @@ function App() {
       }
     };
 
-    init();
+    void init();
 
     const cleanup = async () => {
       await clearShellBinding(shellBindingTarget);
@@ -1107,7 +1016,7 @@ function App() {
     };
 
     const handleExit = () => {
-      cleanup().then(() => {
+      void cleanup().then(() => {
         process.exit(0);
       });
     };
@@ -1120,11 +1029,11 @@ function App() {
       process.off("SIGTERM", handleExit);
       void cleanup();
     };
-  }, [needsSetup]);
+  }, [needsSetup, shellBindingTarget]);
 
   useInput((input, key) => {
     if (key.ctrl && input === "c") {
-      exit();
+      app.exit();
       return;
     }
 
@@ -1139,12 +1048,7 @@ function App() {
     }
 
     const handleAdaptiveInputKey = activeSurface?.handleInputKey;
-    if (
-      !pendingYield ||
-      !activeSurface ||
-      !adaptiveSurfaceContext ||
-      !handleAdaptiveInputKey
-    ) {
+    if (!pendingYield || !activeSurface || !adaptiveSurfaceContext || !handleAdaptiveInputKey) {
       return;
     }
 
@@ -1204,18 +1108,12 @@ function App() {
     try {
       setShellRunStatus("running");
       await client.resume(currentSessionId, pendingYield.requestId, content);
-      addSystemEvent(
-        "system_message",
-        `Resumed ${pendingYield.kind} (${pendingYield.requestId}).`,
-      );
+      addSystemEvent("system_message", `Resumed ${pendingYield.kind} (${pendingYield.requestId}).`);
       setPendingYield(null);
       setConfirmationActionRequestId(null);
       setConfirmationActionIndex(0);
     } catch (error) {
-      addSystemEvent(
-        "system_error",
-        `Failed to resume: ${(error as Error).message}`,
-      );
+      addSystemEvent("system_error", `Failed to resume: ${(error as Error).message}`);
     }
   };
 
@@ -1231,11 +1129,7 @@ function App() {
     ) {
       setStructuredFormState((previous) =>
         previous
-          ? setStructuredTextAnswer(
-              previous,
-              activeStructuredQuestion.id,
-              nextValue,
-            )
+          ? setStructuredTextAnswer(previous, activeStructuredQuestion.id, nextValue)
           : previous,
       );
     }
@@ -1248,13 +1142,7 @@ function App() {
       !nextValue.startsWith("/")
     ) {
       setSchemaFormState((previous) =>
-        previous
-          ? setStructuredTextAnswer(
-              previous,
-              activeSchemaQuestion.id,
-              nextValue,
-            )
-          : previous,
+        previous ? setStructuredTextAnswer(previous, activeSchemaQuestion.id, nextValue) : previous,
       );
     }
   };
@@ -1267,18 +1155,13 @@ function App() {
 
     const formState = overrideState ?? structuredFormState;
 
-    const error = structuredFormValidationError(
-      formState,
-      pendingStructuredQuestions,
-    );
+    const error = structuredFormValidationError(formState, pendingStructuredQuestions);
     if (error) {
       addSystemEvent("system_warning", error);
       return;
     }
 
-    await submitPendingYield(
-      buildStructuredResumePayload(formState, pendingStructuredQuestions),
-    );
+    await submitPendingYield(buildStructuredResumePayload(formState, pendingStructuredQuestions));
   };
 
   const submitSchemaForm = async (overrideState?: StructuredFormState) => {
@@ -1288,10 +1171,7 @@ function App() {
     }
 
     const formState = overrideState ?? schemaFormState;
-    const error = structuredFormValidationError(
-      formState,
-      pendingSchemaForm.questions,
-    );
+    const error = structuredFormValidationError(formState, pendingSchemaForm.questions);
     if (error) {
       addSystemEvent("system_warning", error);
       return;
@@ -1306,9 +1186,7 @@ function App() {
     await submitPendingYield(result.payload);
   };
 
-  const confirmActiveStructuredQuestion = async (
-    overrideState?: StructuredFormState,
-  ) => {
+  const confirmActiveStructuredQuestion = async (overrideState?: StructuredFormState) => {
     if (
       pendingYield?.kind !== "structured_input" ||
       !structuredFormState ||
@@ -1321,31 +1199,21 @@ function App() {
     const nextState = baseState;
     const error = questionValidationError(nextState, activeStructuredQuestion);
     if (error) {
-      addSystemEvent(
-        "system_warning",
-        `${activeStructuredQuestion.label}: ${error}`,
-      );
+      addSystemEvent("system_warning", `${activeStructuredQuestion.label}: ${error}`);
       return;
     }
 
-    if (
-      nextState.activeQuestionIndex >=
-      pendingStructuredQuestions.length - 1
-    ) {
+    if (nextState.activeQuestionIndex >= pendingStructuredQuestions.length - 1) {
       await submitStructuredForm(nextState);
       return;
     }
 
     setStructuredFormState((previous) =>
-      previous
-        ? moveStructuredQuestion(nextState, pendingStructuredQuestions, 1)
-        : previous,
+      previous ? moveStructuredQuestion(nextState, pendingStructuredQuestions, 1) : previous,
     );
   };
 
-  const confirmActiveSchemaQuestion = async (
-    overrideState?: StructuredFormState,
-  ) => {
+  const confirmActiveSchemaQuestion = async (overrideState?: StructuredFormState) => {
     if (!pendingSchemaForm || !schemaFormState || !activeSchemaQuestion) {
       return;
     }
@@ -1353,25 +1221,17 @@ function App() {
     const baseState = overrideState ?? schemaFormState;
     const error = questionValidationError(baseState, activeSchemaQuestion);
     if (error) {
-      addSystemEvent(
-        "system_warning",
-        `${activeSchemaQuestion.label}: ${error}`,
-      );
+      addSystemEvent("system_warning", `${activeSchemaQuestion.label}: ${error}`);
       return;
     }
 
-    if (
-      baseState.activeQuestionIndex >=
-      pendingSchemaForm.questions.length - 1
-    ) {
+    if (baseState.activeQuestionIndex >= pendingSchemaForm.questions.length - 1) {
       await submitSchemaForm(baseState);
       return;
     }
 
     setSchemaFormState((previous) =>
-      previous
-        ? moveStructuredQuestion(baseState, pendingSchemaForm.questions, 1)
-        : previous,
+      previous ? moveStructuredQuestion(baseState, pendingSchemaForm.questions, 1) : previous,
     );
   };
 
@@ -1391,10 +1251,7 @@ function App() {
     }
 
     if (!currentSessionId) {
-      addSystemEvent(
-        "system_warning",
-        "No active session. Use /new to create one.",
-      );
+      addSystemEvent("system_warning", "No active session. Use /new to create one.");
       return;
     }
 
@@ -1417,8 +1274,7 @@ function App() {
       }
 
       if (
-        (pendingYield.kind === "dynamic_tool" ||
-          pendingYield.kind === "custom") &&
+        (pendingYield.kind === "dynamic_tool" || pendingYield.kind === "custom") &&
         pendingSchemaForm &&
         schemaFormState &&
         activeSchemaQuestion &&
@@ -1450,15 +1306,11 @@ function App() {
       setShellRunStatus("running");
       await client.sendMessage(currentSessionId, trimmed);
     } catch (error) {
-      addSystemEvent(
-        "system_error",
-        `Failed to send: ${(error as Error).message}`,
-      );
+      addSystemEvent("system_error", `Failed to send: ${(error as Error).message}`);
     }
   };
 
-  const activeWorkspaceDir = (): string | undefined =>
-    detectWorkspaceDirForSelection();
+  const activeWorkspaceDir = (): string | undefined => detectWorkspaceDirForSelection();
 
   const printConnectionCurrentState = (current: ConnectionCurrentState) => {
     for (const line of summarizeConnectionCurrentState(current)) {
@@ -1503,10 +1355,7 @@ function App() {
     }
   };
 
-  const handleConnectionCommand = async (
-    args: string[],
-    client: AlanClient,
-  ) => {
+  const handleConnectionCommand = async (args: string[], client: AlanClient) => {
     const usage =
       "Usage: /connection <list|show|current|add|login|logout|set-secret|default|pin|unpin|status|test|remove> ...";
     const action = args[0]?.toLowerCase();
@@ -1532,19 +1381,14 @@ function App() {
           for (const profile of listing.profiles) {
             let status: ConnectionCredentialStatus | undefined;
             try {
-              status = await client.getConnectionCredentialStatus(
-                profile.profile_id,
-              );
+              status = await client.getConnectionCredentialStatus(profile.profile_id);
             } catch {
               status = undefined;
             }
             printConnectionStatus(profile, status);
           }
         } catch (error) {
-          addSystemEvent(
-            "system_error",
-            `Failed to list connections: ${(error as Error).message}`,
-          );
+          addSystemEvent("system_error", `Failed to list connections: ${(error as Error).message}`);
         }
         return;
       }
@@ -1566,10 +1410,7 @@ function App() {
         try {
           const profileId = args[1];
           if (!profileId) {
-            addSystemEvent(
-              "system_warning",
-              "Usage: /connection show <profile-id>",
-            );
+            addSystemEvent("system_warning", "Usage: /connection show <profile-id>");
             return;
           }
           const profile = await client.getConnection(profileId);
@@ -1606,9 +1447,7 @@ function App() {
         }
         try {
           const profile = await client.getConnection(requestedProfileId);
-          const status = await client.getConnectionCredentialStatus(
-            requestedProfileId,
-          );
+          const status = await client.getConnectionCredentialStatus(requestedProfileId);
           printConnectionStatus(profile, status);
         } catch (error) {
           addSystemEvent(
@@ -1643,9 +1482,7 @@ function App() {
           }
 
           let profileId =
-            providerId === "chatgpt"
-              ? "chatgpt-main"
-              : providerId.replaceAll("_", "-");
+            providerId === "chatgpt" ? "chatgpt-main" : providerId.replaceAll("_", "-");
           let label: string | undefined;
           let credentialId: string | undefined;
           let activate = false;
@@ -1702,10 +1539,7 @@ function App() {
           } catch {
             status = undefined;
           }
-          addSystemEvent(
-            "system_message",
-            `Created connection profile ${profile.profile_id}.`,
-          );
+          addSystemEvent("system_message", `Created connection profile ${profile.profile_id}.`);
           printConnectionStatus(profile, status);
           if (descriptor.credential_kind === "secret_string") {
             addSystemEvent(
@@ -1723,10 +1557,7 @@ function App() {
             announceEffectiveSelection(current, profile.profile_id);
           }
         } catch (error) {
-          addSystemEvent(
-            "system_error",
-            `Failed to add connection: ${(error as Error).message}`,
-          );
+          addSystemEvent("system_error", `Failed to add connection: ${(error as Error).message}`);
         }
         return;
       }
@@ -1736,10 +1567,7 @@ function App() {
         if (subaction === "set") {
           const profileId = args[2];
           if (!profileId) {
-            addSystemEvent(
-              "system_warning",
-              "Usage: /connection default set <profile-id>",
-            );
+            addSystemEvent("system_warning", "Usage: /connection default set <profile-id>");
             return;
           }
           try {
@@ -1747,10 +1575,7 @@ function App() {
               profile_id: profileId,
               workspace_dir: activeWorkspaceDir(),
             });
-            addSystemEvent(
-              "system_message",
-              `Default profile set to ${profileId}.`,
-            );
+            addSystemEvent("system_message", `Default profile set to ${profileId}.`);
             announceEffectiveSelection(current, profileId);
           } catch (error) {
             addSystemEvent(
@@ -1777,10 +1602,7 @@ function App() {
           return;
         }
 
-        addSystemEvent(
-          "system_warning",
-          "Usage: /connection default <set|clear> ...",
-        );
+        addSystemEvent("system_warning", "Usage: /connection default <set|clear> ...");
         return;
       }
 
@@ -1836,14 +1658,9 @@ function App() {
             profile_id: profileId,
             scope,
             workspace_dir:
-              scope === "workspace"
-                ? workspaceDir ?? activeWorkspaceDir()
-                : undefined,
+              scope === "workspace" ? (workspaceDir ?? activeWorkspaceDir()) : undefined,
           });
-          addSystemEvent(
-            "system_message",
-            `Pinned profile ${profileId} at ${scope} scope.`,
-          );
+          addSystemEvent("system_message", `Pinned profile ${profileId} at ${scope} scope.`);
           announceEffectiveSelection(current, profileId);
         } catch (error) {
           addSystemEvent(
@@ -1896,14 +1713,9 @@ function App() {
           const current = await client.unpinConnection({
             scope,
             workspace_dir:
-              scope === "workspace"
-                ? workspaceDir ?? activeWorkspaceDir()
-                : undefined,
+              scope === "workspace" ? (workspaceDir ?? activeWorkspaceDir()) : undefined,
           });
-          addSystemEvent(
-            "system_message",
-            `Cleared ${scope} pin.`,
-          );
+          addSystemEvent("system_message", `Cleared ${scope} pin.`);
           announceEffectiveSelection(current);
         } catch (error) {
           addSystemEvent(
@@ -1918,20 +1730,14 @@ function App() {
         const profileId = args[1];
         const secret = args.slice(2).join(" ").trim();
         if (!profileId || !secret) {
-          addSystemEvent(
-            "system_warning",
-            "Usage: /connection set-secret <profile-id> <secret>",
-          );
+          addSystemEvent("system_warning", "Usage: /connection set-secret <profile-id> <secret>");
           return;
         }
 
         try {
           const profile = await client.getConnection(profileId);
           const status = await client.setConnectionSecret(profileId, secret);
-          addSystemEvent(
-            "system_message",
-            `Stored secret for profile ${profileId}.`,
-          );
+          addSystemEvent("system_message", `Stored secret for profile ${profileId}.`);
           printConnectionStatus(profile, status);
         } catch (error) {
           addSystemEvent(
@@ -1984,24 +1790,12 @@ function App() {
               "system_message",
               `${providerDisplayName(profile.provider)} device login started for ${profileId} (${start.login_id}).`,
             );
-            addSystemEvent(
-              "system_message",
-              `Open: ${start.verification_url}`,
-            );
-            addSystemEvent(
-              "system_message",
-              `Enter code: ${start.user_code}`,
-            );
+            addSystemEvent("system_message", `Open: ${start.verification_url}`);
+            addSystemEvent("system_message", `Enter code: ${start.user_code}`);
             if (expiresAt) {
-              addSystemEvent(
-                "system_message",
-                `Code expires: ${expiresAt}`,
-              );
+              addSystemEvent("system_message", `Code expires: ${expiresAt}`);
             }
-            addSystemEvent(
-              "system_message",
-              "Waiting for device approval to complete...",
-            );
+            addSystemEvent("system_message", "Waiting for device approval to complete...");
             void completeConnectionDeviceLogin(client, profile, start.login_id);
             return;
           }
@@ -2017,10 +1811,7 @@ function App() {
       case "logout": {
         const profileId = args[1];
         if (!profileId) {
-          addSystemEvent(
-            "system_warning",
-            "Usage: /connection logout <profile-id>",
-          );
+          addSystemEvent("system_warning", "Usage: /connection logout <profile-id>");
           return;
         }
 
@@ -2048,10 +1839,7 @@ function App() {
       case "use": {
         const profileId = args[1];
         if (!profileId) {
-          addSystemEvent(
-            "system_warning",
-            "Usage: /connection default set <profile-id>",
-          );
+          addSystemEvent("system_warning", "Usage: /connection default set <profile-id>");
           return;
         }
 
@@ -2064,10 +1852,7 @@ function App() {
             profile_id: profileId,
             workspace_dir: activeWorkspaceDir(),
           });
-          addSystemEvent(
-            "system_message",
-            `Default profile set to ${profileId}.`,
-          );
+          addSystemEvent("system_message", `Default profile set to ${profileId}.`);
           announceEffectiveSelection(current, profileId);
         } catch (error) {
           addSystemEvent(
@@ -2087,10 +1872,7 @@ function App() {
             `${result.message} profile=${result.profile_id} provider=${result.provider} model=${result.resolved_model}`,
           );
         } catch (error) {
-          addSystemEvent(
-            "system_error",
-            `Failed to test connection: ${(error as Error).message}`,
-          );
+          addSystemEvent("system_error", `Failed to test connection: ${(error as Error).message}`);
         }
         return;
       }
@@ -2098,10 +1880,7 @@ function App() {
       case "remove": {
         const profileId = args[1];
         if (!profileId) {
-          addSystemEvent(
-            "system_warning",
-            "Usage: /connection remove <profile-id>",
-          );
+          addSystemEvent("system_warning", "Usage: /connection remove <profile-id>");
           return;
         }
         try {
@@ -2204,10 +1983,7 @@ function App() {
               );
               return;
             }
-            if (
-              requestedConnectionProfileId &&
-              requestedConnectionProfileId !== profileId
-            ) {
+            if (requestedConnectionProfileId && requestedConnectionProfileId !== profileId) {
               addSystemEvent(
                 "system_warning",
                 "Usage: /new [agent=<name>] [profile=<connection-profile>] [autonomous|conservative] [auto|on|off] [continue_once|recovery=off]",
@@ -2235,8 +2011,7 @@ function App() {
             partial_stream_recovery_mode?: "continue_once" | "off";
           } = {};
           if (requestedAgentName || DEFAULT_AGENT_NAME) {
-            createRequest.agent_name =
-              requestedAgentName ?? DEFAULT_AGENT_NAME ?? undefined;
+            createRequest.agent_name = requestedAgentName ?? DEFAULT_AGENT_NAME ?? undefined;
           }
           if (requestedProfile) {
             createRequest.governance = { profile: requestedProfile };
@@ -2267,11 +2042,13 @@ function App() {
           setShellRunStatus("ready");
           addSystemEvent(
             "system_message",
-            `Session ready (${shortId(sessionId)}), ${session.agent_name ? `agent=${session.agent_name}, ` : ""}${summarizeSessionBinding({
-              profileId: session.profile_id,
-              provider: session.provider,
-              resolvedModel: session.resolved_model,
-            })}, governance=${session.governance.profile}, streaming=${session.streaming_mode}, recovery=${session.partial_stream_recovery_mode}.`,
+            `Session ready (${shortId(sessionId)}), ${session.agent_name ? `agent=${session.agent_name}, ` : ""}${summarizeSessionBinding(
+              {
+                profileId: session.profile_id,
+                provider: session.provider,
+                resolvedModel: session.resolved_model,
+              },
+            )}, governance=${session.governance.profile}, streaming=${session.streaming_mode}, recovery=${session.partial_stream_recovery_mode}.`,
           );
         } catch (error) {
           const msg = (error as Error).message;
@@ -2285,18 +2062,12 @@ function App() {
             msg.includes("model") ||
             msg.includes("key")
           ) {
-            addSystemEvent(
-              "system_message",
-              "Hint: this looks like an LLM configuration issue.",
-            );
+            addSystemEvent("system_message", "Hint: this looks like an LLM configuration issue.");
             addSystemEvent(
               "system_message",
               `Please check ${CONFIG_PATH_HINT} (or ALAN_CONFIG_PATH).`,
             );
-          } else if (
-            msg.includes("500") ||
-            msg.includes("Internal Server Error")
-          ) {
+          } else if (msg.includes("500") || msg.includes("Internal Server Error")) {
             addSystemEvent(
               "system_message",
               "Hint: daemon internal error, please check daemon logs.",
@@ -2322,10 +2093,7 @@ function App() {
         const previousSessionBinding = currentSessionBinding;
         const previousReplayState = client.captureReplayState();
         try {
-          addSystemEvent(
-            "system_message",
-            `Connecting to session ${shortId(targetSessionId)}...`,
-          );
+          addSystemEvent("system_message", `Connecting to session ${shortId(targetSessionId)}...`);
           sessionIdRef.current = targetSessionId;
           setCurrentSessionId(targetSessionId);
           setCurrentSessionBinding(null);
@@ -2341,10 +2109,7 @@ function App() {
             const session = await client.getSession(targetSessionId);
             updateCurrentSessionBinding(session);
             setCurrentPlan((previous) =>
-              mergeHydratedCurrentPlanState(
-                previous,
-                session.latest_plan_snapshot,
-              ),
+              mergeHydratedCurrentPlanState(previous, session.latest_plan_snapshot),
             );
             addSystemEvent(
               "system_message",
@@ -2369,9 +2134,7 @@ function App() {
               setCurrentPlan(previousPlan ?? null);
               setCurrentRuntimeState(previousRuntimeState);
               setPendingYield(previousPendingYield ?? null);
-              setConfirmationActionRequestId(
-                previousConfirmationActionRequestId,
-              );
+              setConfirmationActionRequestId(previousConfirmationActionRequestId);
               setConfirmationActionIndex(previousConfirmationActionIndex);
               await client.connectToSession(previousSessionId, {
                 replayState: previousReplayState,
@@ -2408,10 +2171,7 @@ function App() {
             setConfirmationActionRequestId(null);
             setConfirmationActionIndex(0);
             setShellRunStatus("error");
-            addSystemEvent(
-              "system_error",
-              `Failed to connect: ${(error as Error).message}`,
-            );
+            addSystemEvent("system_error", `Failed to connect: ${(error as Error).message}`);
           }
         }
         break;
@@ -2419,10 +2179,7 @@ function App() {
       case "sessions":
         try {
           const sessions = await client.listSessions();
-          addSystemEvent(
-            "system_message",
-            `Active sessions: ${sessions.length}`,
-          );
+          addSystemEvent("system_message", `Active sessions: ${sessions.length}`);
           sessions.forEach((s) => {
             addSystemEvent(
               "system_message",
@@ -2430,10 +2187,7 @@ function App() {
             );
           });
         } catch (error) {
-          addSystemEvent(
-            "system_error",
-            `Failed to list sessions: ${(error as Error).message}`,
-          );
+          addSystemEvent("system_error", `Failed to list sessions: ${(error as Error).message}`);
         }
         break;
 
@@ -2451,10 +2205,7 @@ function App() {
             addSystemEvent("system_message", `  ${formatChildRun(run)}`);
           });
         } catch (error) {
-          addSystemEvent(
-            "system_error",
-            `Failed to list child runs: ${(error as Error).message}`,
-          );
+          addSystemEvent("system_error", `Failed to list child runs: ${(error as Error).message}`);
         }
         break;
       }
@@ -2473,15 +2224,11 @@ function App() {
 
         if (agentCommand.kind === "terminate") {
           try {
-            const run = await client.terminateChildRun(
-              currentSessionId,
-              agentCommand.childRunId,
-              {
-                mode: agentCommand.mode,
-                reason: agentCommand.reason,
-                actor: "tui_operator",
-              },
-            );
+            const run = await client.terminateChildRun(currentSessionId, agentCommand.childRunId, {
+              mode: agentCommand.mode,
+              reason: agentCommand.reason,
+              actor: "tui_operator",
+            });
             addSystemEvent(
               "system_message",
               `Child run ${shortId(run.id)} termination requested: ${run.status}`,
@@ -2498,10 +2245,7 @@ function App() {
         }
 
         try {
-          const run = await client.getChildRun(
-            currentSessionId,
-            agentCommand.childRunId,
-          );
+          const run = await client.getChildRun(currentSessionId, agentCommand.childRunId);
           addSystemEvent("system_message", formatChildRun(run));
           if (run.workspace_root) {
             addSystemEvent("system_message", `  workspace=${run.workspace_root}`);
@@ -2510,19 +2254,13 @@ function App() {
             addSystemEvent("system_message", `  rollout=${run.rollout_path}`);
           }
           if (run.latest_event_kind) {
-            addSystemEvent(
-              "system_message",
-              `  latest_event=${run.latest_event_kind}`,
-            );
+            addSystemEvent("system_message", `  latest_event=${run.latest_event_kind}`);
           }
           if (run.error_message) {
             addSystemEvent("system_warning", `  error=${run.error_message}`);
           }
         } catch (error) {
-          addSystemEvent(
-            "system_error",
-            `Failed to read child run: ${(error as Error).message}`,
-          );
+          addSystemEvent("system_error", `Failed to read child run: ${(error as Error).message}`);
         }
         break;
       }
@@ -2537,17 +2275,11 @@ function App() {
             );
           } else {
             const running = await client.isDaemonRunning();
-            addSystemEvent(
-              "system_message",
-              `Daemon: ${running ? "running" : "stopped"}`,
-            );
+            addSystemEvent("system_message", `Daemon: ${running ? "running" : "stopped"}`);
           }
         } else {
           const running = await client.isDaemonRunning();
-          addSystemEvent(
-            "system_message",
-            `Remote agent: ${running ? "online" : "offline"}`,
-          );
+          addSystemEvent("system_message", `Remote agent: ${running ? "online" : "offline"}`);
         }
         break;
 
@@ -2568,10 +2300,7 @@ function App() {
           await client.sendInput(currentSessionId, message);
           addSystemEvent("system_message", "Input appended to active turn.");
         } catch (error) {
-          addSystemEvent(
-            "system_error",
-            `Failed to append input: ${(error as Error).message}`,
-          );
+          addSystemEvent("system_error", `Failed to append input: ${(error as Error).message}`);
         }
         break;
       }
@@ -2590,10 +2319,7 @@ function App() {
           setConfirmationActionIndex(0);
           setShellRunStatus("ready");
         } catch (error) {
-          addSystemEvent(
-            "system_error",
-            `Failed to interrupt: ${(error as Error).message}`,
-          );
+          addSystemEvent("system_error", `Failed to interrupt: ${(error as Error).message}`);
         }
         break;
       }
@@ -2608,10 +2334,7 @@ function App() {
           await client.compact(currentSessionId);
           addSystemEvent("system_message", "Compaction requested.");
         } catch (error) {
-          addSystemEvent(
-            "system_error",
-            `Failed to compact: ${(error as Error).message}`,
-          );
+          addSystemEvent("system_error", `Failed to compact: ${(error as Error).message}`);
         }
         break;
       }
@@ -2624,30 +2347,16 @@ function App() {
 
         const turnsRaw = args[0];
         const turns = Number(turnsRaw);
-        if (
-          !turnsRaw ||
-          Number.isNaN(turns) ||
-          turns < 1 ||
-          !Number.isInteger(turns)
-        ) {
-          addSystemEvent(
-            "system_warning",
-            "Usage: /rollback <positive-integer>",
-          );
+        if (!turnsRaw || Number.isNaN(turns) || turns < 1 || !Number.isInteger(turns)) {
+          addSystemEvent("system_warning", "Usage: /rollback <positive-integer>");
           return;
         }
 
         try {
           await client.rollback(currentSessionId, turns);
-          addSystemEvent(
-            "system_message",
-            `Rollback requested for ${turns} turn(s).`,
-          );
+          addSystemEvent("system_message", `Rollback requested for ${turns} turn(s).`);
         } catch (error) {
-          addSystemEvent(
-            "system_error",
-            `Failed to rollback: ${(error as Error).message}`,
-          );
+          addSystemEvent("system_error", `Failed to rollback: ${(error as Error).message}`);
         }
         break;
       }
@@ -2684,10 +2393,7 @@ function App() {
 
       case "answer": {
         if (!pendingYield || pendingYield.kind !== "structured_input") {
-          addSystemEvent(
-            "system_warning",
-            "No pending structured input request.",
-          );
+          addSystemEvent("system_warning", "No pending structured input request.");
           return;
         }
 
@@ -2698,8 +2404,7 @@ function App() {
         }
 
         const questions = structuredQuestions(pendingYield.payload);
-        const targetQuestion =
-          questions.length === 1 ? questions[0] : activeStructuredQuestion;
+        const targetQuestion = questions.length === 1 ? questions[0] : activeStructuredQuestion;
 
         if (!targetQuestion) {
           addSystemEvent("system_warning", "No active structured question.");
@@ -2721,16 +2426,11 @@ function App() {
           };
           const error = questionValidationError(nextState, targetQuestion);
           if (error) {
-            addSystemEvent(
-              "system_warning",
-              `${targetQuestion.label}: ${error}`,
-            );
+            addSystemEvent("system_warning", `${targetQuestion.label}: ${error}`);
             return;
           }
 
-          await submitPendingYield(
-            buildStructuredResumePayload(nextState, questions),
-          );
+          await submitPendingYield(buildStructuredResumePayload(nextState, questions));
           break;
         }
 
@@ -2754,9 +2454,7 @@ function App() {
           };
         } else if (usesSingleSelectKind(targetQuestion.kind)) {
           const optionIndex =
-            targetQuestion.options?.findIndex(
-              (option) => option.value === value,
-            ) ?? -1;
+            targetQuestion.options?.findIndex((option) => option.value === value) ?? -1;
           if (optionIndex < 0) {
             addSystemEvent(
               "system_warning",
@@ -2785,10 +2483,7 @@ function App() {
 
       case "answers": {
         if (!pendingYield || pendingYield.kind !== "structured_input") {
-          addSystemEvent(
-            "system_warning",
-            "No pending structured input request.",
-          );
+          addSystemEvent("system_warning", "No pending structured input request.");
           return;
         }
 
@@ -2803,10 +2498,7 @@ function App() {
           const content = Array.isArray(parsed) ? { answers: parsed } : parsed;
           await submitPendingYield(content);
         } catch {
-          addSystemEvent(
-            "system_warning",
-            "Invalid JSON payload for /answers.",
-          );
+          addSystemEvent("system_warning", "Invalid JSON payload for /answers.");
         }
         break;
       }
@@ -2846,18 +2538,12 @@ function App() {
           "system_message",
           "  /connect <id>                  - Connect to an existing session",
         );
-        addSystemEvent(
-          "system_message",
-          "  /sessions                      - List active sessions",
-        );
+        addSystemEvent("system_message", "  /sessions                      - List active sessions");
         addSystemEvent(
           "system_message",
           "  /agents                        - List child runs for current session",
         );
-        addSystemEvent(
-          "system_message",
-          "  /agent <id>                    - Inspect a child run",
-        );
+        addSystemEvent("system_message", "  /agent <id>                    - Inspect a child run");
         addSystemEvent(
           "system_message",
           "  /agent terminate <id> [reason] - Gracefully terminate a child run",
@@ -2866,10 +2552,7 @@ function App() {
           "system_message",
           "  /agent kill <id> [reason]      - Forcefully terminate a child run",
         );
-        addSystemEvent(
-          "system_message",
-          "  /status                        - Show daemon status",
-        );
+        addSystemEvent("system_message", "  /status                        - Show daemon status");
         addSystemEvent(
           "system_message",
           "  /connection list               - List configured connection profiles",
@@ -2902,10 +2585,7 @@ function App() {
           "system_message",
           "  /compact                       - Trigger context compaction",
         );
-        addSystemEvent(
-          "system_message",
-          "  /rollback <n>                  - Roll back N turns",
-        );
+        addSystemEvent("system_message", "  /rollback <n>                  - Roll back N turns");
         addSystemEvent(
           "system_message",
           "  /approve | /reject | /modify   - Resolve confirmation yield",
@@ -2918,18 +2598,9 @@ function App() {
           "system_message",
           "  /resume <json>                 - Resolve custom/dynamic yield",
         );
-        addSystemEvent(
-          "system_message",
-          "  /clear                         - Clear timeline",
-        );
-        addSystemEvent(
-          "system_message",
-          "  /help                          - Show this help",
-        );
-        addSystemEvent(
-          "system_message",
-          "  /exit                          - Exit (or Ctrl+C)",
-        );
+        addSystemEvent("system_message", "  /clear                         - Clear timeline");
+        addSystemEvent("system_message", "  /help                          - Show this help");
+        addSystemEvent("system_message", "  /exit                          - Exit (or Ctrl+C)");
         addSystemEvent(
           "system_message",
           "Keyboard: Ctrl+N/Ctrl+P next/prev question, Ctrl+S submit structured input, Ctrl+L clear, Ctrl+C exit",
@@ -2938,7 +2609,7 @@ function App() {
 
       case "exit":
       case "quit":
-        exit();
+        app.exit();
         break;
 
       default:
@@ -3076,4 +2747,42 @@ function App() {
   );
 }
 
-render(<App />);
+async function runStandaloneWebSocketSmoke(): Promise<void> {
+  const client = new AlanClient({
+    url: STARTUP_INFO.url,
+    autoManageDaemon: false,
+    verbose: VERBOSE,
+  });
+  let sessionId: string | null = null;
+
+  try {
+    await client.connect();
+    const createRequest: CreateSessionRequest = {
+      workspace_dir: process.env.ALAN_TUI_SMOKE_WORKSPACE ?? process.cwd(),
+      agent_name: DEFAULT_AGENT_NAME ?? undefined,
+      profile_id: process.env.ALAN_TUI_SMOKE_PROFILE || undefined,
+      streaming_mode: "on",
+      partial_stream_recovery_mode: "continue_once",
+    };
+    const session = await client.createSession(createRequest);
+    sessionId = session.session_id;
+    await client.connectToSession(sessionId);
+    console.log(`standalone websocket smoke ok: ${sessionId}`);
+  } finally {
+    client.disconnect();
+    if (sessionId) {
+      try {
+        await client.deleteSession(sessionId);
+      } catch (error) {
+        console.error(`Failed to clean up smoke session ${sessionId}: ${(error as Error).message}`);
+      }
+    }
+    await client.shutdown();
+  }
+}
+
+if (process.env.ALAN_TUI_SMOKE_WEBSOCKET === "1") {
+  await runStandaloneWebSocketSmoke();
+} else {
+  render(<App />);
+}

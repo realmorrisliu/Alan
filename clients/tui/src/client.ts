@@ -57,11 +57,7 @@ interface ErrorResponse {
   message?: string;
 }
 
-type ReplayUnavailableState =
-  | "active"
-  | "archived"
-  | "missing"
-  | "unknown";
+type ReplayUnavailableState = "active" | "archived" | "missing" | "unknown";
 
 export interface ReplayStateSnapshot {
   sessionId: string;
@@ -127,8 +123,7 @@ export class AlanClient {
 
     // Detect whether this is a remote connection (not localhost/127.0.0.1).
     this.isRemote =
-      !this.options.url.includes("127.0.0.1") &&
-      !this.options.url.includes("localhost");
+      !this.options.url.includes("127.0.0.1") && !this.options.url.includes("localhost");
 
     // Convert HTTP URL to WebSocket URL
     this.baseUrl = this.options.url.replace(/^ws/, "http").replace(/\/$/, "");
@@ -147,27 +142,19 @@ export class AlanClient {
     const status = await this.daemon.start();
 
     if (this.options.verbose) {
-      console.log(
-        `[Alan] daemon ${status.state}${status.pid ? ` (pid: ${status.pid})` : ""}`,
-      );
+      console.log(`[Alan] daemon ${status.state}${status.pid ? ` (pid: ${status.pid})` : ""}`);
     }
   }
 
   // Event emitter implementation
-  public on<K extends keyof ClientEvents>(
-    event: K,
-    handler: ClientEvents[K],
-  ): void {
+  public on<K extends keyof ClientEvents>(event: K, handler: ClientEvents[K]): void {
     if (!this.eventHandlers.has(event)) {
       this.eventHandlers.set(event, []);
     }
     this.eventHandlers.get(event)!.push(handler as EventHandler<unknown>);
   }
 
-  public off<K extends keyof ClientEvents>(
-    event: K,
-    handler: ClientEvents[K],
-  ): void {
+  public off<K extends keyof ClientEvents>(event: K, handler: ClientEvents[K]): void {
     const handlers = this.eventHandlers.get(event);
     if (handlers) {
       const index = handlers.indexOf(handler as EventHandler<unknown>);
@@ -177,15 +164,10 @@ export class AlanClient {
     }
   }
 
-  private emit<K extends keyof ClientEvents>(
-    event: K,
-    ...args: Parameters<ClientEvents[K]>
-  ): void {
+  private emit<K extends keyof ClientEvents>(event: K, ...args: Parameters<ClientEvents[K]>): void {
     const handlers = this.eventHandlers.get(event);
     if (handlers) {
-      handlers.forEach((handler) =>
-        (handler as (...args: unknown[]) => void)(...args),
-      );
+      handlers.forEach((handler) => (handler as (...args: unknown[]) => void)(...args));
     }
   }
 
@@ -241,10 +223,7 @@ export class AlanClient {
     this.emit("event", envelope);
   }
 
-  private async replayMissedEvents(
-    sessionId: string,
-    version: number,
-  ): Promise<void> {
+  private async replayMissedEvents(sessionId: string, version: number): Promise<void> {
     if (!this.lastEventId) {
       return;
     }
@@ -269,9 +248,7 @@ export class AlanClient {
       }
       const page = (await response.json()) as ReadEventsResponse;
       if (!Array.isArray(page.events)) {
-        throw new Error(
-          "Failed to replay missed events: malformed read-events page",
-        );
+        throw new Error("Failed to replay missed events: malformed read-events page");
       }
 
       if (page.gap) {
@@ -284,9 +261,7 @@ export class AlanClient {
           ),
         );
         if (page.events.length === 0) {
-          throw new Error(
-            "Event replay gap detected but no replayable events were returned",
-          );
+          throw new Error("Event replay gap detected but no replayable events were returned");
         }
       }
 
@@ -304,8 +279,7 @@ export class AlanClient {
         );
       }
 
-      const pageLastEventId =
-        page.events[page.events.length - 1]?.event_id ?? null;
+      const pageLastEventId = page.events[page.events.length - 1]?.event_id ?? null;
       if (!pageLastEventId) {
         throw new Error(
           "Failed to replay missed events: replay page contains event without event_id",
@@ -324,10 +298,7 @@ export class AlanClient {
     }
   }
 
-  private async buildReplayReadError(
-    sessionId: string,
-    response: Response,
-  ): Promise<Error> {
+  private async buildReplayReadError(sessionId: string, response: Response): Promise<Error> {
     const errorMsg = await this.readErrorMessage(response);
     if (response.status !== 404) {
       return new Error(`Failed to replay missed events: ${errorMsg}`);
@@ -354,18 +325,13 @@ export class AlanClient {
     }
   }
 
-  private async probeReplayUnavailableState(
-    sessionId: string,
-  ): Promise<ReplayUnavailableState> {
+  private async probeReplayUnavailableState(sessionId: string): Promise<ReplayUnavailableState> {
     try {
       const session = await this.getSession(sessionId);
       return session.active === false ? "archived" : "active";
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      if (
-        message.includes("404") ||
-        message.toLowerCase().includes("not found")
-      ) {
+      if (message.includes("404") || message.toLowerCase().includes("not found")) {
         return "missing";
       }
       return "unknown";
@@ -388,9 +354,7 @@ export class AlanClient {
   }
 
   // HTTP API methods
-  public async createSession(
-    request?: CreateSessionRequest,
-  ): Promise<CreateSessionResponse> {
+  public async createSession(request?: CreateSessionRequest): Promise<CreateSessionResponse> {
     await this.ensureDaemon();
 
     const response = await fetch(`${this.baseUrl}${apiPaths.sessions()}`, {
@@ -406,7 +370,7 @@ export class AlanClient {
         if (errData && (errData as any).error) {
           errorMsg = (errData as any).error;
         }
-      } catch (e) {
+      } catch {
         // ignore JSON parse error
       }
       throw new Error(`Failed to create session: ${errorMsg}`);
@@ -430,17 +394,27 @@ export class AlanClient {
     return data.sessions;
   }
 
-  public async getSession(sessionId: string): Promise<SessionReadResponse> {
+  public async deleteSession(sessionId: string): Promise<void> {
     await this.ensureDaemon();
 
-    const response = await fetch(
-      `${this.baseUrl}${apiPaths.sessionRead(sessionId)}`,
-    );
+    const response = await fetch(`${this.baseUrl}${apiPaths.session(sessionId)}`, {
+      method: "DELETE",
+    });
 
     if (!response.ok) {
       throw new Error(
-        `Failed to get session: ${await this.readErrorMessage(response)}`,
+        `Failed to delete session ${sessionId}: ${await this.readErrorMessage(response)}`,
       );
+    }
+  }
+
+  public async getSession(sessionId: string): Promise<SessionReadResponse> {
+    await this.ensureDaemon();
+
+    const response = await fetch(`${this.baseUrl}${apiPaths.sessionRead(sessionId)}`);
+
+    if (!response.ok) {
+      throw new Error(`Failed to get session: ${await this.readErrorMessage(response)}`);
     }
 
     return (await response.json()) as SessionReadResponse;
@@ -449,24 +423,17 @@ export class AlanClient {
   public async listChildRuns(sessionId: string): Promise<ChildRunRecord[]> {
     await this.ensureDaemon();
 
-    const response = await fetch(
-      `${this.baseUrl}${apiPaths.sessionChildRuns(sessionId)}`,
-    );
+    const response = await fetch(`${this.baseUrl}${apiPaths.sessionChildRuns(sessionId)}`);
 
     if (!response.ok) {
-      throw new Error(
-        `Failed to list child runs: ${await this.readErrorMessage(response)}`,
-      );
+      throw new Error(`Failed to list child runs: ${await this.readErrorMessage(response)}`);
     }
 
     const data = (await response.json()) as ChildRunListResponse;
     return data.child_runs;
   }
 
-  public async getChildRun(
-    sessionId: string,
-    childRunId: string,
-  ): Promise<ChildRunRecord> {
+  public async getChildRun(sessionId: string, childRunId: string): Promise<ChildRunRecord> {
     await this.ensureDaemon();
 
     const response = await fetch(
@@ -474,9 +441,7 @@ export class AlanClient {
     );
 
     if (!response.ok) {
-      throw new Error(
-        `Failed to get child run: ${await this.readErrorMessage(response)}`,
-      );
+      throw new Error(`Failed to get child run: ${await this.readErrorMessage(response)}`);
     }
 
     const data = (await response.json()) as ChildRunResponse;
@@ -500,9 +465,7 @@ export class AlanClient {
     );
 
     if (!response.ok) {
-      throw new Error(
-        `Failed to terminate child run: ${await this.readErrorMessage(response)}`,
-      );
+      throw new Error(`Failed to terminate child run: ${await this.readErrorMessage(response)}`);
     }
 
     const data = (await response.json()) as ChildRunResponse;
@@ -512,14 +475,11 @@ export class AlanClient {
   public async submitOperation(sessionId: string, op: Op): Promise<void> {
     await this.ensureDaemon();
 
-    const response = await fetch(
-      `${this.baseUrl}${apiPaths.sessionSubmit(sessionId)}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ op }),
-      },
-    );
+    const response = await fetch(`${this.baseUrl}${apiPaths.sessionSubmit(sessionId)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ op }),
+    });
 
     if (!response.ok) {
       throw new Error(`Failed to submit operation: ${response.statusText}`);
@@ -554,17 +514,13 @@ export class AlanClient {
 
     const response = await fetch(`${this.baseUrl}${apiPaths.connections()}`);
     if (!response.ok) {
-      throw new Error(
-        `Failed to list connections: ${await this.readErrorMessage(response)}`,
-      );
+      throw new Error(`Failed to list connections: ${await this.readErrorMessage(response)}`);
     }
 
     return (await response.json()) as ConnectionListResponse;
   }
 
-  public async getConnectionCurrent(
-    workspaceDir?: string,
-  ): Promise<ConnectionCurrentState> {
+  public async getConnectionCurrent(workspaceDir?: string): Promise<ConnectionCurrentState> {
     await this.ensureDaemon();
 
     const url = new URL(`${this.baseUrl}${apiPaths.connectionsCurrent()}`);
@@ -582,14 +538,10 @@ export class AlanClient {
     return (await response.json()) as ConnectionCurrentState;
   }
 
-  public async getConnection(
-    profileId: string,
-  ): Promise<ConnectionProfileSummary> {
+  public async getConnection(profileId: string): Promise<ConnectionProfileSummary> {
     await this.ensureDaemon();
 
-    const response = await fetch(
-      `${this.baseUrl}${apiPaths.connection(profileId)}`,
-    );
+    const response = await fetch(`${this.baseUrl}${apiPaths.connection(profileId)}`);
     if (!response.ok) {
       throw new Error(
         `Failed to read connection ${profileId}: ${await this.readErrorMessage(response)}`,
@@ -604,18 +556,13 @@ export class AlanClient {
   ): Promise<ConnectionProfileSummary> {
     await this.ensureDaemon();
 
-    const response = await fetch(
-      `${this.baseUrl}${apiPaths.connections()}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(request),
-      },
-    );
+    const response = await fetch(`${this.baseUrl}${apiPaths.connections()}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(request),
+    });
     if (!response.ok) {
-      throw new Error(
-        `Failed to create connection: ${await this.readErrorMessage(response)}`,
-      );
+      throw new Error(`Failed to create connection: ${await this.readErrorMessage(response)}`);
     }
 
     return (await response.json()) as ConnectionProfileSummary;
@@ -627,14 +574,11 @@ export class AlanClient {
   ): Promise<ConnectionProfileSummary> {
     await this.ensureDaemon();
 
-    const response = await fetch(
-      `${this.baseUrl}${apiPaths.connection(profileId)}`,
-      {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(request),
-      },
-    );
+    const response = await fetch(`${this.baseUrl}${apiPaths.connection(profileId)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(request),
+    });
     if (!response.ok) {
       throw new Error(
         `Failed to update connection ${profileId}: ${await this.readErrorMessage(response)}`,
@@ -647,12 +591,9 @@ export class AlanClient {
   public async removeConnection(profileId: string): Promise<boolean> {
     await this.ensureDaemon();
 
-    const response = await fetch(
-      `${this.baseUrl}${apiPaths.connection(profileId)}`,
-      {
-        method: "DELETE",
-      },
-    );
+    const response = await fetch(`${this.baseUrl}${apiPaths.connection(profileId)}`, {
+      method: "DELETE",
+    });
     if (!response.ok) {
       throw new Error(
         `Failed to remove connection ${profileId}: ${await this.readErrorMessage(response)}`,
@@ -663,19 +604,14 @@ export class AlanClient {
     return data.removed;
   }
 
-  public async activateConnection(
-    profileId: string,
-  ): Promise<ConnectionProfileSummary> {
+  public async activateConnection(profileId: string): Promise<ConnectionProfileSummary> {
     await this.ensureDaemon();
 
-    const response = await fetch(
-      `${this.baseUrl}${apiPaths.connectionActivate(profileId)}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({}),
-      },
-    );
+    const response = await fetch(`${this.baseUrl}${apiPaths.connectionActivate(profileId)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
     if (!response.ok) {
       throw new Error(
         `Failed to activate connection ${profileId}: ${await this.readErrorMessage(response)}`,
@@ -696,9 +632,7 @@ export class AlanClient {
       body: JSON.stringify(request),
     });
     if (!response.ok) {
-      throw new Error(
-        `Failed to update default profile: ${await this.readErrorMessage(response)}`,
-      );
+      throw new Error(`Failed to update default profile: ${await this.readErrorMessage(response)}`);
     }
 
     return (await response.json()) as ConnectionCurrentState;
@@ -709,26 +643,19 @@ export class AlanClient {
   ): Promise<ConnectionCurrentState> {
     await this.ensureDaemon();
 
-    const response = await fetch(
-      `${this.baseUrl}${apiPaths.connectionsDefaultClear()}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(request),
-      },
-    );
+    const response = await fetch(`${this.baseUrl}${apiPaths.connectionsDefaultClear()}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(request),
+    });
     if (!response.ok) {
-      throw new Error(
-        `Failed to clear default profile: ${await this.readErrorMessage(response)}`,
-      );
+      throw new Error(`Failed to clear default profile: ${await this.readErrorMessage(response)}`);
     }
 
     return (await response.json()) as ConnectionCurrentState;
   }
 
-  public async pinConnection(
-    request: PinConnectionRequest,
-  ): Promise<ConnectionCurrentState> {
+  public async pinConnection(request: PinConnectionRequest): Promise<ConnectionCurrentState> {
     await this.ensureDaemon();
 
     const response = await fetch(`${this.baseUrl}${apiPaths.connectionsPin()}`, {
@@ -745,9 +672,7 @@ export class AlanClient {
     return (await response.json()) as ConnectionCurrentState;
   }
 
-  public async unpinConnection(
-    request: UnpinConnectionRequest,
-  ): Promise<ConnectionCurrentState> {
+  public async unpinConnection(request: UnpinConnectionRequest): Promise<ConnectionCurrentState> {
     await this.ensureDaemon();
 
     const response = await fetch(`${this.baseUrl}${apiPaths.connectionsUnpin()}`, {
@@ -756,9 +681,7 @@ export class AlanClient {
       body: JSON.stringify(request),
     });
     if (!response.ok) {
-      throw new Error(
-        `Failed to clear connection pin: ${await this.readErrorMessage(response)}`,
-      );
+      throw new Error(`Failed to clear connection pin: ${await this.readErrorMessage(response)}`);
     }
 
     return (await response.json()) as ConnectionCurrentState;
@@ -872,9 +795,7 @@ export class AlanClient {
     return (await response.json()) as ConnectionLoginSuccessResponse;
   }
 
-  public async logoutConnection(
-    profileId: string,
-  ): Promise<ConnectionLogoutResponse> {
+  public async logoutConnection(profileId: string): Promise<ConnectionLogoutResponse> {
     await this.ensureDaemon();
 
     const response = await fetch(
@@ -897,14 +818,11 @@ export class AlanClient {
   public async testConnection(profileId: string): Promise<ConnectionTestResponse> {
     await this.ensureDaemon();
 
-    const response = await fetch(
-      `${this.baseUrl}${apiPaths.connectionTest(profileId)}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({}),
-      },
-    );
+    const response = await fetch(`${this.baseUrl}${apiPaths.connectionTest(profileId)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
     if (!response.ok) {
       throw new Error(
         `Failed to test connection ${profileId}: ${await this.readErrorMessage(response)}`,
@@ -1133,11 +1051,7 @@ export class AlanClient {
     });
   }
 
-  public async resume(
-    sessionId: string,
-    requestId: string,
-    content: unknown,
-  ): Promise<void> {
+  public async resume(sessionId: string, requestId: string, content: unknown): Promise<void> {
     await this.submitOperation(sessionId, {
       type: "resume",
       request_id: requestId,

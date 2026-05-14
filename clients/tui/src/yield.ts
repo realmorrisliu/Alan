@@ -1,13 +1,10 @@
 import type {
-  AdaptiveForm,
   AdaptivePresentationHint,
   ConfirmationYieldPayload as ProtocolConfirmationYieldPayload,
   CustomYieldPayload as ProtocolCustomYieldPayload,
   DynamicToolYieldPayload as ProtocolDynamicToolYieldPayload,
   ProtocolStructuredInputKind,
   ProtocolStructuredInputOption,
-  ProtocolStructuredInputQuestion,
-  StructuredInputYieldPayload as ProtocolStructuredInputYieldPayload,
   YieldKind,
 } from "./types";
 
@@ -44,17 +41,11 @@ export interface StructuredInputYieldPayload {
   questions: StructuredQuestion[];
 }
 
-export interface DynamicToolYieldPayload extends Omit<
-  ProtocolDynamicToolYieldPayload,
-  "form"
-> {
+export interface DynamicToolYieldPayload extends Omit<ProtocolDynamicToolYieldPayload, "form"> {
   form?: AdaptiveFormState;
 }
 
-export interface CustomYieldPayload extends Omit<
-  ProtocolCustomYieldPayload,
-  "form"
-> {
+export interface CustomYieldPayload extends Omit<ProtocolCustomYieldPayload, "form"> {
   form?: AdaptiveFormState;
 }
 
@@ -82,9 +73,7 @@ export function asStringArray(value: unknown): string[] {
   return value.filter((item): item is string => typeof item === "string");
 }
 
-function parsePresentationHints(
-  value: unknown,
-): AdaptivePresentationHint[] | undefined {
+function parsePresentationHints(value: unknown): AdaptivePresentationHint[] | undefined {
   const hints = asStringArray(value).filter(
     (hint): hint is AdaptivePresentationHint =>
       hint === "radio" ||
@@ -97,10 +86,7 @@ function parsePresentationHints(
   return hints.length > 0 ? hints : undefined;
 }
 
-function parseStructuredInputKind(
-  value: unknown,
-  hasOptions: boolean,
-): StructuredInputKind | null {
+function parseStructuredInputKind(value: unknown, hasOptions: boolean): StructuredInputKind | null {
   if (
     value === "text" ||
     value === "boolean" ||
@@ -189,14 +175,10 @@ function parseStructuredQuestion(value: unknown): StructuredQuestion | null {
   const id = asString(question.id);
   const label = asString(question.label);
   const prompt = asString(question.prompt);
-  const kindCandidate = parseStructuredInputKind(
-    question.kind,
-    Array.isArray(question.options),
-  );
+  const kindCandidate = parseStructuredInputKind(question.kind, Array.isArray(question.options));
   const options = parseStructuredOptions(question.options, kindCandidate);
   const kind = parseStructuredInputKind(question.kind, options.length > 0);
-  const required =
-    typeof question.required === "boolean" ? question.required : undefined;
+  const required = typeof question.required === "boolean" ? question.required : undefined;
   const placeholder = asString(question.placeholder) || undefined;
   const helpText = asString(question.help_text) || undefined;
   const defaultValue = asString(question.default) || undefined;
@@ -209,10 +191,7 @@ function parseStructuredQuestion(value: unknown): StructuredQuestion | null {
     return null;
   }
 
-  if (
-    (usesSingleSelectKind(kind) || usesMultiSelectKind(kind)) &&
-    options.length === 0
-  ) {
+  if ((usesSingleSelectKind(kind) || usesMultiSelectKind(kind)) && options.length === 0) {
     return null;
   }
 
@@ -254,9 +233,7 @@ export function normalizeYieldKind(
   return null;
 }
 
-export function parseConfirmationPayload(
-  payload: unknown,
-): ConfirmationYieldPayload | null {
+export function parseConfirmationPayload(payload: unknown): ConfirmationYieldPayload | null {
   const data = asRecord(payload);
   const summary = data ? asString(data.summary) : null;
   if (!data || !summary) {
@@ -273,9 +250,7 @@ export function parseConfirmationPayload(
   };
 }
 
-export function parseStructuredInputPayload(
-  payload: unknown,
-): StructuredInputYieldPayload | null {
+export function parseStructuredInputPayload(payload: unknown): StructuredInputYieldPayload | null {
   const data = asRecord(payload);
   const title = data ? asString(data.title) : null;
   if (!data || !title || !Array.isArray(data.questions)) {
@@ -307,9 +282,7 @@ export function parseAdaptiveForm(payload: unknown): AdaptiveFormState | null {
   return { fields };
 }
 
-export function parseDynamicToolYieldPayload(
-  payload: unknown,
-): DynamicToolYieldPayload | null {
+export function parseDynamicToolYieldPayload(payload: unknown): DynamicToolYieldPayload | null {
   const data = asRecord(payload);
   const toolName = data ? asString(data.tool_name) : null;
   const title = data ? asString(data.title) : null;
@@ -326,9 +299,7 @@ export function parseDynamicToolYieldPayload(
   };
 }
 
-export function parseCustomYieldPayload(
-  payload: unknown,
-): CustomYieldPayload | null {
+export function parseCustomYieldPayload(payload: unknown): CustomYieldPayload | null {
   const data = asRecord(payload);
   if (!data) {
     return null;
@@ -369,10 +340,7 @@ export function preferredConfirmationActionIndex(
   options: string[],
   defaultOption?: string | null,
 ): number {
-  const resolvedDefaultOption = resolveConfirmationDefaultOption(
-    options,
-    defaultOption,
-  );
+  const resolvedDefaultOption = resolveConfirmationDefaultOption(options, defaultOption);
   if (resolvedDefaultOption) {
     return options.findIndex((option) => option === resolvedDefaultOption);
   }
@@ -402,8 +370,7 @@ function isRejectLikeConfirmationAction(action: string): boolean {
 
 function isUtilityConfirmationAction(action: string): boolean {
   return (
-    normalizedConfirmationAction(action) === "modify" ||
-    isRejectLikeConfirmationAction(action)
+    normalizedConfirmationAction(action) === "modify" || isRejectLikeConfirmationAction(action)
   );
 }
 
@@ -411,14 +378,8 @@ export function resolveDangerousConfirmationAction(
   options: string[],
   defaultOption?: string | null,
 ): string | null {
-  const resolvedDefaultOption = resolveConfirmationDefaultOption(
-    options,
-    defaultOption,
-  );
-  if (
-    resolvedDefaultOption &&
-    !isUtilityConfirmationAction(resolvedDefaultOption)
-  ) {
+  const resolvedDefaultOption = resolveConfirmationDefaultOption(options, defaultOption);
+  if (resolvedDefaultOption && !isUtilityConfirmationAction(resolvedDefaultOption)) {
     return resolvedDefaultOption;
   }
 
@@ -432,17 +393,13 @@ export function resolveDangerousConfirmationAction(
     "confirm",
     "yes",
   ]) {
-    const match = options.find(
-      (option) => normalizedConfirmationAction(option) === preferred,
-    );
+    const match = options.find((option) => normalizedConfirmationAction(option) === preferred);
     if (match) {
       return match;
     }
   }
 
-  const actionableOptions = options.filter(
-    (option) => !isUtilityConfirmationAction(option),
-  );
+  const actionableOptions = options.filter((option) => !isUtilityConfirmationAction(option));
   return actionableOptions.length === 1 ? actionableOptions[0] : null;
 }
 
@@ -451,9 +408,7 @@ export function confirmationActionOptions(payload: unknown): string[] {
   return options.length > 0 ? options : ["approve", "modify", "reject"];
 }
 
-export function confirmationPresentationHints(
-  payload: unknown,
-): AdaptivePresentationHint[] {
+export function confirmationPresentationHints(payload: unknown): AdaptivePresentationHint[] {
   return parseConfirmationPayload(payload)?.presentation_hints ?? [];
 }
 
@@ -461,9 +416,7 @@ export function confirmationIsDangerous(payload: unknown): boolean {
   return confirmationPresentationHints(payload).includes("dangerous");
 }
 
-export function confirmationDetails(
-  payload: unknown,
-): Record<string, unknown> | null {
+export function confirmationDetails(payload: unknown): Record<string, unknown> | null {
   return parseConfirmationPayload(payload)?.details ?? null;
 }
 

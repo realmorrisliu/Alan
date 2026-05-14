@@ -111,9 +111,9 @@ export interface ClientCapabilities {
 export interface ToolDecisionAudit {
   policy_source: string;
   rule_id?: string;
-  action: "allow" | "deny" | "escalate" | string;
+  action: "allow" | "deny" | "escalate" | (string & {});
   reason?: string;
-  capability: "read" | "write" | "network" | "unknown" | string;
+  capability: "read" | "write" | "network" | "unknown" | (string & {});
   sandbox_backend: string;
 }
 

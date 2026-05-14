@@ -2,11 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import {
-  clearShellBinding,
-  readShellBindingTarget,
-  writeShellBinding,
-} from "./shell-binding.js";
+import { clearShellBinding, readShellBindingTarget, writeShellBinding } from "./shell-binding.js";
 
 let tempRoot: string | null = null;
 
@@ -59,7 +55,14 @@ describe("shell binding", () => {
     expect(typeof payload.last_projected_at).toBe("string");
 
     await clearShellBinding(target);
-    await expect(readFile(target.filePath, "utf8")).rejects.toThrow();
+
+    let missingFileError: unknown;
+    try {
+      await readFile(target.filePath, "utf8");
+    } catch (error) {
+      missingFileError = error;
+    }
+    expect(missingFileError).toBeInstanceOf(Error);
   });
 
   test("serializes overlapping shell binding mutations by call order", async () => {

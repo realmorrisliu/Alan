@@ -35,14 +35,11 @@ export function countPlanStatuses(items: PlanItem[]): PlanStatusCounts {
 function shouldClearCurrentPlan(event: EventEnvelope): boolean {
   return (
     event.type === "session_rolled_back" ||
-    (event.type === "turn_completed" &&
-      event.summary === "Task cancelled by user")
+    (event.type === "turn_completed" && event.summary === "Task cancelled by user")
   );
 }
 
-function buildCurrentPlanState(
-  snapshot: PlanSnapshot,
-): CurrentPlanState | null {
+function buildCurrentPlanState(snapshot: PlanSnapshot): CurrentPlanState | null {
   if (!snapshot.items.length) {
     return null;
   }
@@ -72,17 +69,12 @@ function parsePlanEventSequence(eventId: string): number | null {
   return Number.isFinite(sequence) ? sequence : null;
 }
 
-function isPlanStateNewer(
-  candidate: CurrentPlanState,
-  current: CurrentPlanState,
-): boolean {
+function isPlanStateNewer(candidate: CurrentPlanState, current: CurrentPlanState): boolean {
   if (candidate.lastUpdatedAt !== current.lastUpdatedAt) {
     return candidate.lastUpdatedAt > current.lastUpdatedAt;
   }
 
-  const candidateSequence = parsePlanEventSequence(
-    candidate.lastUpdatedEventId,
-  );
+  const candidateSequence = parsePlanEventSequence(candidate.lastUpdatedEventId);
   const currentSequence = parsePlanEventSequence(current.lastUpdatedEventId);
 
   if (

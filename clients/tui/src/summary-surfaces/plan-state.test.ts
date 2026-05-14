@@ -8,9 +8,7 @@ import {
 } from "./plan-state";
 import type { EventEnvelope, PlanSnapshot } from "../types";
 
-function planUpdatedEvent(
-  overrides: Partial<EventEnvelope> = {},
-): EventEnvelope {
+function planUpdatedEvent(overrides: Partial<EventEnvelope> = {}): EventEnvelope {
   return {
     event_id: "event-plan",
     sequence: 1,

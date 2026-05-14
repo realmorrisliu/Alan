@@ -34,9 +34,7 @@ function writeConfigFile(path: string, content: string): void {
     chmodSync(path, 0o600);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    throw new Error(
-      `Failed to write configuration file at ${path}: ${message}`,
-    );
+    throw new Error(`Failed to write configuration file at ${path}: ${message}`);
   }
 }
 
@@ -55,24 +53,18 @@ function validateExistingHostConfig(path: string): void {
     parsed = Bun.TOML.parse(readConfigFile(path));
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    throw new Error(
-      `Existing host configuration at ${path} is invalid: ${message}`,
-    );
+    throw new Error(`Existing host configuration at ${path} is invalid: ${message}`);
   }
 
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new Error(
-      `Existing host configuration at ${path} must be a TOML table.`,
-    );
+    throw new Error(`Existing host configuration at ${path} must be a TOML table.`);
   }
 
   const hostConfig = parsed as Record<string, unknown>;
   for (const key of ["bind_address", "daemon_url"] as const) {
     const value = hostConfig[key];
     if (value !== undefined && typeof value !== "string") {
-      throw new Error(
-        `Existing host configuration at ${path} has a non-string ${key}.`,
-      );
+      throw new Error(`Existing host configuration at ${path} has a non-string ${key}.`);
     }
   }
 }
