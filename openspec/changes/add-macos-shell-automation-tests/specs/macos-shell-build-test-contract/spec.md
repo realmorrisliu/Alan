@@ -24,7 +24,7 @@ behavior, and basic terminal input when terminal runtime is available.
 
 #### Scenario: Launch smoke
 - **WHEN** the UI smoke flow starts the macOS app
-- **THEN** it verifies that the default light-mode window shows the space rail, active tab list, terminal content area, and no persistent inspector pane or toggle
+- **THEN** it verifies that the default light-mode window shows the unified sidebar column, active-space tab list, bottom space switcher, terminal content area, and no persistent inspector pane or toggle
 
 #### Scenario: Split smoke
 - **WHEN** the UI smoke flow creates a split

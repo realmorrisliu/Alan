@@ -181,7 +181,7 @@ corner-radius normalization when default macOS shell chrome is changed.
 
 #### Scenario: Visual comparison captured
 - **WHEN** radius normalization implementation is marked complete
-- **THEN** maintainers can inspect running-app screenshots or notes for sidebar, terminal, command palette, and remaining default-shell overlay states confirming that the UI is smaller-radius, still native, and not visually flat
+- **THEN** maintainers can inspect running-app screenshots or notes for sidebar, terminal, command input, and remaining default-shell overlay states confirming that the UI is smaller-radius, still native, and not visually flat
 
 #### Scenario: Legacy surfaces scoped
 - **WHEN** radius inventory finds older or non-primary Apple client surfaces
@@ -231,3 +231,71 @@ regressions when architecture maintainability changes are implemented.
 - **THEN** verification includes diff review, project membership validation, and
   the focused Apple build or script checks needed to prove behavior was not
   intentionally changed
+
+### Requirement: Streamlined sidebar has focused verification
+The Apple client SHALL include focused verification for sidebar information
+architecture changes that remove visible copy or restructure space/tab
+navigation.
+
+#### Scenario: Sidebar reading order is reviewed
+- **WHEN** sidebar IA implementation is marked complete
+- **THEN** maintainers can inspect screenshots or manual notes showing the vertical sidebar, active-space tab list, bottom borderless space switcher, separate creation affordances, and no persistent explanatory sidebar blocks
+
+#### Scenario: Sidebar interaction states are reviewed
+- **WHEN** tab or space row secondary actions are progressively disclosed
+- **THEN** verification covers default, hover, selected, no-notification-dot, and empty states without row resizing or layout shifts
+- **AND** verification covers the tab row hierarchy where normal rows are containerless, hover/focus rows are subtle, selected rows are strongest, and creation rows stay muted until interaction
+- **AND** verification covers the space-title/tab-list scroll boundary where the divider and shadow appear only as tab rows scroll underneath the fixed space title region
+
+#### Scenario: Sidebar space swipe is reviewed
+- **WHEN** horizontal space switching is implemented in the sidebar
+- **THEN** verification covers gesture-tracked left and right sidebar previews, translation-first drag mapping, fast horizontal flick commit, full-width space-title and tab-list motion, stationary hold, zero-delta release, horizontal/vertical axis lock, later vertical movement during a horizontal swipe, no static side padding gaps during page motion, a stable workspace during drag, commit, cancel, edge resistance, and confirms vertical tab-list scrolling still works
+
+#### Scenario: Split tab indicator is reviewed
+- **WHEN** split-aware tab row implementation is marked complete
+- **THEN** verification covers single-pane, two-pane horizontal, two-pane vertical, complex split, focused-pane, no-notification-dot, pointer activation, and keyboard or accessibility activation states
+
+#### Scenario: Accessibility copy is preserved
+- **WHEN** visible sidebar text is removed or shortened
+- **THEN** review confirms accessibility labels, help text, menu labels, or equivalent nonvisual descriptions still identify the affected controls
+
+### Requirement: Command input polish has focused verification
+The Apple client SHALL include focused verification for the `Command-P` input
+surface when command UI behavior or material treatment changes.
+
+#### Scenario: Command input keyboard flow is verified
+- **WHEN** command input implementation is marked complete
+- **THEN** focused tests or manual notes cover open/focus, typing, successful Return submission, unresolved Return behavior, Escape dismissal, click-away dismissal, and terminal focus restoration
+
+#### Scenario: Candidate sections stay removed
+- **WHEN** default command input UI changes
+- **THEN** shell contract checks or review notes confirm action, routing, attention, best-match, command-row, and microphone affordances are not visible in the default command input surface
+
+#### Scenario: Liquid input visual review is captured
+- **WHEN** command input material polish is marked complete
+- **THEN** maintainers can inspect screenshots or manual notes showing the input over the active light-mode shell with legible text, restrained depth, and no large panel below the field
+
+### Requirement: Material hierarchy has focused verification
+The Apple client SHALL include focused verification for active-shell material
+changes so native material polish does not reduce terminal readability or
+reintroduce hard-coded visual effects.
+
+#### Scenario: Material review is captured
+- **WHEN** active macOS shell material roles, background surfaces, or compact control treatments change
+- **THEN** maintainers can inspect screenshots or manual notes covering the default light-mode sidebar, terminal content area, command entry, compact controls, and floating overlays
+
+#### Scenario: Accessibility material settings are reviewed
+- **WHEN** material hierarchy implementation is marked complete
+- **THEN** verification includes reduced-transparency or increased-contrast review notes, or a documented reason those settings could not be exercised locally
+
+#### Scenario: One-off material fills are checked
+- **WHEN** a change adds new active-shell material or translucent fills
+- **THEN** focused review or a lightweight check confirms the fill is attached to a shared semantic material/control role rather than a local hard-coded effect
+
+#### Scenario: Elevation hierarchy is reviewed
+- **WHEN** active macOS shell radius, shadow, rim, or floating-surface treatment changes
+- **THEN** focused review confirms terminal surface, sidebar selection, titlebar controls, command launcher, Find bar, command input, and collapsed sidebar panel use the shared semantic radius/elevation scale
+
+#### Scenario: Light-mode shadow cleanliness is reviewed
+- **WHEN** active shell elevation changes are marked complete
+- **THEN** maintainers can inspect screenshots or notes confirming light-mode shadows are focused and adaptive rather than broad, dirty, or purely black halos
