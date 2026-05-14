@@ -1,10 +1,6 @@
 import { normalizeYieldKind } from "../yield.js";
 
-export type PendingYieldKind =
-  | "confirmation"
-  | "structured_input"
-  | "dynamic_tool"
-  | "custom";
+export type PendingYieldKind = "confirmation" | "structured_input" | "dynamic_tool" | "custom";
 
 export interface PendingYield {
   requestId: string;

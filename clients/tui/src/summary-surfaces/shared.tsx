@@ -6,10 +6,7 @@ export interface SummarySurfacePanelProps {
   children: React.ReactNode;
 }
 
-export function SummarySurfacePanel({
-  title,
-  children,
-}: SummarySurfacePanelProps) {
+export function SummarySurfacePanel({ title, children }: SummarySurfacePanelProps) {
   return (
     <Box flexDirection="column" paddingX={1}>
       <Text color="cyan" bold>

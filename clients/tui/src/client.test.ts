@@ -53,9 +53,44 @@ type FetchImpl = (
   input: Parameters<typeof fetch>[0],
   init?: Parameters<typeof fetch>[1],
 ) => Promise<Response>;
+type FetchBody = NonNullable<Parameters<typeof fetch>[1]>["body"];
 
 function installMockFetch(mockImpl: FetchImpl): void {
   globalThis.fetch = mockImpl as unknown as typeof fetch;
+}
+
+function requestUrlFromInput(input: Parameters<typeof fetch>[0]): URL {
+  if (typeof input === "string") {
+    return new URL(input);
+  }
+  if (input instanceof URL) {
+    return input;
+  }
+  return new URL(input.url);
+}
+
+function requestBodyText(body: FetchBody | null | undefined): string {
+  if (!body) {
+    return "";
+  }
+  return typeof body === "string" ? body : JSON.stringify(body);
+}
+
+async function expectRejectsWithMessage(
+  promise: Promise<unknown>,
+  expectedMessage: string,
+): Promise<void> {
+  let caught: unknown;
+  try {
+    await promise;
+  } catch (error) {
+    caught = error;
+  }
+
+  expect(caught).toBeInstanceOf(Error);
+  if (caught instanceof Error) {
+    expect(caught.message).toContain(expectedMessage);
+  }
 }
 
 afterEach(() => {
@@ -78,20 +113,11 @@ describe("AlanClient replay", () => {
     });
 
     const requestAfterIds: string[] = [];
-    const page1 = Array.from({ length: 200 }, (_, idx) =>
-      makeEnvelope(idx + 2),
-    );
-    const page2 = Array.from({ length: 200 }, (_, idx) =>
-      makeEnvelope(idx + 202),
-    );
+    const page1 = Array.from({ length: 200 }, (_, idx) => makeEnvelope(idx + 2));
+    const page2 = Array.from({ length: 200 }, (_, idx) => makeEnvelope(idx + 202));
 
     installMockFetch(async (input): Promise<Response> => {
-      const requestUrl =
-        typeof input === "string"
-          ? new URL(input)
-          : input instanceof URL
-            ? input
-            : new URL(input.url);
+      const requestUrl = requestUrlFromInput(input);
       const after = requestUrl.searchParams.get("after_event_id");
       if (!after) {
         throw new Error("Expected after_event_id");
@@ -150,9 +176,8 @@ describe("AlanClient replay", () => {
       }),
     );
 
-    await expect(
+    await expectRejectsWithMessage(
       (client as any).replayMissedEvents("sess-test", 7),
-    ).rejects.toThrow(
       "Event replay gap detected but no replayable events were returned",
     );
     expect(errors).toHaveLength(1);
@@ -169,20 +194,12 @@ describe("AlanClient replay", () => {
     (client as any).connectionVersion = 3;
 
     installMockFetch(async (input): Promise<Response> => {
-      const requestUrl =
-        typeof input === "string"
-          ? new URL(input)
-          : input instanceof URL
-            ? input
-            : new URL(input.url);
+      const requestUrl = requestUrlFromInput(input);
       if (requestUrl.pathname.endsWith("/events/read")) {
-        return new Response(
-          JSON.stringify({ error: "Session replay buffer not found" }),
-          {
-            status: 404,
-            headers: { "Content-Type": "application/json" },
-          },
-        );
+        return new Response(JSON.stringify({ error: "Session replay buffer not found" }), {
+          status: 404,
+          headers: { "Content-Type": "application/json" },
+        });
       }
       if (requestUrl.pathname.endsWith("/read")) {
         return jsonResponse({
@@ -200,9 +217,8 @@ describe("AlanClient replay", () => {
       throw new Error(`Unexpected URL: ${requestUrl.toString()}`);
     });
 
-    await expect(
+    await expectRejectsWithMessage(
       (client as any).replayMissedEvents("sess-test", 3),
-    ).rejects.toThrow(
       "Session sess-test is still registered, but its replay stream is unavailable.",
     );
   });
@@ -216,22 +232,15 @@ describe("AlanClient replay", () => {
     (client as any).lastEventId = eventId(99);
     (client as any).connectionVersion = 5;
 
-    installMockFetch(async (input): Promise<Response> => {
-      const requestUrl =
-        typeof input === "string"
-          ? new URL(input)
-          : input instanceof URL
-            ? input
-            : new URL(input.url);
+    installMockFetch(async (): Promise<Response> => {
       return new Response(JSON.stringify({ error: "Not Found" }), {
         status: 404,
         headers: { "Content-Type": "application/json" },
       });
     });
 
-    await expect(
+    await expectRejectsWithMessage(
       (client as any).replayMissedEvents("sess-test", 5),
-    ).rejects.toThrow(
       "Session sess-test is no longer active on the daemon.",
     );
   });
@@ -245,11 +254,7 @@ describe("AlanClient replay", () => {
     (client as any).currentSessionId = "sess-test";
     (client as any).lastEventId = eventId(10);
     (client as any).seenEventIds = [eventId(8), eventId(9), eventId(10)];
-    (client as any).seenEventSet = new Set([
-      eventId(8),
-      eventId(9),
-      eventId(10),
-    ]);
+    (client as any).seenEventSet = new Set([eventId(8), eventId(9), eventId(10)]);
 
     const snapshot = client.captureReplayState();
 
@@ -264,11 +269,7 @@ describe("AlanClient replay", () => {
 
     (client as any).restoreReplayState(snapshot);
     expect((client as any).lastEventId).toBe(eventId(10));
-    expect((client as any).seenEventIds).toEqual([
-      eventId(8),
-      eventId(9),
-      eventId(10),
-    ]);
+    expect((client as any).seenEventIds).toEqual([eventId(8), eventId(9), eventId(10)]);
     expect((client as any).seenEventSet.has(eventId(10))).toBe(true);
   });
 });
@@ -283,11 +284,7 @@ describe("AlanClient connections", () => {
     let requestedUrl = "";
     installMockFetch(async (input): Promise<Response> => {
       requestedUrl =
-        typeof input === "string"
-          ? input
-          : input instanceof URL
-            ? input.toString()
-            : input.url;
+        typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
       return jsonResponse({
         providers: [
           {
@@ -329,19 +326,13 @@ describe("AlanClient connections", () => {
     let requestedBody = "";
     installMockFetch(async (input, init): Promise<Response> => {
       requestedUrl =
-        typeof input === "string"
-          ? input
-          : input instanceof URL
-            ? input.toString()
-            : input.url;
+        typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
       requestedMethod = init?.method ?? "GET";
-      requestedBody =
-        typeof init?.body === "string" ? init.body : String(init?.body ?? "");
+      requestedBody = requestBodyText(init?.body);
       return jsonResponse({
         login_id: "browser_123",
         auth_url: "https://chatgpt.com/oauth/authorize?state=abc",
-        redirect_uri:
-          "http://localhost:1455/auth/callback",
+        redirect_uri: "http://localhost:1455/auth/callback",
         created_at: "2026-04-08T00:00:00Z",
         expires_at: "2026-04-08T00:10:00Z",
       });
@@ -369,14 +360,9 @@ describe("AlanClient connections", () => {
     const requests: Array<{ url: string; method: string; body: string }> = [];
     installMockFetch(async (input, init): Promise<Response> => {
       const url =
-        typeof input === "string"
-          ? input
-          : input instanceof URL
-            ? input.toString()
-            : input.url;
+        typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
       const method = init?.method ?? "GET";
-      const body =
-        typeof init?.body === "string" ? init.body : String(init?.body ?? "");
+      const body = requestBodyText(init?.body);
       requests.push({ url, method, body });
 
       if (url.includes(apiPaths.connectionsCurrent())) {
@@ -408,9 +394,7 @@ describe("AlanClient connections", () => {
     expect(requests[0]?.url).toBe(
       `http://example.com${apiPaths.connectionsCurrent()}?workspace_dir=%2Ftmp%2Fworkspace`,
     );
-    expect(requests[1]?.url).toBe(
-      `http://example.com${apiPaths.connectionsDefaultSet()}`,
-    );
+    expect(requests[1]?.url).toBe(`http://example.com${apiPaths.connectionsDefaultSet()}`);
     expect(requests[1]?.method).toBe("POST");
     expect(requests[1]?.body).toBe(
       JSON.stringify({
@@ -433,11 +417,7 @@ describe("AlanClient child runs", () => {
     const requests: string[] = [];
     installMockFetch(async (input): Promise<Response> => {
       const url =
-        typeof input === "string"
-          ? input
-          : input instanceof URL
-            ? input.toString()
-            : input.url;
+        typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
       requests.push(url);
 
       if (url.endsWith(apiPaths.sessionChildRuns("sess-test"))) {
@@ -475,14 +455,9 @@ describe("AlanClient child runs", () => {
     let requestedBody = "";
     installMockFetch(async (input, init): Promise<Response> => {
       requestedUrl =
-        typeof input === "string"
-          ? input
-          : input instanceof URL
-            ? input.toString()
-            : input.url;
+        typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
       requestedMethod = init?.method ?? "GET";
-      requestedBody =
-        typeof init?.body === "string" ? init.body : String(init?.body ?? "");
+      requestedBody = requestBodyText(init?.body);
       return jsonResponse({
         child_run: makeChildRun({
           status: "terminated",
@@ -496,15 +471,11 @@ describe("AlanClient child runs", () => {
       });
     });
 
-    const childRun = await client.terminateChildRun(
-      "sess-test",
-      "child-run-1",
-      {
-        actor: "tui",
-        mode: "forceful",
-        reason: "operator requested stop",
-      },
-    );
+    const childRun = await client.terminateChildRun("sess-test", "child-run-1", {
+      actor: "tui",
+      mode: "forceful",
+      reason: "operator requested stop",
+    });
 
     expect(requestedUrl).toBe(
       `http://example.com${apiPaths.sessionChildRunTerminate("sess-test", "child-run-1")}`,

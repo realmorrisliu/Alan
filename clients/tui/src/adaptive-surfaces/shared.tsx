@@ -7,11 +7,7 @@ export interface AdaptiveSurfacePanelProps {
   children: React.ReactNode;
 }
 
-export function AdaptiveSurfacePanel({
-  title,
-  requestId,
-  children,
-}: AdaptiveSurfacePanelProps) {
+export function AdaptiveSurfacePanel({ title, requestId, children }: AdaptiveSurfacePanelProps) {
   return (
     <Box flexDirection="column" paddingX={1} marginY={1}>
       <Text color="yellow" bold>

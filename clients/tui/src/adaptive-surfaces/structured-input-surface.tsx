@@ -32,9 +32,7 @@ import type {
 } from "./types.js";
 import { AdaptiveSurfacePanel } from "./shared.js";
 
-export type StructuredQuestionFallbackMode =
-  | "structured_input"
-  | "schema_fallback";
+export type StructuredQuestionFallbackMode = "structured_input" | "schema_fallback";
 
 function multilineFallbackHint(mode: StructuredQuestionFallbackMode): string {
   return mode === "schema_fallback"
@@ -49,9 +47,7 @@ export function structuredAnswersTemplate(payload: unknown): string {
   const template = questions.map((q) => ({
     question_id: q.id,
     value: usesMultiSelectKind(q.kind)
-      ? (q.defaultValues ??
-        q.options?.slice(0, 1).map((option) => option.value) ??
-        [])
+      ? (q.defaultValues ?? q.options?.slice(0, 1).map((option) => option.value) ?? [])
       : usesSingleSelectKind(q.kind)
         ? (q.defaultValue ?? q.options?.[0]?.value ?? "")
         : (q.defaultValue ?? (q.required ? "<required-value>" : "")),
@@ -116,10 +112,7 @@ export function structuredQuestionHints(
     });
   }
 
-  if (
-    questionHasPresentationHint(question, "toggle") &&
-    usesSingleSelectKind(question.kind)
-  ) {
+  if (questionHasPresentationHint(question, "toggle") && usesSingleSelectKind(question.kind)) {
     hints.push({
       text: "Toggle hint: use ←/→ to switch the selected option quickly.",
       color: "gray",
@@ -162,9 +155,7 @@ export function structuredQuestionToggleSummary(
 
   const answer = getStructuredAnswer(formState, question);
   return question.options
-    .map((option) =>
-      answer === option.value ? `[${option.label}]` : option.label,
-    )
+    .map((option) => (answer === option.value ? `[${option.label}]` : option.label))
     .join(" / ");
 }
 
@@ -209,9 +200,7 @@ function renderStructuredInputSurface({
   const activeQuestion = structuredInput?.activeQuestion ?? null;
   const formState = structuredInput?.formState ?? null;
   const formError =
-    formState && questions.length > 0
-      ? structuredFormValidationError(formState, questions)
-      : null;
+    formState && questions.length > 0 ? structuredFormValidationError(formState, questions) : null;
 
   return (
     <AdaptiveSurfacePanel
@@ -223,12 +212,8 @@ function renderStructuredInputSurface({
       {activeQuestion && formState ? (
         <>
           <Text color="gray">
-            {structuredQuestionPositionLabel(
-              formState.activeQuestionIndex,
-              questions,
-            )}{" "}
-            | {activeQuestion.required ? "required" : "optional"} |{" "}
-            {activeQuestion.kind}
+            {structuredQuestionPositionLabel(formState.activeQuestionIndex, questions)} |{" "}
+            {activeQuestion.required ? "required" : "optional"} | {activeQuestion.kind}
           </Text>
           {questions.map((question, index) => {
             const isActive = index === formState.activeQuestionIndex;
@@ -248,30 +233,25 @@ function renderStructuredInputSurface({
               </Box>
             );
           })}
-          {activeQuestion.helpText ? (
-            <Text color="gray">{activeQuestion.helpText}</Text>
-          ) : null}
+          {activeQuestion.helpText ? <Text color="gray">{activeQuestion.helpText}</Text> : null}
           {structuredQuestionHints(activeQuestion).map((hint) => (
             <Text key={hint.text} color={hint.color}>
               {hint.text}
             </Text>
           ))}
-          {usesTextEntryKind(activeQuestion.kind) &&
-          activeQuestion.placeholder ? (
+          {usesTextEntryKind(activeQuestion.kind) && activeQuestion.placeholder ? (
             <Text color="gray">placeholder: {activeQuestion.placeholder}</Text>
           ) : null}
           {usesMultiSelectKind(activeQuestion.kind) ? (
             <Text color="gray">
               constraint: min=
-              {activeQuestion.minSelections ??
-                (activeQuestion.required ? 1 : 0)}
-              , max={activeQuestion.maxSelections ?? "any"}
+              {activeQuestion.minSelections ?? (activeQuestion.required ? 1 : 0)}, max=
+              {activeQuestion.maxSelections ?? "any"}
             </Text>
           ) : null}
           {structuredQuestionToggleSummary(activeQuestion, formState) ? (
             <Text color="gray">
-              Toggle:{" "}
-              {structuredQuestionToggleSummary(activeQuestion, formState)}
+              Toggle: {structuredQuestionToggleSummary(activeQuestion, formState)}
             </Text>
           ) : null}
           {activeQuestion.options?.map((option, index) => {
@@ -279,8 +259,7 @@ function renderStructuredInputSurface({
             const isSelected = Array.isArray(answer)
               ? answer.includes(option.value)
               : answer === option.value;
-            const isCursor =
-              getStructuredOptionCursor(formState, activeQuestion) === index;
+            const isCursor = getStructuredOptionCursor(formState, activeQuestion) === index;
             const marker = usesMultiSelectKind(activeQuestion.kind)
               ? isSelected
                 ? "[x]"
@@ -316,34 +295,22 @@ function renderStructuredInputSurface({
   );
 }
 
-function structuredInputFooterHint({
-  structuredInput,
-}: AdaptiveSurfaceRenderContext) {
+function structuredInputFooterHint({ structuredInput }: AdaptiveSurfaceRenderContext) {
   return structuredQuestionControls(structuredInput?.activeQuestion ?? null);
 }
 
-function structuredInputLabel({
-  structuredInput,
-  pendingYield,
-}: AdaptiveSurfaceInputContext) {
-  return pendingYield.kind === "structured_input"
-    ? "Answer / Command"
-    : "Action";
+function structuredInputLabel({ pendingYield }: AdaptiveSurfaceInputContext) {
+  return pendingYield.kind === "structured_input" ? "Answer / Command" : "Action";
 }
 
-function structuredInputPlaceholder({
-  structuredInput,
-}: AdaptiveSurfaceInputContext) {
+function structuredInputPlaceholder({ structuredInput }: AdaptiveSurfaceInputContext) {
   const activeQuestion = structuredInput?.activeQuestion ?? null;
   return activeQuestion && usesTextEntryKind(activeQuestion.kind)
     ? `Answer: ${activeQuestion.label} (or /answers fallback)`
     : "Use adaptive controls above, or type /answers <json-array>";
 }
 
-function structuredInputFocus({
-  structuredInput,
-  inputValue,
-}: AdaptiveSurfaceInputContext) {
+function structuredInputFocus({ structuredInput, inputValue }: AdaptiveSurfaceInputContext) {
   return (
     !structuredInput?.activeQuestion ||
     usesTextEntryKind(structuredInput.activeQuestion.kind) ||
@@ -403,26 +370,16 @@ function handleStructuredInputKey({
     return false;
   }
 
-  if (
-    usesSingleSelectKind(activeQuestion.kind) &&
-    (key.leftArrow || input === "h")
-  ) {
+  if (usesSingleSelectKind(activeQuestion.kind) && (key.leftArrow || input === "h")) {
     setFormState((previous) =>
-      previous
-        ? moveStructuredSingleSelection(previous, activeQuestion, -1)
-        : previous,
+      previous ? moveStructuredSingleSelection(previous, activeQuestion, -1) : previous,
     );
     return true;
   }
 
-  if (
-    usesSingleSelectKind(activeQuestion.kind) &&
-    (key.rightArrow || input === "l")
-  ) {
+  if (usesSingleSelectKind(activeQuestion.kind) && (key.rightArrow || input === "l")) {
     setFormState((previous) =>
-      previous
-        ? moveStructuredSingleSelection(previous, activeQuestion, 1)
-        : previous,
+      previous ? moveStructuredSingleSelection(previous, activeQuestion, 1) : previous,
     );
     return true;
   }
@@ -465,11 +422,7 @@ function handleStructuredInputKey({
 
   if (usesMultiSelectKind(activeQuestion.kind) && input === " ") {
     const cursor = getStructuredOptionCursor(formState, activeQuestion);
-    const nextState = toggleStructuredMultiOption(
-      formState,
-      activeQuestion,
-      cursor,
-    );
+    const nextState = toggleStructuredMultiOption(formState, activeQuestion, cursor);
     if (nextState === formState) {
       addSystemEvent(
         "system_warning",

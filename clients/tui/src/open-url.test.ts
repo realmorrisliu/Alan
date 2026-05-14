@@ -52,7 +52,7 @@ describe("resolveBrowserOpenCommand", () => {
     const command = resolveBrowserOpenCommand(
       "https://chatgpt.com/oauth/authorize?state=abc&code=123",
       "darwin",
-      "\"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome\" --profile-directory=Default",
+      '"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --profile-directory=Default',
     );
 
     expect(command).toEqual({
@@ -68,15 +68,12 @@ describe("resolveBrowserOpenCommand", () => {
     const command = resolveBrowserOpenCommand(
       "https://chatgpt.com/oauth/authorize?state=abc&code=123",
       "win32",
-      "\"C:\\Program Files\\Mozilla Firefox\\firefox.exe\" --new-window",
+      '"C:\\Program Files\\Mozilla Firefox\\firefox.exe" --new-window',
     );
 
     expect(command).toEqual({
       command: "C:\\Program Files\\Mozilla Firefox\\firefox.exe",
-      args: [
-        "--new-window",
-        "https://chatgpt.com/oauth/authorize?state=abc&code=123",
-      ],
+      args: ["--new-window", "https://chatgpt.com/oauth/authorize?state=abc&code=123"],
     });
   });
 
@@ -89,10 +86,7 @@ describe("resolveBrowserOpenCommand", () => {
 
     expect(command).toEqual({
       command: "C:\\Tools\\firefox.exe",
-      args: [
-        "--new-window",
-        "https://chatgpt.com/oauth/authorize?state=abc&code=123",
-      ],
+      args: ["--new-window", "https://chatgpt.com/oauth/authorize?state=abc&code=123"],
     });
   });
 
@@ -100,15 +94,12 @@ describe("resolveBrowserOpenCommand", () => {
     const command = resolveBrowserOpenCommand(
       "https://chatgpt.com/oauth/authorize?state=abc&code=123",
       "win32",
-      "\"\\\\server\\share\\firefox.exe\" --new-window",
+      '"\\\\server\\share\\firefox.exe" --new-window',
     );
 
     expect(command).toEqual({
       command: "\\\\server\\share\\firefox.exe",
-      args: [
-        "--new-window",
-        "https://chatgpt.com/oauth/authorize?state=abc&code=123",
-      ],
+      args: ["--new-window", "https://chatgpt.com/oauth/authorize?state=abc&code=123"],
     });
   });
 
@@ -121,10 +112,7 @@ describe("resolveBrowserOpenCommand", () => {
 
     expect(command).toEqual({
       command: "\\\\server\\share\\firefox.exe",
-      args: [
-        "--new-window",
-        "https://chatgpt.com/oauth/authorize?state=abc&code=123",
-      ],
+      args: ["--new-window", "https://chatgpt.com/oauth/authorize?state=abc&code=123"],
     });
   });
 });

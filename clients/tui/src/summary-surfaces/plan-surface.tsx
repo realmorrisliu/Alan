@@ -3,9 +3,7 @@ import { Box, Text } from "ink";
 import type { CurrentPlanState } from "./plan-state.js";
 import { SummarySurfacePanel } from "./shared.js";
 
-function planItemMarker(
-  status: CurrentPlanState["items"][number]["status"],
-): string {
+function planItemMarker(status: CurrentPlanState["items"][number]["status"]): string {
   if (status === "completed") {
     return "[x]";
   }
@@ -15,9 +13,7 @@ function planItemMarker(
   return "[ ]";
 }
 
-function planItemColor(
-  status: CurrentPlanState["items"][number]["status"],
-): string {
+function planItemColor(status: CurrentPlanState["items"][number]["status"]): string {
   if (status === "completed") {
     return "green";
   }
@@ -47,10 +43,7 @@ export interface PlanSurfaceProps {
   plan: CurrentPlanState;
 }
 
-export function planItemRowKey(
-  item: CurrentPlanState["items"][number],
-  index: number,
-): string {
+export function planItemRowKey(item: CurrentPlanState["items"][number], index: number): string {
   return `${item.id}:${index}`;
 }
 
@@ -62,8 +55,7 @@ export function PlanSurface({ plan }: PlanSurfaceProps) {
       {plan.items.map((item, index) => (
         <Box key={planItemRowKey(item, index)}>
           <Text color={planItemColor(item.status)}>
-            {item.status === "in_progress" ? ">" : " "}{" "}
-            {planItemMarker(item.status)} {item.content}
+            {item.status === "in_progress" ? ">" : " "} {planItemMarker(item.status)} {item.content}
           </Text>
         </Box>
       ))}

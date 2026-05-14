@@ -4,15 +4,8 @@ import { preferredConfirmationActionIndex } from "../yield";
 
 describe("confirmation surface helpers", () => {
   test("preferred action respects explicit defaults before approve", () => {
-    expect(
-      preferredConfirmationActionIndex(
-        ["reject", "approve", "modify"],
-        "modify",
-      ),
-    ).toBe(2);
-    expect(
-      preferredConfirmationActionIndex(["reject", "approve", "modify"], "skip"),
-    ).toBe(1);
+    expect(preferredConfirmationActionIndex(["reject", "approve", "modify"], "modify")).toBe(2);
+    expect(preferredConfirmationActionIndex(["reject", "approve", "modify"], "skip")).toBe(1);
     expect(preferredConfirmationActionIndex(["modify", "reject"])).toBe(0);
   });
 
@@ -36,11 +29,7 @@ describe("confirmation surface helpers", () => {
       { label: "replay call id", value: "call-123", color: "cyan" },
       {
         label: "arguments",
-        value: JSON.stringify(
-          { path: "/tmp/file.txt", content: "hello" },
-          null,
-          2,
-        ),
+        value: JSON.stringify({ path: "/tmp/file.txt", content: "hello" }, null, 2),
         color: "gray",
       },
       { label: "policy.action", value: "escalate" },

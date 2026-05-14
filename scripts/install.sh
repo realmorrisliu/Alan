@@ -25,10 +25,8 @@ echo "Building TUI..."
 mkdir -p "$BIN_DIR"
 cd "$PROJECT_ROOT/clients/tui"
 bun install --frozen-lockfile 2>/dev/null || bun install
-NODE_PATH="$PROJECT_ROOT/clients/tui/.shims" bun build src/index.tsx \
-  --outfile="$BIN_DIR/alan-tui" \
-  --target=bun \
-  --compile
+bun run build:js
+ALAN_TUI_BINARY_OUTFILE="$BIN_DIR/alan-tui" bun run build:standalone
 chmod +x "$BIN_DIR/alan-tui"
 # Clean up old bundle from previous install to avoid stale fallback behavior.
 rm -f "$BIN_DIR/alan-tui.js"

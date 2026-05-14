@@ -1,11 +1,5 @@
-import {
-  currentStructuredQuestion,
-  type StructuredFormState,
-} from "../structured-input.js";
-import {
-  parseSchemaDrivenYieldForm,
-  type SchemaDrivenYieldForm,
-} from "../schema-driven-yield.js";
+import { currentStructuredQuestion, type StructuredFormState } from "../structured-input.js";
+import { parseSchemaDrivenYieldForm, type SchemaDrivenYieldForm } from "../schema-driven-yield.js";
 import {
   confirmationActionOptions,
   confirmationDefaultOption,
@@ -14,10 +8,7 @@ import {
   type StructuredQuestion,
 } from "../yield.js";
 import { getAdaptiveSurface } from "./registry.js";
-import type {
-  AdaptiveSurfaceDefinition,
-  AdaptiveSurfaceRenderContext,
-} from "./types.js";
+import type { AdaptiveSurfaceDefinition, AdaptiveSurfaceRenderContext } from "./types.js";
 import type { PendingYield } from "./yield-state.js";
 
 export interface AdaptiveSurfaceViewModel {
@@ -37,10 +28,7 @@ export interface BuildAdaptiveSurfaceViewModelInput {
   schemaFormState: StructuredFormState | null;
 }
 
-function clampConfirmationActionIndex(
-  actionIndex: number,
-  optionCount: number,
-): number {
+function clampConfirmationActionIndex(actionIndex: number, optionCount: number): number {
   if (optionCount <= 0) {
     return 0;
   }
@@ -56,36 +44,25 @@ export function buildAdaptiveSurfaceViewModel({
   schemaFormState,
 }: BuildAdaptiveSurfaceViewModelInput): AdaptiveSurfaceViewModel {
   const confirmationOptions =
-    pendingYield?.kind === "confirmation"
-      ? confirmationActionOptions(pendingYield.payload)
-      : [];
+    pendingYield?.kind === "confirmation" ? confirmationActionOptions(pendingYield.payload) : [];
   const confirmationActionIndexForRequest =
     pendingYield?.kind === "confirmation"
       ? confirmationActionRequestId === pendingYield.requestId
-        ? clampConfirmationActionIndex(
-            confirmationActionIndex,
-            confirmationOptions.length,
-          )
+        ? clampConfirmationActionIndex(confirmationActionIndex, confirmationOptions.length)
         : preferredConfirmationActionIndex(
             confirmationOptions,
             confirmationDefaultOption(pendingYield.payload),
           )
       : 0;
   const pendingStructuredQuestions =
-    pendingYield?.kind === "structured_input"
-      ? structuredQuestions(pendingYield.payload)
-      : [];
+    pendingYield?.kind === "structured_input" ? structuredQuestions(pendingYield.payload) : [];
   const pendingSchemaForm =
-    pendingYield &&
-    (pendingYield.kind === "dynamic_tool" || pendingYield.kind === "custom")
+    pendingYield && (pendingYield.kind === "dynamic_tool" || pendingYield.kind === "custom")
       ? parseSchemaDrivenYieldForm(pendingYield.payload)
       : null;
   const activeStructuredQuestion =
     structuredFormState && pendingYield?.kind === "structured_input"
-      ? currentStructuredQuestion(
-          structuredFormState,
-          pendingStructuredQuestions,
-        )
+      ? currentStructuredQuestion(structuredFormState, pendingStructuredQuestions)
       : null;
   const activeSchemaQuestion =
     schemaFormState && pendingSchemaForm
@@ -132,9 +109,7 @@ export function buildAdaptiveSurfaceViewModel({
   };
 }
 
-export function isAdaptiveSurfaceReadyForInput(
-  viewModel: AdaptiveSurfaceViewModel,
-): boolean {
+export function isAdaptiveSurfaceReadyForInput(viewModel: AdaptiveSurfaceViewModel): boolean {
   const context = viewModel.adaptiveSurfaceContext;
   if (!context || !viewModel.activeSurface?.handleInputKey) {
     return false;
@@ -143,8 +118,7 @@ export function isAdaptiveSurfaceReadyForInput(
   const { pendingYield } = context;
   if (
     pendingYield.kind === "structured_input" &&
-    (!context.structuredInput?.formState ||
-      !context.structuredInput.activeQuestion)
+    (!context.structuredInput?.formState || !context.structuredInput.activeQuestion)
   ) {
     return false;
   }

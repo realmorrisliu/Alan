@@ -86,15 +86,9 @@ describe("structured input helpers", () => {
       QUESTIONS[2],
     ];
 
-    expect(shouldReuseStructuredFormState(state, "req-1", QUESTIONS)).toBe(
-      true,
-    );
-    expect(
-      shouldReuseStructuredFormState(state, "req-1", changedQuestions),
-    ).toBe(false);
-    expect(shouldReuseStructuredFormState(state, "req-2", QUESTIONS)).toBe(
-      false,
-    );
+    expect(shouldReuseStructuredFormState(state, "req-1", QUESTIONS)).toBe(true);
+    expect(shouldReuseStructuredFormState(state, "req-1", changedQuestions)).toBe(false);
+    expect(shouldReuseStructuredFormState(state, "req-2", QUESTIONS)).toBe(false);
   });
 
   test("single-select and multi-select helpers update answers", () => {
@@ -108,30 +102,18 @@ describe("structured input helpers", () => {
   });
 
   test("optional single-select can stay blank until user chooses", () => {
-    const state = createStructuredFormState("req-1", [
-      OPTIONAL_SINGLE_SELECT_QUESTION,
-    ]);
+    const state = createStructuredFormState("req-1", [OPTIONAL_SINGLE_SELECT_QUESTION]);
 
     expect(state.answers[OPTIONAL_SINGLE_SELECT_QUESTION.id]).toBe("");
-    expect(
-      questionValidationError(state, OPTIONAL_SINGLE_SELECT_QUESTION),
-    ).toBeNull();
+    expect(questionValidationError(state, OPTIONAL_SINGLE_SELECT_QUESTION)).toBeNull();
   });
 
   test("single-select navigation updates the chosen answer", () => {
-    let state = createStructuredFormState("req-1", [
-      OPTIONAL_SINGLE_SELECT_QUESTION,
-    ]);
-    state = moveStructuredSingleSelection(
-      state,
-      OPTIONAL_SINGLE_SELECT_QUESTION,
-      1,
-    );
+    let state = createStructuredFormState("req-1", [OPTIONAL_SINGLE_SELECT_QUESTION]);
+    state = moveStructuredSingleSelection(state, OPTIONAL_SINGLE_SELECT_QUESTION, 1);
 
     expect(state.answers[OPTIONAL_SINGLE_SELECT_QUESTION.id]).toBe("anthropic");
-    expect(
-      state.optionCursorByQuestionId[OPTIONAL_SINGLE_SELECT_QUESTION.id],
-    ).toBe(1);
+    expect(state.optionCursorByQuestionId[OPTIONAL_SINGLE_SELECT_QUESTION.id]).toBe(1);
   });
 
   test("multi-select helper respects maxSelections", () => {
@@ -144,12 +126,8 @@ describe("structured input helpers", () => {
 
   test("validation reports the first blocking question", () => {
     const state = createStructuredFormState("req-1", QUESTIONS);
-    expect(questionValidationError(state, QUESTIONS[0])).toBe(
-      "Answer required.",
-    );
-    expect(structuredFormValidationError(state, QUESTIONS)).toBe(
-      "Branch: Answer required.",
-    );
+    expect(questionValidationError(state, QUESTIONS[0])).toBe("Answer required.");
+    expect(structuredFormValidationError(state, QUESTIONS)).toBe("Branch: Answer required.");
   });
 
   test("validation rejects unknown select options", () => {
@@ -191,9 +169,7 @@ describe("structured input helpers", () => {
 
   test("questionAnswerPreview renders readable selections", () => {
     const state = createStructuredFormState("req-1", QUESTIONS);
-    expect(questionAnswerPreview(state, QUESTIONS[0])).toBe(
-      "feature/adaptive-yield-ui",
-    );
+    expect(questionAnswerPreview(state, QUESTIONS[0])).toBe("feature/adaptive-yield-ui");
     expect(questionAnswerPreview(state, QUESTIONS[1])).toBe("Anthropic");
     expect(questionAnswerPreview(state, QUESTIONS[2])).toBe("Staging");
   });

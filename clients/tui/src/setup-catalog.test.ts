@@ -43,10 +43,7 @@ describe("service-first setup catalog", () => {
 
   test("ChatGPT / Codex preset writes canonical managed-login config", () => {
     const option = requireServicePreset("chatgpt_codex");
-    const agentConfig = buildConfigContent(
-      option,
-      applySetupDefaults(DEFAULT_CONFIG, option),
-    );
+    const agentConfig = buildConfigContent(option, applySetupDefaults(DEFAULT_CONFIG, option));
     const connectionsConfig = buildConnectionsContent(
       option,
       applySetupDefaults(DEFAULT_CONFIG, option),
@@ -59,7 +56,7 @@ describe("service-first setup catalog", () => {
     ]);
     expect(agentConfig).not.toContain("connection_profile =");
     expect(connectionsConfig).toContain('default_profile = "chatgpt-main"');
-    expect(connectionsConfig).toContain('[credentials.chatgpt-main]');
+    expect(connectionsConfig).toContain("[credentials.chatgpt-main]");
     expect(connectionsConfig).toContain('provider_family = "chatgpt"');
     expect(connectionsConfig).toContain('base_url = "https://chatgpt.com/backend-api/codex"');
     expect(connectionsConfig).toContain('model = "gpt-5.3-codex"');
@@ -104,16 +101,10 @@ describe("service-first setup catalog", () => {
     const connectionsConfig = buildConnectionsContent(option, config);
 
     expect(option.provider).toBe("openai_chat_completions_compatible");
-    expect(option.fields.some((field) => field.key.includes("base_url"))).toBe(
-      false,
-    );
+    expect(option.fields.some((field) => field.key.includes("base_url"))).toBe(false);
     expect(agentConfig).not.toContain("connection_profile =");
-    expect(connectionsConfig).toContain(
-      'base_url = "https://openrouter.ai/api/v1"',
-    );
-    expect(connectionsConfig).toContain(
-      'model = "openai/gpt-5.2"',
-    );
+    expect(connectionsConfig).toContain('base_url = "https://openrouter.ai/api/v1"');
+    expect(connectionsConfig).toContain('model = "openai/gpt-5.2"');
     expect(agentConfig).not.toContain("[[skill_overrides]]");
     expect(agentConfig).not.toContain('bind_address = "127.0.0.1:8090"');
   });
@@ -125,9 +116,7 @@ describe("service-first setup catalog", () => {
       openai_chat_completions_compatible_model: "",
     });
 
-    expect(rendered).toContain(
-      'model = "kimi-k2-0905-preview"',
-    );
+    expect(rendered).toContain('model = "kimi-k2-0905-preview"');
   });
 
   test("switching to a different service preset resets shared credentials", () => {
@@ -146,9 +135,7 @@ describe("service-first setup catalog", () => {
     expect(switched.openai_chat_completions_compatible_base_url).toBe(
       "https://api.deepseek.com/v1",
     );
-    expect(switched.openai_chat_completions_compatible_model).toBe(
-      "deepseek-chat",
-    );
+    expect(switched.openai_chat_completions_compatible_model).toBe("deepseek-chat");
   });
 
   test("re-entering the same preset preserves its in-progress field values", () => {
@@ -163,34 +150,23 @@ describe("service-first setup catalog", () => {
       kimi,
     );
 
-    expect(preserved.openai_chat_completions_compatible_api_key).toBe(
-      "sk-kimi",
-    );
-    expect(preserved.openai_chat_completions_compatible_model).toBe(
-      "kimi-custom",
-    );
+    expect(preserved.openai_chat_completions_compatible_api_key).toBe("sk-kimi");
+    expect(preserved.openai_chat_completions_compatible_model).toBe("kimi-custom");
     expect(preserved.openai_chat_completions_compatible_base_url).toBe(
       "https://api.moonshot.cn/v1",
     );
   });
 
   test("advanced compatible setup exposes base URL for manual endpoint control", () => {
-    const option = requireAdvancedPreset(
-      "advanced_openai_chat_completions_compatible",
-    );
-    const rendered = buildConnectionsContent(
-      option,
-      applySetupDefaults(DEFAULT_CONFIG, option),
-    );
+    const option = requireAdvancedPreset("advanced_openai_chat_completions_compatible");
+    const rendered = buildConnectionsContent(option, applySetupDefaults(DEFAULT_CONFIG, option));
 
     expect(option.fields.map((field) => field.key)).toEqual([
       "openai_chat_completions_compatible_base_url",
       "openai_chat_completions_compatible_api_key",
       "openai_chat_completions_compatible_model",
     ]);
-    expect(rendered).toContain(
-      'base_url = "https://api.openai.com/v1"',
-    );
+    expect(rendered).toContain('base_url = "https://api.openai.com/v1"');
   });
 
   test("host config content uses canonical split host file shape", () => {

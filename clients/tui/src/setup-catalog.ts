@@ -54,9 +54,7 @@ export interface AdvancedSetupHandoff extends CatalogEntryBase {
   kind: "advanced_handoff";
 }
 
-export type ServiceCatalogEntry =
-  | ConfigurableSetupOption
-  | AdvancedSetupHandoff;
+export type ServiceCatalogEntry = ConfigurableSetupOption | AdvancedSetupHandoff;
 
 export const DEFAULT_CONFIG: ConfigValues = {
   chatgpt_base_url: "https://chatgpt.com/backend-api/codex",
@@ -254,14 +252,11 @@ export const SERVICE_CATALOG: ServiceCatalogEntry[] = [
     kind: "preset",
     name: "OpenRouter",
     desc: "One API key, many hosted models.",
-    detail:
-      "Uses OpenAI Chat Completions API-compatible settings under the hood.",
+    detail: "Uses OpenAI Chat Completions API-compatible settings under the hood.",
     provider: "openai_chat_completions_compatible",
-    sectionTitle:
-      "OpenRouter (OpenAI Chat Completions API-compatible) Configuration",
+    sectionTitle: "OpenRouter (OpenAI Chat Completions API-compatible) Configuration",
     defaults: {
-      openai_chat_completions_compatible_base_url:
-        "https://openrouter.ai/api/v1",
+      openai_chat_completions_compatible_base_url: "https://openrouter.ai/api/v1",
       openai_chat_completions_compatible_model: "openai/gpt-5.2",
     },
     fields: OPENAI_COMPATIBLE_SERVICE_FIELDS,
@@ -272,11 +267,9 @@ export const SERVICE_CATALOG: ServiceCatalogEntry[] = [
     kind: "preset",
     name: "Kimi Coding",
     desc: "Moonshot AI's Kimi API for coding workflows.",
-    detail:
-      "Uses OpenAI Chat Completions API-compatible settings with Moonshot defaults.",
+    detail: "Uses OpenAI Chat Completions API-compatible settings with Moonshot defaults.",
     provider: "openai_chat_completions_compatible",
-    sectionTitle:
-      "Kimi Coding (OpenAI Chat Completions API-compatible) Configuration",
+    sectionTitle: "Kimi Coding (OpenAI Chat Completions API-compatible) Configuration",
     defaults: {
       openai_chat_completions_compatible_base_url: "https://api.moonshot.cn/v1",
       openai_chat_completions_compatible_model: "kimi-k2-0905-preview",
@@ -289,14 +282,11 @@ export const SERVICE_CATALOG: ServiceCatalogEntry[] = [
     kind: "preset",
     name: "DeepSeek",
     desc: "Official DeepSeek API setup.",
-    detail:
-      "Uses OpenAI Chat Completions API-compatible settings with DeepSeek defaults.",
+    detail: "Uses OpenAI Chat Completions API-compatible settings with DeepSeek defaults.",
     provider: "openai_chat_completions_compatible",
-    sectionTitle:
-      "DeepSeek (OpenAI Chat Completions API-compatible) Configuration",
+    sectionTitle: "DeepSeek (OpenAI Chat Completions API-compatible) Configuration",
     defaults: {
-      openai_chat_completions_compatible_base_url:
-        "https://api.deepseek.com/v1",
+      openai_chat_completions_compatible_base_url: "https://api.deepseek.com/v1",
       openai_chat_completions_compatible_model: "deepseek-chat",
     },
     fields: OPENAI_COMPATIBLE_SERVICE_FIELDS,
@@ -337,8 +327,7 @@ export const SERVICE_CATALOG: ServiceCatalogEntry[] = [
     kind: "advanced_handoff",
     name: "Advanced / custom setup",
     desc: "Choose the raw API family yourself.",
-    detail:
-      "Use this expert path for custom endpoints or manual transport selection.",
+    detail: "Use this expert path for custom endpoints or manual transport selection.",
   },
 ];
 
@@ -349,8 +338,7 @@ export const ADVANCED_PROVIDER_CATALOG: ConfigurableSetupOption[] = [
     kind: "preset",
     name: "OpenAI Responses API",
     desc: "Manual OpenAI API Platform setup.",
-    detail:
-      "Expert path when you want direct control over the Responses API config.",
+    detail: "Expert path when you want direct control over the Responses API config.",
     provider: "openai_responses",
     sectionTitle: "OpenAI Responses API Configuration",
     defaults: {
@@ -365,8 +353,7 @@ export const ADVANCED_PROVIDER_CATALOG: ConfigurableSetupOption[] = [
     kind: "preset",
     name: "OpenAI Chat Completions API",
     desc: "Manual official chat/completions setup.",
-    detail:
-      "Use this only if you explicitly want chat/completions instead of Responses.",
+    detail: "Use this only if you explicitly want chat/completions instead of Responses.",
     provider: "openai_chat_completions",
     sectionTitle: "OpenAI Chat Completions API Configuration",
     defaults: {
@@ -381,8 +368,7 @@ export const ADVANCED_PROVIDER_CATALOG: ConfigurableSetupOption[] = [
     kind: "preset",
     name: "OpenAI Chat Completions API-compatible",
     desc: "Manual setup for custom compatible endpoints.",
-    detail:
-      "Use this for providers that mirror OpenAI chat/completions semantics.",
+    detail: "Use this for providers that mirror OpenAI chat/completions semantics.",
     provider: "openai_chat_completions_compatible",
     sectionTitle: "Custom OpenAI Chat Completions API-compatible Configuration",
     defaults: {
@@ -397,8 +383,7 @@ export const ADVANCED_PROVIDER_CATALOG: ConfigurableSetupOption[] = [
     kind: "preset",
     name: "Anthropic Messages API",
     desc: "Manual setup for Anthropic-compatible endpoints.",
-    detail:
-      "Use this for Anthropic-native or compatible Messages API surfaces.",
+    detail: "Use this for Anthropic-native or compatible Messages API surfaces.",
     provider: "anthropic_messages",
     sectionTitle: "Anthropic Messages API Configuration",
     defaults: {
@@ -413,8 +398,7 @@ export const ADVANCED_PROVIDER_CATALOG: ConfigurableSetupOption[] = [
     kind: "preset",
     name: "Google Gemini GenerateContent API",
     desc: "Manual Google Vertex AI setup.",
-    detail:
-      "Use this when you want raw control over Gemini project, region, and model.",
+    detail: "Use this when you want raw control over Gemini project, region, and model.",
     provider: "google_gemini_generate_content",
     sectionTitle: "Google Gemini GenerateContent API Configuration",
     defaults: {
@@ -455,9 +439,7 @@ export function configForSetupSelection(
   return { ...resetConfig, ...preservedValues };
 }
 
-export function configFieldsForSetup(
-  option: ConfigurableSetupOption,
-): ConfigField[] {
+export function configFieldsForSetup(option: ConfigurableSetupOption): ConfigField[] {
   return option.fields;
 }
 
@@ -484,9 +466,7 @@ export interface SetupSecretMaterial {
   secret: string;
 }
 
-export function defaultProfileIdForSetup(
-  option: ConfigurableSetupOption,
-): string {
+export function defaultProfileIdForSetup(option: ConfigurableSetupOption): string {
   switch (option.key) {
     case "chatgpt_codex":
       return "chatgpt-main";
@@ -507,18 +487,14 @@ export function defaultProfileIdForSetup(
   }
 }
 
-export function browserLoginProfileIdForSetup(
-  option: ConfigurableSetupOption,
-): string | null {
+export function browserLoginProfileIdForSetup(option: ConfigurableSetupOption): string | null {
   if (option.provider !== "chatgpt") {
     return null;
   }
   return defaultProfileIdForSetup(option);
 }
 
-function defaultCredentialIdForSetup(
-  option: ConfigurableSetupOption,
-): string | null {
+function defaultCredentialIdForSetup(option: ConfigurableSetupOption): string | null {
   if (option.provider === "google_gemini_generate_content") {
     return null;
   }
@@ -536,9 +512,7 @@ function credentialKindForProvider(option: ConfigurableSetupOption): string | nu
   }
 }
 
-function credentialBackendForProvider(
-  option: ConfigurableSetupOption,
-): string | null {
+function credentialBackendForProvider(option: ConfigurableSetupOption): string | null {
   switch (option.provider) {
     case "chatgpt":
       return "alan_home_auth_json";
@@ -566,21 +540,9 @@ function buildProfileSettings(
       };
     case "google_gemini_generate_content":
       return {
-        project_id: resolvedValue(
-          option,
-          config,
-          "google_gemini_generate_content_project_id",
-        ),
-        location: resolvedValue(
-          option,
-          config,
-          "google_gemini_generate_content_location",
-        ),
-        model: resolvedValue(
-          option,
-          config,
-          "google_gemini_generate_content_model",
-        ),
+        project_id: resolvedValue(option, config, "google_gemini_generate_content_project_id"),
+        location: resolvedValue(option, config, "google_gemini_generate_content_location"),
+        model: resolvedValue(option, config, "google_gemini_generate_content_model"),
       };
     case "openai_responses":
       return {
@@ -589,25 +551,13 @@ function buildProfileSettings(
       };
     case "openai_chat_completions":
       return {
-        base_url: resolvedValue(
-          option,
-          config,
-          "openai_chat_completions_base_url",
-        ),
+        base_url: resolvedValue(option, config, "openai_chat_completions_base_url"),
         model: resolvedValue(option, config, "openai_chat_completions_model"),
       };
     case "openai_chat_completions_compatible":
       return {
-        base_url: resolvedValue(
-          option,
-          config,
-          "openai_chat_completions_compatible_base_url",
-        ),
-        model: resolvedValue(
-          option,
-          config,
-          "openai_chat_completions_compatible_model",
-        ),
+        base_url: resolvedValue(option, config, "openai_chat_completions_compatible_base_url"),
+        model: resolvedValue(option, config, "openai_chat_completions_compatible_model"),
       };
     case "anthropic_messages":
       return {
@@ -635,11 +585,7 @@ export function buildSetupSecretMaterial(
       secret = resolvedValue(option, config, "openai_chat_completions_api_key");
       break;
     case "openai_chat_completions_compatible":
-      secret = resolvedValue(
-        option,
-        config,
-        "openai_chat_completions_compatible_api_key",
-      );
+      secret = resolvedValue(option, config, "openai_chat_completions_compatible_api_key");
       break;
     case "anthropic_messages":
       secret = resolvedValue(option, config, "anthropic_messages_api_key");
@@ -656,10 +602,7 @@ export function buildSetupSecretMaterial(
   return { credentialId, secret };
 }
 
-export function buildConfigContent(
-  option: ConfigurableSetupOption,
-  _config: ConfigValues,
-): string {
+export function buildConfigContent(option: ConfigurableSetupOption, _config: ConfigValues): string {
   return `# Alan Agent Configuration
 # Generated by alan init wizard
 

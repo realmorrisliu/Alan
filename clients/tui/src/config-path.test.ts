@@ -39,10 +39,7 @@ describe("config path resolution", () => {
     const candidates = resolveConfigPathCandidates(home, {
       ALAN_CONFIG_PATH: "/tmp/missing.toml",
     });
-    const existing = selectExistingConfigPath(
-      candidates,
-      (path) => path === canonicalPath,
-    );
+    const existing = selectExistingConfigPath(candidates, (path) => path === canonicalPath);
     expect(existing).toBe(canonicalPath);
   });
 
@@ -50,10 +47,7 @@ describe("config path resolution", () => {
     const candidates = resolveConfigPathCandidates(home, {
       ALAN_CONFIG_PATH: "/tmp/missing.toml",
     });
-    const needsSetup = shouldRunFirstTimeSetup(
-      candidates,
-      (path) => path === canonicalPath,
-    );
+    const needsSetup = shouldRunFirstTimeSetup(candidates, (path) => path === canonicalPath);
     expect(needsSetup).toBe(false);
   });
 
@@ -68,10 +62,7 @@ describe("config path resolution", () => {
     const configDir = join(tempRoot, "config-dir");
     const configFile = join(tempRoot, "config.toml");
     mkdirSync(configDir);
-    writeFileSync(
-      configFile,
-      'connection_profile = "gemini"\n',
-    );
+    writeFileSync(configFile, 'connection_profile = "gemini"\n');
 
     expect(isExistingConfigFile(configDir)).toBe(false);
     expect(isExistingConfigFile(configFile)).toBe(true);

@@ -4,10 +4,7 @@ import { structuredInputSurface } from "./structured-input-surface.js";
 import type { AdaptiveSurfaceDefinition } from "./types.js";
 import type { PendingYield, PendingYieldKind } from "./yield-state.js";
 
-export const adaptiveSurfaceRegistry: Record<
-  PendingYieldKind,
-  AdaptiveSurfaceDefinition
-> = {
+export const adaptiveSurfaceRegistry: Record<PendingYieldKind, AdaptiveSurfaceDefinition> = {
   confirmation: confirmationSurface,
   structured_input: structuredInputSurface,
   dynamic_tool: dynamicToolSurface,

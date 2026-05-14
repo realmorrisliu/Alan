@@ -1,12 +1,7 @@
 import type { PendingYield } from "../adaptive-surfaces/yield-state.js";
 import type { EventEnvelope } from "../types.js";
 
-export type ShellRunStatus =
-  | "starting"
-  | "ready"
-  | "running"
-  | "yielded"
-  | "error";
+export type ShellRunStatus = "starting" | "ready" | "running" | "yielded" | "error";
 
 export interface RuntimeToolState {
   callId?: string;
@@ -131,9 +126,7 @@ function normalizeIncompleteTool(
   };
 }
 
-function completionFallbackStatus(
-  event: EventEnvelope,
-): RuntimeToolState["status"] {
+function completionFallbackStatus(event: EventEnvelope): RuntimeToolState["status"] {
   if (event.success === false) {
     return "failed";
   }
@@ -205,10 +198,7 @@ export function reduceCurrentRuntimeState(
 
   if (event.type === "turn_started") {
     return {
-      ...resetTurnScopedRuntimeState(
-        state,
-        "turn restarted before tool completion",
-      ),
+      ...resetTurnScopedRuntimeState(state, "turn restarted before tool completion"),
       recoverableError: null,
     };
   }
@@ -223,11 +213,7 @@ export function reduceCurrentRuntimeState(
   }
 
   if (event.type === "task_completed") {
-    return resetTurnScopedRuntimeState(
-      state,
-      "task completed before tool completion",
-      true,
-    );
+    return resetTurnScopedRuntimeState(state, "task completed before tool completion", true);
   }
 
   if (event.type === "session_rolled_back") {
@@ -274,9 +260,7 @@ export function reduceCurrentRuntimeState(
     return {
       ...state,
       activeTool:
-        !callId ||
-        state.activeTool?.callId === callId ||
-        state.activeTool?.name === name
+        !callId || state.activeTool?.callId === callId || state.activeTool?.name === name
           ? null
           : state.activeTool,
       recentTool: {
@@ -326,10 +310,7 @@ export function buildCurrentRuntimeSummary({
 }: BuildRuntimeSummaryInput): CurrentRuntimeSummary {
   const summaryState =
     shellRunStatus === "error"
-      ? resetTurnScopedRuntimeState(
-          state,
-          state.recoverableError?.message ?? "runtime error",
-        )
+      ? resetTurnScopedRuntimeState(state, state.recoverableError?.message ?? "runtime error")
       : state;
 
   return {
@@ -343,11 +324,7 @@ export function buildCurrentRuntimeSummary({
     activeTool: summaryState.activeTool,
     recentTool: summaryState.recentTool,
     recoverableError: summaryState.recoverableError,
-    guidance: buildGuidance(
-      shellRunStatus,
-      pendingYield,
-      summaryState.recoverableError,
-    ),
+    guidance: buildGuidance(shellRunStatus, pendingYield, summaryState.recoverableError),
   };
 }
 

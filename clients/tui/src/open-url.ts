@@ -37,9 +37,7 @@ function splitCommandLine(commandLine: string): string[] {
 
       if (
         nextCharacter &&
-        (/\s/.test(nextCharacter) ||
-          nextCharacter === '"' ||
-          nextCharacter === "'")
+        (/\s/.test(nextCharacter) || nextCharacter === '"' || nextCharacter === "'")
       ) {
         escaping = true;
       } else {

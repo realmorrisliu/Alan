@@ -127,9 +127,9 @@ export interface ClientCapabilities {
 export interface ToolDecisionAudit {
   policy_source: string;
   rule_id?: string;
-  action: "allow" | "deny" | "escalate" | string;
+  action: "allow" | "deny" | "escalate" | (string & {});
   reason?: string;
-  capability: "read" | "write" | "network" | "unknown" | string;
+  capability: "read" | "write" | "network" | "unknown" | (string & {});
   sandbox_backend: string;
 }
 
@@ -209,7 +209,7 @@ MAP_EOF
 echo "✓ Generated event map at $OUTPUT_DIR/event-map.ts"
 
 if command -v bunx >/dev/null 2>&1; then
-  (cd clients/tui && bunx prettier --write src/generated/api-contract.ts src/generated/event-map.ts src/generated/types.ts >/dev/null)
+  (cd clients/tui && bunx oxfmt src/generated/api-contract.ts src/generated/event-map.ts src/generated/types.ts >/dev/null)
   echo "✓ Formatted generated TypeScript"
 fi
 

@@ -224,8 +224,7 @@ export class DaemonManager {
 
     const alanBin = await this.findAlanBinary();
     if (!alanBin) {
-      const error =
-        "Cannot find `alan` binary. Install with `just install` or set ALAN_CLI_PATH.";
+      const error = "Cannot find `alan` binary. Install with `just install` or set ALAN_CLI_PATH.";
       this.status = { state: "error", url: this.status.url, error };
       throw new Error(error);
     }
@@ -237,11 +236,7 @@ export class DaemonManager {
     };
 
     if (this.config.verbose) {
-      pushLog(
-        this.logBuffer,
-        `[daemon] start via: ${alanBin} daemon start`,
-        this.maxLogBuffer,
-      );
+      pushLog(this.logBuffer, `[daemon] start via: ${alanBin} daemon start`, this.maxLogBuffer);
     }
 
     try {
@@ -299,13 +294,7 @@ export class DaemonManager {
     };
 
     try {
-      const { output } = await runCommand(
-        alanBin,
-        ["daemon", "stop"],
-        env,
-        this.config.cwd,
-        8000,
-      );
+      const { output } = await runCommand(alanBin, ["daemon", "stop"], env, this.config.cwd, 8000);
       if (output) {
         for (const line of output.split(/\r?\n/)) {
           pushLog(this.logBuffer, line, this.maxLogBuffer);
@@ -337,9 +326,7 @@ export function getDaemon(config?: DaemonConfig): DaemonManager {
   return globalDaemon;
 }
 
-export async function ensureDaemon(
-  config?: DaemonConfig,
-): Promise<DaemonManager> {
+export async function ensureDaemon(config?: DaemonConfig): Promise<DaemonManager> {
   const daemon = getDaemon(config);
 
   if (daemon.getStatus().state !== "running") {

@@ -1,7 +1,4 @@
-import {
-  getStructuredAnswer,
-  type StructuredFormState,
-} from "./structured-input.js";
+import { getStructuredAnswer, type StructuredFormState } from "./structured-input.js";
 import type { StructuredQuestion } from "./yield.js";
 import {
   parseCustomYieldPayload,
@@ -15,9 +12,7 @@ export interface SchemaDrivenYieldForm {
   questions: StructuredQuestion[];
 }
 
-export function parseSchemaDrivenYieldForm(
-  payload: unknown,
-): SchemaDrivenYieldForm | null {
+export function parseSchemaDrivenYieldForm(payload: unknown): SchemaDrivenYieldForm | null {
   const dynamic = parseDynamicToolYieldPayload(payload);
   if (dynamic?.form?.fields.length) {
     return {

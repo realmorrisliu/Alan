@@ -29,9 +29,7 @@ function plan(overrides: Partial<CurrentPlanState> = {}): CurrentPlanState {
   };
 }
 
-function runtime(
-  overrides: Partial<CurrentRuntimeSummary> = {},
-): CurrentRuntimeSummary {
+function runtime(overrides: Partial<CurrentRuntimeSummary> = {}): CurrentRuntimeSummary {
   return {
     headline: "Running bash",
     shellRunStatus: "running",
@@ -58,9 +56,7 @@ describe("summary HUD helpers", () => {
     expect(
       buildPlanHudSummary(
         plan({
-          items: [
-            { id: "verify", content: "Run focused tests", status: "pending" },
-          ],
+          items: [{ id: "verify", content: "Run focused tests", status: "pending" }],
           statusCounts: {
             completed: 0,
             in_progress: 0,

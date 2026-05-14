@@ -1,9 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { createStructuredFormState } from "../structured-input";
-import {
-  buildAdaptiveSurfaceViewModel,
-  isAdaptiveSurfaceReadyForInput,
-} from "./view-model";
+import { buildAdaptiveSurfaceViewModel, isAdaptiveSurfaceReadyForInput } from "./view-model";
 import type { PendingYield } from "./yield-state";
 
 describe("adaptive surface view model", () => {
@@ -43,9 +40,7 @@ describe("adaptive surface view model", () => {
 
     expect(viewModel.pendingStructuredQuestions).toHaveLength(1);
     expect(viewModel.activeStructuredQuestion?.id).toBe("branch");
-    expect(
-      viewModel.adaptiveSurfaceContext?.structuredInput?.activeQuestion?.id,
-    ).toBe("branch");
+    expect(viewModel.adaptiveSurfaceContext?.structuredInput?.activeQuestion?.id).toBe("branch");
     expect(isAdaptiveSurfaceReadyForInput(viewModel)).toBe(true);
   });
 

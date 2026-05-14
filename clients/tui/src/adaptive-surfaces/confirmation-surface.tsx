@@ -51,19 +51,12 @@ function formatDetailValue(value: unknown): string {
   if (typeof value === "string") {
     return value;
   }
-  if (
-    typeof value === "number" ||
-    typeof value === "boolean" ||
-    typeof value === "bigint"
-  ) {
+  if (typeof value === "number" || typeof value === "boolean" || typeof value === "bigint") {
     return String(value);
   }
   if (Array.isArray(value)) {
     return value.every(
-      (item) =>
-        typeof item === "string" ||
-        typeof item === "number" ||
-        typeof item === "boolean",
+      (item) => typeof item === "string" || typeof item === "number" || typeof item === "boolean",
     )
       ? value.join(", ")
       : JSON.stringify(value, null, 2);
@@ -182,8 +175,7 @@ export function buildConfirmationDetailRows(
   }
 
   return rows.sort((left, right) => {
-    const priorityDelta =
-      detailRowPriority(left.label) - detailRowPriority(right.label);
+    const priorityDelta = detailRowPriority(left.label) - detailRowPriority(right.label);
     if (priorityDelta !== 0) {
       return priorityDelta;
     }
@@ -210,10 +202,7 @@ function confirmationActionStyle(
   return { color: "yellow" };
 }
 
-function confirmationShortcutHints(
-  options: string[],
-  activeAction?: string,
-): string[] {
+function confirmationShortcutHints(options: string[], activeAction?: string): string[] {
   const hints = [activeAction ? `Enter ${activeAction}` : "Enter confirm"];
   if (options.length > 1) {
     hints.push("←/→ select");
@@ -245,10 +234,7 @@ function confirmationSlashCommands(options: string[]): string[] {
   return commands;
 }
 
-function executeConfirmationAction(
-  action: string,
-  context: AdaptiveSurfaceKeyContext,
-): void {
+function executeConfirmationAction(action: string, context: AdaptiveSurfaceKeyContext): void {
   if (action === "approve") {
     context.submitPendingYield({ choice: "approve" });
     return;
@@ -265,33 +251,21 @@ function executeConfirmationAction(
   context.submitPendingYield({ choice: action });
 }
 
-function renderConfirmationSurface({
-  pendingYield,
-  confirmation,
-}: AdaptiveSurfaceRenderContext) {
+function renderConfirmationSurface({ pendingYield, confirmation }: AdaptiveSurfaceRenderContext) {
   const summary = confirmationSummary(pendingYield.payload);
   const options = confirmationActionOptions(pendingYield.payload);
   const defaultOption = confirmationDefaultOption(pendingYield.payload);
-  const resolvedDefaultOption = resolveConfirmationDefaultOption(
-    options,
-    defaultOption,
-  );
+  const resolvedDefaultOption = resolveConfirmationDefaultOption(options, defaultOption);
   const dangerousConfirmation = confirmationIsDangerous(pendingYield.payload);
   const dangerousAction = dangerousConfirmation
     ? resolveDangerousConfirmationAction(options, defaultOption)
     : null;
-  const detailRows = buildConfirmationDetailRows(
-    confirmationDetails(pendingYield.payload),
-  );
+  const detailRows = buildConfirmationDetailRows(confirmationDetails(pendingYield.payload));
   const actionIndex =
-    confirmation?.actionIndex ??
-    preferredConfirmationActionIndex(options, defaultOption);
+    confirmation?.actionIndex ?? preferredConfirmationActionIndex(options, defaultOption);
 
   return (
-    <AdaptiveSurfacePanel
-      title="Action required: confirmation"
-      requestId={pendingYield.requestId}
-    >
+    <AdaptiveSurfacePanel title="Action required: confirmation" requestId={pendingYield.requestId}>
       {summary ? <Text bold>{summary}</Text> : null}
       {detailRows.length > 0 ? (
         <>
@@ -307,18 +281,10 @@ function renderConfirmationSurface({
       <Box marginTop={1} flexWrap="wrap">
         {options.map((option, index) => {
           const isActive = index === actionIndex;
-          const style = confirmationActionStyle(
-            option,
-            isActive,
-            dangerousAction,
-          );
+          const style = confirmationActionStyle(option, isActive, dangerousAction);
           return (
             <Box key={option} marginRight={1}>
-              <Text
-                bold
-                color={style.color}
-                backgroundColor={style.backgroundColor}
-              >
+              <Text bold color={style.color} backgroundColor={style.backgroundColor}>
                 {actionShortcut(option, index)} {humanizeAction(option)}
               </Text>
             </Box>
@@ -326,9 +292,7 @@ function renderConfirmationSurface({
         })}
       </Box>
       {resolvedDefaultOption ? (
-        <Text color="gray">
-          Default action: {humanizeAction(resolvedDefaultOption)}
-        </Text>
+        <Text color="gray">Default action: {humanizeAction(resolvedDefaultOption)}</Text>
       ) : null}
       {dangerousConfirmation ? (
         <Text color="red">
@@ -338,18 +302,13 @@ function renderConfirmationSurface({
         </Text>
       ) : null}
       <Text color="gray">
-        {[
-          ...confirmationShortcutHints(options),
-          ...confirmationSlashCommands(options),
-        ].join(" | ")}
+        {[...confirmationShortcutHints(options), ...confirmationSlashCommands(options)].join(" | ")}
       </Text>
     </AdaptiveSurfacePanel>
   );
 }
 
-function buildConfirmationAnnouncement(
-  pendingYield: AdaptiveSurfaceRenderContext["pendingYield"],
-) {
+function buildConfirmationAnnouncement(pendingYield: AdaptiveSurfaceRenderContext["pendingYield"]) {
   const messages: AdaptiveSurfaceEventMessage[] = [
     {
       type: "system_warning",
@@ -379,11 +338,8 @@ function buildConfirmationAnnouncement(
   return messages;
 }
 
-function confirmationFooterHint({
-  confirmation,
-}: AdaptiveSurfaceRenderContext) {
-  const activeAction =
-    confirmation?.options[confirmation.actionIndex] ?? "approve";
+function confirmationFooterHint({ confirmation }: AdaptiveSurfaceRenderContext) {
+  const activeAction = confirmation?.options[confirmation.actionIndex] ?? "approve";
   return `Confirm: ${confirmationShortcutHints(
     confirmation?.options ?? ["approve", "modify", "reject"],
     activeAction,
@@ -418,9 +374,7 @@ function handleConfirmationKey(context: AdaptiveSurfaceKeyContext) {
   }
 
   if (context.key.rightArrow || context.input === "l") {
-    context.confirmationControls.setActionIndex(
-      (previous) => (previous + 1) % options.length,
-    );
+    context.confirmationControls.setActionIndex((previous) => (previous + 1) % options.length);
     return true;
   }
 

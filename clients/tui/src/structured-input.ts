@@ -19,10 +19,7 @@ function allowedOptionValues(question: StructuredQuestion): string[] {
   return (question.options ?? []).map((option) => option.value);
 }
 
-function formatUnknownOptionError(
-  unknownValues: string[],
-  allowedValues: string[],
-): string {
+function formatUnknownOptionError(unknownValues: string[], allowedValues: string[]): string {
   const subject =
     unknownValues.length === 1
       ? `Unknown option: ${unknownValues[0]}.`
@@ -30,23 +27,15 @@ function formatUnknownOptionError(
   return `${subject} Use one of: ${allowedValues.join(", ")}.`;
 }
 
-function optionIndexForValue(
-  question: StructuredQuestion,
-  value: string,
-): number {
+function optionIndexForValue(question: StructuredQuestion, value: string): number {
   const options = question.options ?? [];
   if (options.length === 0) return 0;
   const index = options.findIndex((option) => option.value === value);
   return index >= 0 ? index : 0;
 }
 
-function optionLabelForValue(
-  question: StructuredQuestion,
-  value: string,
-): string {
-  return (
-    question.options?.find((option) => option.value === value)?.label ?? value
-  );
+function optionLabelForValue(question: StructuredQuestion, value: string): string {
+  return question.options?.find((option) => option.value === value)?.label ?? value;
 }
 
 function wrapIndex(index: number, count: number): number {
@@ -54,9 +43,7 @@ function wrapIndex(index: number, count: number): number {
   return ((index % count) + count) % count;
 }
 
-export function structuredQuestionSignature(
-  questions: StructuredQuestion[],
-): string {
+export function structuredQuestionSignature(questions: StructuredQuestion[]): string {
   return JSON.stringify(questions);
 }
 
@@ -111,9 +98,7 @@ export function currentStructuredQuestion(
   questions: StructuredQuestion[],
 ): StructuredQuestion | null {
   if (questions.length === 0) return null;
-  return (
-    questions[wrapIndex(state.activeQuestionIndex, questions.length)] ?? null
-  );
+  return questions[wrapIndex(state.activeQuestionIndex, questions.length)] ?? null;
 }
 
 export function getStructuredAnswer(
@@ -131,10 +116,7 @@ export function getStructuredOptionCursor(
   state: StructuredFormState,
   question: StructuredQuestion,
 ): number {
-  return wrapIndex(
-    state.optionCursorByQuestionId[question.id] ?? 0,
-    question.options?.length ?? 0,
-  );
+  return wrapIndex(state.optionCursorByQuestionId[question.id] ?? 0, question.options?.length ?? 0);
 }
 
 export function setStructuredTextAnswer(
@@ -159,10 +141,7 @@ export function moveStructuredQuestion(
   if (questions.length === 0) return state;
   return {
     ...state,
-    activeQuestionIndex: wrapIndex(
-      state.activeQuestionIndex + delta,
-      questions.length,
-    ),
+    activeQuestionIndex: wrapIndex(state.activeQuestionIndex + delta, questions.length),
   };
 }
 
@@ -178,10 +157,7 @@ export function moveStructuredOptionCursor(
     ...state,
     optionCursorByQuestionId: {
       ...state.optionCursorByQuestionId,
-      [question.id]: wrapIndex(
-        getStructuredOptionCursor(state, question) + delta,
-        optionCount,
-      ),
+      [question.id]: wrapIndex(getStructuredOptionCursor(state, question) + delta, optionCount),
     },
   };
 }
@@ -194,10 +170,7 @@ export function moveStructuredSingleSelection(
   const optionCount = question.options?.length ?? 0;
   if (optionCount === 0) return state;
 
-  const nextIndex = wrapIndex(
-    getStructuredOptionCursor(state, question) + delta,
-    optionCount,
-  );
+  const nextIndex = wrapIndex(getStructuredOptionCursor(state, question) + delta, optionCount);
   return selectStructuredSingleOption(state, question, nextIndex);
 }
 
@@ -238,11 +211,7 @@ export function toggleStructuredMultiOption(
     : [...selected, option.value];
   const maxSelections = question.maxSelections;
 
-  if (
-    !isSelected &&
-    maxSelections !== undefined &&
-    nextSelected.length > maxSelections
-  ) {
+  if (!isSelected && maxSelections !== undefined && nextSelected.length > maxSelections) {
     return state;
   }
 
@@ -280,10 +249,7 @@ export function questionValidationError(
         ? "Select at least one option."
         : `Select at least ${minSelections} options.`;
     }
-    if (
-      question.maxSelections !== undefined &&
-      selected.length > question.maxSelections
-    ) {
+    if (question.maxSelections !== undefined && selected.length > question.maxSelections) {
       return `Select at most ${question.maxSelections} options.`;
     }
     return null;
@@ -291,14 +257,9 @@ export function questionValidationError(
 
   const value = typeof answer === "string" ? answer.trim() : "";
   if (question.required && value.length === 0) {
-    return usesTextEntryKind(question.kind)
-      ? "Answer required."
-      : "Select one option.";
+    return usesTextEntryKind(question.kind) ? "Answer required." : "Select one option.";
   }
-  if (
-    (question.kind === "number" || question.kind === "integer") &&
-    value.length > 0
-  ) {
+  if ((question.kind === "number" || question.kind === "integer") && value.length > 0) {
     const parsed = Number(value);
     if (!Number.isFinite(parsed)) {
       return "Enter a valid number.";
@@ -335,8 +296,7 @@ export function buildStructuredResumePayload(
   state: StructuredFormState,
   questions: StructuredQuestion[],
 ): { answers: Array<{ question_id: string; value: StructuredAnswerValue }> } {
-  const answers: Array<{ question_id: string; value: StructuredAnswerValue }> =
-    [];
+  const answers: Array<{ question_id: string; value: StructuredAnswerValue }> = [];
 
   for (const question of questions) {
     const value = getStructuredAnswer(state, question);
@@ -366,9 +326,7 @@ export function questionAnswerPreview(
   if (usesMultiSelectKind(question.kind)) {
     const selected = Array.isArray(answer) ? answer : [];
     if (selected.length === 0) return "No selection";
-    return selected
-      .map((value) => optionLabelForValue(question, value))
-      .join(", ");
+    return selected.map((value) => optionLabelForValue(question, value)).join(", ");
   }
 
   const value = typeof answer === "string" ? answer.trim() : "";
@@ -378,7 +336,5 @@ export function questionAnswerPreview(
       : "No selection";
   }
 
-  return usesSingleSelectKind(question.kind)
-    ? optionLabelForValue(question, value)
-    : value;
+  return usesSingleSelectKind(question.kind) ? optionLabelForValue(question, value) : value;
 }

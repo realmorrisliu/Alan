@@ -68,42 +68,18 @@ describe("yield parsing helpers", () => {
   });
 
   test("confirmation helpers validate explicit defaults before using them", () => {
-    expect(
-      resolveConfirmationDefaultOption(
-        ["reject", "approve", "modify"],
-        "modify",
-      ),
-    ).toBe("modify");
-    expect(
-      resolveConfirmationDefaultOption(
-        ["reject", "approve", "modify"],
-        "skip",
-      ),
-    ).toBeNull();
-    expect(
-      preferredConfirmationActionIndex(
-        ["reject", "approve", "modify"],
-        "modify",
-      ),
-    ).toBe(2);
-    expect(
-      preferredConfirmationActionIndex(
-        ["reject", "approve", "modify"],
-        "skip",
-      ),
-    ).toBe(1);
+    expect(resolveConfirmationDefaultOption(["reject", "approve", "modify"], "modify")).toBe(
+      "modify",
+    );
+    expect(resolveConfirmationDefaultOption(["reject", "approve", "modify"], "skip")).toBeNull();
+    expect(preferredConfirmationActionIndex(["reject", "approve", "modify"], "modify")).toBe(2);
+    expect(preferredConfirmationActionIndex(["reject", "approve", "modify"], "skip")).toBe(1);
   });
 
   test("confirmation helpers infer the dangerous action from available options", () => {
-    expect(
-      resolveDangerousConfirmationAction(["continue", "cancel"], "continue"),
-    ).toBe("continue");
-    expect(
-      resolveDangerousConfirmationAction(["approve", "reject"], "reject"),
-    ).toBe("approve");
-    expect(
-      resolveDangerousConfirmationAction(["modify", "reject"], "reject"),
-    ).toBeNull();
+    expect(resolveDangerousConfirmationAction(["continue", "cancel"], "continue")).toBe("continue");
+    expect(resolveDangerousConfirmationAction(["approve", "reject"], "reject")).toBe("approve");
+    expect(resolveDangerousConfirmationAction(["modify", "reject"], "reject")).toBeNull();
   });
 
   test("structured helpers parse title/prompt and valid questions", () => {

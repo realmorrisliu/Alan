@@ -1,14 +1,9 @@
 import React from "react";
 import { Box, Text } from "ink";
 import type { CurrentPlanState } from "./plan-state.js";
-import type {
-  CurrentRuntimeSummary,
-  RuntimeToolState,
-} from "./runtime-state.js";
+import type { CurrentRuntimeSummary, RuntimeToolState } from "./runtime-state.js";
 
-function planItemMarker(
-  status: CurrentPlanState["items"][number]["status"],
-): string {
+function planItemMarker(status: CurrentPlanState["items"][number]["status"]): string {
   if (status === "completed") {
     return "[x]";
   }
@@ -18,9 +13,7 @@ function planItemMarker(
   return "[ ]";
 }
 
-function planItemPrefix(
-  status: CurrentPlanState["items"][number]["status"],
-): string {
+function planItemPrefix(status: CurrentPlanState["items"][number]["status"]): string {
   return status === "in_progress" ? "> " : "";
 }
 
@@ -40,9 +33,7 @@ function planStatusSummary(plan: CurrentPlanState): string {
   return segments.join(" | ");
 }
 
-function prioritizedPlanItem(
-  plan: CurrentPlanState,
-): CurrentPlanState["items"][number] | null {
+function prioritizedPlanItem(plan: CurrentPlanState): CurrentPlanState["items"][number] | null {
   return (
     plan.items.find((item) => item.status === "in_progress") ??
     plan.items.find((item) => item.status === "pending") ??
@@ -60,9 +51,7 @@ function compactGuidance(guidance: string): string {
   return guidance.replace(/^Next:\s*/i, "");
 }
 
-export function buildPlanHudSummary(
-  plan: CurrentPlanState | null,
-): string | null {
+export function buildPlanHudSummary(plan: CurrentPlanState | null): string | null {
   if (!plan || plan.items.length === 0) {
     return null;
   }
@@ -70,9 +59,7 @@ export function buildPlanHudSummary(
   const statusSummary = planStatusSummary(plan);
   const focusItem = prioritizedPlanItem(plan);
   const focusSummary = focusItem
-    ? `${planItemPrefix(focusItem.status)}${planItemMarker(focusItem.status)} ${
-        focusItem.content
-      }`
+    ? `${planItemPrefix(focusItem.status)}${planItemMarker(focusItem.status)} ${focusItem.content}`
     : null;
 
   return `Plan: ${[statusSummary, focusSummary].filter(Boolean).join(" | ")}`;
@@ -119,12 +106,8 @@ export function SummaryHud({
   pending,
 }: SummaryHudProps) {
   const planSummary = buildPlanHudSummary(plan);
-  const runtimeSummaryText = buildRuntimeHudSummary(
-    runtimeSummary,
-    activeChildRunCount,
-  );
-  const statusColor =
-    pending || runtimeSummary.recoverableError ? "yellow" : "gray";
+  const runtimeSummaryText = buildRuntimeHudSummary(runtimeSummary, activeChildRunCount);
+  const statusColor = pending || runtimeSummary.recoverableError ? "yellow" : "gray";
 
   return (
     <Box flexDirection="column" paddingX={1} marginTop={1}>
