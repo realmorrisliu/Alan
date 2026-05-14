@@ -11,10 +11,11 @@
     "build:js": "rolldown -c",
     "build:standalone": "bun run scripts/build-standalone.mjs",
     "build:binary": "bun run build:js && bun run build:standalone",
+    "smoke:standalone": "bun run scripts/smoke-standalone-websocket.mjs",
     "test": "bun test src",
     "typecheck": "oxlint --type-aware --type-check src",
-    "lint": "bun run typecheck && bun test src && oxfmt --check src package.json tsconfig.json rolldown.config.mjs scripts/build-standalone.mjs",
-    "format": "oxfmt src package.json tsconfig.json rolldown.config.mjs scripts/build-standalone.mjs"
+    "lint": "bun run typecheck && bun test src && oxfmt --check src package.json tsconfig.json rolldown.config.mjs scripts/build-standalone.mjs scripts/smoke-standalone-websocket.mjs",
+    "format": "oxfmt src package.json tsconfig.json rolldown.config.mjs scripts/build-standalone.mjs scripts/smoke-standalone-websocket.mjs"
   },
   "dependencies": {
     "ink": "^7.0.0",

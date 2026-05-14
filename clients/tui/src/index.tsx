@@ -26,6 +26,7 @@ import type {
   ConnectionCredentialStatus,
   ConnectionPinScope,
   ConnectionProfileSummary,
+  CreateSessionRequest,
   DaemonStatus,
   EventEnvelope,
   ProviderId,
@@ -2746,4 +2747,42 @@ function App() {
   );
 }
 
-render(<App />);
+async function runStandaloneWebSocketSmoke(): Promise<void> {
+  const client = new AlanClient({
+    url: STARTUP_INFO.url,
+    autoManageDaemon: false,
+    verbose: VERBOSE,
+  });
+  let sessionId: string | null = null;
+
+  try {
+    await client.connect();
+    const createRequest: CreateSessionRequest = {
+      workspace_dir: process.env.ALAN_TUI_SMOKE_WORKSPACE ?? process.cwd(),
+      agent_name: DEFAULT_AGENT_NAME ?? undefined,
+      profile_id: process.env.ALAN_TUI_SMOKE_PROFILE || undefined,
+      streaming_mode: "on",
+      partial_stream_recovery_mode: "continue_once",
+    };
+    const session = await client.createSession(createRequest);
+    sessionId = session.session_id;
+    await client.connectToSession(sessionId);
+    console.log(`standalone websocket smoke ok: ${sessionId}`);
+  } finally {
+    client.disconnect();
+    if (sessionId) {
+      try {
+        await client.deleteSession(sessionId);
+      } catch (error) {
+        console.error(`Failed to clean up smoke session ${sessionId}: ${(error as Error).message}`);
+      }
+    }
+    await client.shutdown();
+  }
+}
+
+if (process.env.ALAN_TUI_SMOKE_WEBSOCKET === "1") {
+  await runStandaloneWebSocketSmoke();
+} else {
+  render(<App />);
+}

@@ -171,6 +171,19 @@ jobs:
       - name: Build standalone executable
         run: bun run build:standalone
 
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build daemon for standalone smoke
+        working-directory: ${{ github.workspace }}
+        run: cargo build -p alan
+
+      - name: Smoke standalone WebSocket
+        run: bun run smoke:standalone
+
   coverage:
     name: Code Coverage
     runs-on: ubuntu-latest

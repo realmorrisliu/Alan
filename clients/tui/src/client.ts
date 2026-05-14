@@ -394,6 +394,20 @@ export class AlanClient {
     return data.sessions;
   }
 
+  public async deleteSession(sessionId: string): Promise<void> {
+    await this.ensureDaemon();
+
+    const response = await fetch(`${this.baseUrl}${apiPaths.session(sessionId)}`, {
+      method: "DELETE",
+    });
+
+    if (!response.ok) {
+      throw new Error(
+        `Failed to delete session ${sessionId}: ${await this.readErrorMessage(response)}`,
+      );
+    }
+  }
+
   public async getSession(sessionId: string): Promise<SessionReadResponse> {
     await this.ensureDaemon();
 
