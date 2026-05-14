@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 /**
- * Alan TUI entrypoint.
+ * alan TUI entrypoint.
  */
 
 import React, { useEffect, useRef, useState } from "react";
@@ -696,7 +696,7 @@ function App() {
     if (options.source === "setup") {
       addSystemEvent(
         "system_message",
-        "First-time setup selected ChatGPT / Codex, so Alan opened managed browser login automatically.",
+        "First-time setup selected ChatGPT / Codex, so alan opened managed browser login automatically.",
       );
     }
     if (STARTUP_INFO.mode !== "embedded") {
@@ -960,7 +960,7 @@ function App() {
           setShellRunStatus("ready");
           addSystemEvent(
             "system_message",
-            `Alan ready. Type your request directly or /help. (${session.agent_name ? `agent=${session.agent_name}, ` : ""}${summarizeSessionBinding(
+            `alan ready. Type your request directly or /help. (${session.agent_name ? `agent=${session.agent_name}, ` : ""}${summarizeSessionBinding(
               {
                 profileId: session.profile_id,
                 provider: session.provider,
@@ -2674,7 +2674,7 @@ function App() {
   return (
     <Box flexDirection="column" width="100%">
       <Box paddingX={1} flexWrap="wrap">
-        <Text bold>Alan TUI</Text>
+        <Text bold>alan TUI</Text>
         <Text color="gray"> protocol-first terminal workspace assistant | </Text>
         <Text color="gray">
           mode={STARTUP_INFO.mode === "embedded" ? "local" : "remote"}

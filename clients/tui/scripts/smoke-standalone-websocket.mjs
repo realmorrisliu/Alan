@@ -195,7 +195,7 @@ async function stopChild(child) {
 
 async function main() {
   await requireFile(standaloneBinary, "Standalone TUI binary");
-  await requireFile(alanBinary, "Alan daemon binary");
+  await requireFile(alanBinary, "alan daemon binary");
 
   const tempRoot = await mkdtemp(join(tmpdir(), "alan-tui-standalone-smoke-"));
   const homeDir = join(tempRoot, "home");

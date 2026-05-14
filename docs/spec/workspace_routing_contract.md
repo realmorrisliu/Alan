@@ -6,10 +6,10 @@
 
 ## Goal
 
-Define how Alan should behave when the current runtime is asked to inspect,
+Define how alan should behave when the current runtime is asked to inspect,
 search, edit, or verify content in a different local workspace.
 
-The intent is to preserve Alan's hosting model:
+The intent is to preserve alan's hosting model:
 
 1. one running `AgentInstance` is bound to one workspace at a time,
 2. parent stewards discover and route,
@@ -29,7 +29,7 @@ This contract does not:
 
 - **Current workspace**: the workspace bound to the active runtime.
 - **Target workspace**: the local repo, project, or directory the user actually
-  wants Alan to inspect or modify.
+  wants alan to inspect or modify.
 - **Workspace-targeted task**: a task whose local evidence or side effects are
   expected to happen inside the target workspace rather than the current
   workspace.

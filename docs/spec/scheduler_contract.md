@@ -2,7 +2,7 @@
 
 > Status: partially implemented contract.
 >
-> Current reality: Alan already has a durable task/run/schedule store,
+> Current reality: alan already has a durable task/run/schedule store,
 > scheduler boot recovery, session-scoped `schedule_at` / `sleep_until`
 > endpoints, and run checkpointing around sleeps. Interval/backoff/cancellation
 > ergonomics remain future work.

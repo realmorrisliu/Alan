@@ -15,7 +15,7 @@ Case JSON fields:
   dataset                   Optional dataset label (default: SWE-bench Lite).
   agent_name                Optional agent override.
 
-The runner starts Alan's root/steward entrypoint against the prepared workspace,
+The runner starts alan's root/steward entrypoint against the prepared workspace,
 submits one benchmark task, waits for the turn to complete, verifies that
 repo-local work happened through delegated child launch(es), and exports:
 
@@ -271,7 +271,7 @@ started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 start_epoch="$(date +%s)"
 
 cat >"$prompt_file" <<EOF
-You are Alan's root coding steward running a $dataset_label benchmark case.
+You are alan's root coding steward running a $dataset_label benchmark case.
 
 Hard requirements:
 1. Treat this run as full steward mode.
@@ -739,7 +739,7 @@ jq -n \
         turn_completed: $turn_completed,
         passed: $passed,
         orchestration_passed: $passed,
-        scoring_semantics: "passed reflects Alan-native orchestration assertions only; official resolved/unresolved status comes from the SWE-bench harness",
+        scoring_semantics: "passed reflects alan-native orchestration assertions only; official resolved/unresolved status comes from the SWE-bench harness",
         verification_status: $verification_summary.overall_status,
         verification_summary: $verification_summary,
         child_runs: $child_runs

@@ -1,5 +1,5 @@
 /**
- * First-time setup wizard for Alan
+ * First-time setup wizard for alan
  *
  * Runs when no agent config exists at the canonical or override path.
  */
@@ -113,7 +113,7 @@ export function InitWizard({ onComplete, agentConfigPath, hostConfigPath }: Init
     } catch (error) {
       setHostConfigStatus(null);
       setSaveError(
-        error instanceof Error ? error.message : "Failed to write Alan configuration files.",
+        error instanceof Error ? error.message : "Failed to write alan configuration files.",
       );
       return false;
     }
@@ -200,15 +200,15 @@ export function InitWizard({ onComplete, agentConfigPath, hostConfigPath }: Init
     return (
       <Box flexDirection="column" padding={1}>
         <Text bold color="cyan">
-          Welcome to Alan!
+          Welcome to alan!
         </Text>
         <Text> </Text>
-        <Text>Alan is an AI assistant that runs in your terminal.</Text>
+        <Text>alan is an AI assistant that runs in your terminal.</Text>
         <Text> </Text>
-        <Text>First, choose the service you want Alan to connect to.</Text>
+        <Text>First, choose the service you want alan to connect to.</Text>
         <Text> </Text>
         <Text color="gray">
-          Alan will write the canonical agent config and, when host.toml is missing, create it so
+          alan will write the canonical agent config and, when host.toml is missing, create it so
           the daemon keeps the wizard's loopback default. It also prepares ~/.agents/skills/ as the
           default zero-conversion public skill install directory. Existing host config is preserved.
           Advanced / custom setup is still available.
@@ -226,7 +226,7 @@ export function InitWizard({ onComplete, agentConfigPath, hostConfigPath }: Init
       <Box flexDirection="column" padding={1}>
         <Text bold>Select a service to connect:</Text>
         <Text color="gray">
-          You pick the service. Alan handles the underlying provider mapping.
+          You pick the service. alan handles the underlying provider mapping.
         </Text>
         <Text> </Text>
         {SERVICE_CATALOG.map((option, index) => {
@@ -289,13 +289,13 @@ export function InitWizard({ onComplete, agentConfigPath, hostConfigPath }: Init
         <Text color="gray">{selectedTarget.desc}</Text>
         <Text color="gray">{selectedTarget.detail}</Text>
         <Text color="gray">
-          Alan writes canonical agent config plus connections.toml, and preserves any existing host
+          alan writes canonical agent config plus connections.toml, and preserves any existing host
           config for {selectedTarget.provider}. If host.toml is missing, setup must create it so the
           daemon keeps the wizard's loopback defaults.
         </Text>
         {selectedTarget.provider === "chatgpt" && (
           <Text color="gray">
-            This preset uses managed login instead of an API key. After setup, Alan will open
+            This preset uses managed login instead of an API key. After setup, alan will open
             browser login for {defaultProfileIdForSetup(selectedTarget)} automatically.
           </Text>
         )}
@@ -370,11 +370,11 @@ export function InitWizard({ onComplete, agentConfigPath, hostConfigPath }: Init
       </Text>
       {selectedTarget.provider === "chatgpt" && (
         <Text>
-          Next step: Alan will open browser login for {defaultProfileIdForSetup(selectedTarget)}.
+          Next step: alan will open browser login for {defaultProfileIdForSetup(selectedTarget)}.
         </Text>
       )}
       <Text> </Text>
-      <Text>Starting Alan...</Text>
+      <Text>Starting alan...</Text>
     </Box>
   );
 }

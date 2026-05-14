@@ -4,8 +4,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 APPLE_ROOT="$REPO_ROOT/clients/apple"
-SOURCE_ROOT="$APPLE_ROOT/AlanNative"
-PROJECT_FILE="$APPLE_ROOT/AlanNative.xcodeproj/project.pbxproj"
+SOURCE_ROOT="$APPLE_ROOT/alan-macos"
+PROJECT_FILE="$APPLE_ROOT/alan-macos.xcodeproj/project.pbxproj"
 README_FILE="$APPLE_ROOT/README.md"
 ARCH_DOC="$APPLE_ROOT/ARCHITECTURE.md"
 STRICT=0
@@ -16,6 +16,8 @@ fi
 
 warnings=0
 failures=0
+
+"$SCRIPT_DIR/check-brand-identity.sh"
 
 warn() {
     printf 'warning: %s\n' "$1"
@@ -59,7 +61,7 @@ check_appkit_import_gate() {
 
 current_root_swift_allowlist=(
     "AlanAppSingletonGuard.swift"
-    "AlanNativeApp.swift"
+    "AlanApp.swift"
     "GhosttyLiveHost.swift"
     "MacShellRootView.swift"
     "ShellControlPlane.swift"
@@ -86,7 +88,7 @@ target_dirs=(
 large_file_threshold=1200
 
 printf 'Apple architecture maintainability report\n'
-printf 'Source root: clients/apple/AlanNative\n\n'
+printf 'Source root: clients/apple/alan-macos\n\n'
 
 if [[ ! -f "$ARCH_DOC" ]]; then
     fail "clients/apple/ARCHITECTURE.md must record the architecture inventory and target layout"
@@ -119,7 +121,7 @@ while IFS= read -r file; do
 
     if grep -Eq '^import (AppKit|Darwin)$' "$file"; then
         case "$rel" in
-            App/*|Services/*|Support/*|Views/Shell/Terminal/*|AlanNativeApp.swift|AlanAppSingletonGuard.swift|GhosttyLiveHost.swift|ShellControlPlane.swift|TerminalHostView.swift|TerminalRuntimeService.swift|TerminalSurfaceController.swift)
+            App/*|Services/*|Support/*|Views/Shell/Terminal/*|AlanApp.swift|AlanAppSingletonGuard.swift|GhosttyLiveHost.swift|ShellControlPlane.swift|TerminalHostView.swift|TerminalRuntimeService.swift|TerminalSurfaceController.swift)
                 ;;
             MacShellRootView.swift|Views/Console/*|ShellHostController.swift|TerminalRuntimeRegistry.swift)
                 warn "$rel imports AppKit or Darwin while it remains outside a narrow bridge owner"
@@ -138,9 +140,9 @@ done < <(find "$SOURCE_ROOT" -name '*.swift' -type f | sort)
 printf '\nTarget layout status:\n'
 for dir in "${target_dirs[@]}"; do
     if [[ -d "$SOURCE_ROOT/$dir" ]]; then
-        printf '  present: clients/apple/AlanNative/%s\n' "$dir"
+        printf '  present: clients/apple/alan-macos/%s\n' "$dir"
     else
-        warn "target folder clients/apple/AlanNative/$dir is not present yet"
+        warn "target folder clients/apple/alan-macos/$dir is not present yet"
     fi
     if [[ -f "$ARCH_DOC" ]] && ! grep -q "\`$dir/\`" "$ARCH_DOC"; then
         fail "clients/apple/ARCHITECTURE.md must document target folder $dir/"
@@ -153,7 +155,7 @@ while IFS= read -r entry; do
     [[ "$path" == "$entry" ]] && continue
     case "$path" in
         *.swift)
-            [[ -f "$SOURCE_ROOT/$path" ]] || warn "README lists $path but the file is not at clients/apple/AlanNative/$path"
+            [[ -f "$SOURCE_ROOT/$path" ]] || warn "README lists $path but the file is not at clients/apple/alan-macos/$path"
             ;;
         */)
             [[ -d "$SOURCE_ROOT/${path%/}" ]] || warn "README lists $path but the folder is not present yet"

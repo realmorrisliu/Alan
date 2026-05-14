@@ -1,6 +1,6 @@
 [package]
 name = "alan-tools"
-description = "Builtin tool implementations for the Alan agent runtime"
+description = "Builtin tool implementations for the alan agent runtime"
 version.workspace = true
 edition.workspace = true
 

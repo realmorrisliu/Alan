@@ -190,8 +190,8 @@ operations that empty containers.
 
 #### Scenario: Close focused pane
 - **WHEN** the user invokes close pane
-- **THEN** Alan finalizes exactly that pane runtime and repairs the split tree around the removed leaf
+- **THEN** alan finalizes exactly that pane runtime and repairs the split tree around the removed leaf
 
 #### Scenario: Close tab after moving last pane
-- **WHEN** a move operation leaves the source tab empty and Alan closes that tab
-- **THEN** Alan does not finalize the moved pane runtime as part of source tab cleanup
+- **WHEN** a move operation leaves the source tab empty and alan closes that tab
+- **THEN** alan does not finalize the moved pane runtime as part of source tab cleanup

@@ -7,7 +7,7 @@ remote-control checks. That foundation is intentionally technical: operators
 enable relay mode with environment variables, pass node IDs and tokens, and
 clients address relay nodes directly.
 
-Alan Anywhere changes the product boundary. The user should experience Alan as
+alan Anywhere changes the product boundary. The user should experience alan as
 available across their own devices: work started on Mac can continue from
 iPhone. The system can still use an outbound relay under the hood, but the
 product must not ask the user to understand tunnels, daemon URLs, VPNs, public
@@ -17,10 +17,10 @@ IPs, SSH, router configuration, or port forwarding.
 
 **Goals:**
 
-- Make a signed-in Alan Desktop automatically become remotely reachable from
+- Make a signed-in alan Desktop automatically become remotely reachable from
   the user's own iPhone without inbound network exposure.
 - Let the iPhone app discover the user's online Macs and continue a selected
-  session or work context using the same Alan account.
+  session or work context using the same alan account.
 - Preserve Mac-authoritative runtime execution, tool execution, governance,
   session state, and event ordering.
 - Support realtime message submission, streamed output, interrupt, yield
@@ -41,16 +41,16 @@ IPs, SSH, router configuration, or port forwarding.
 - Complex enterprise networking, MDM, organization policy, or delegated
   account administration.
 - Moving agent execution, workspace reads, tool execution, or governance
-  authority to Alan Cloud.
+  authority to alan Cloud.
 - Building a full push-notification system as a blocker for foreground iPhone
   realtime use.
 
 ## Decisions
 
-1. Use Alan Cloud as an account/device directory plus relay broker, not as a
+1. Use alan Cloud as an account/device directory plus relay broker, not as a
    runtime authority.
 
-   Alan Cloud owns user authentication, device enrollment, presence, relay
+   alan Cloud owns user authentication, device enrollment, presence, relay
    routing, short-lived token issuance, revocation, and audit metadata. It does
    not execute tools, read local workspace files, decide governance outcomes,
    author session events, or advance runtime state.
@@ -66,7 +66,7 @@ IPs, SSH, router configuration, or port forwarding.
    Relay and iPhone requests are remote inputs to the Mac, not remote execution
    contexts.
 
-   Alternative considered: proxy workspace state through Alan Cloud and allow
+   Alternative considered: proxy workspace state through alan Cloud and allow
    cloud-side execution for continuity. That would break the security and
    product requirement that user tasks execute on the user's own device.
 
@@ -95,7 +95,7 @@ IPs, SSH, router configuration, or port forwarding.
 
 5. Provide realtime relay subscriptions with cursor recovery.
 
-   Alan Anywhere needs realtime streamed output while preserving
+   alan Anywhere needs realtime streamed output while preserving
    reconnect-safe recovery. The transport should support a realtime event
    subscription through the relay path, and clients must still use node-authored
    `events/read` and `reconnect_snapshot` after reconnect or gap detection.
@@ -134,13 +134,13 @@ IPs, SSH, router configuration, or port forwarding.
   status by default; avoid exposing full local paths unless the Mac authorizes
   that metadata for the signed-in user.
 - Existing environment-configured relay paths diverge from product-managed
-  Alan Anywhere -> Keep environment configuration as development/operator
+  alan Anywhere -> Keep environment configuration as development/operator
   compatibility but make the account/device path the default in Desktop and
   iPhone builds.
 
 ## Migration Plan
 
-1. Add the OpenSpec requirements and GitHub tracking issue for Alan Anywhere
+1. Add the OpenSpec requirements and GitHub tracking issue for alan Anywhere
    MVP; mark the old architecture issue as superseded by this product contract.
 2. Introduce account/device data models and local device identity storage
    without changing existing relay behavior.
@@ -160,7 +160,7 @@ IPs, SSH, router configuration, or port forwarding.
 
 ## Open Questions
 
-- Which Alan account provider is authoritative for MVP login: Alan-hosted auth,
+- Which alan account provider is authoritative for MVP login: alan-hosted auth,
   Sign in with Apple, GitHub, or an existing managed account surface?
 - Should remote event payloads be end-to-end encrypted between iPhone and Mac
   in MVP, or is TLS plus node-authoritative execution acceptable for the first
@@ -168,4 +168,4 @@ IPs, SSH, router configuration, or port forwarding.
 - What is the minimum local context metadata that iPhone may display without
   exposing sensitive workspace paths?
 - Should APNs pending-approval notifications be included in this MVP or tracked
-  as a follow-up after foreground realtime Alan Anywhere works?
+  as a follow-up after foreground realtime alan Anywhere works?

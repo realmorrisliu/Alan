@@ -11,7 +11,7 @@ const MAX_DISCLOSED_RESOURCE_COUNT: usize = 8;
 const MAX_DISCLOSED_RESOURCE_CHARS: usize = 4000;
 const MAX_DISCLOSED_RESOURCE_BYTES: u64 = 16 * 1024;
 const MAX_DISCLOSED_LEVEL2_BYTES: u64 = 64 * 1024;
-const DELEGATED_INLINE_FALLBACK_NOTE: &str = "Delegated runtime execution is not available in this runtime yet, so Alan is falling back to inline skill instructions for this turn.";
+const DELEGATED_INLINE_FALLBACK_NOTE: &str = "Delegated runtime execution is not available in this runtime yet, so alan is falling back to inline skill instructions for this turn.";
 
 #[derive(Debug, Clone)]
 pub struct RenderedActiveSkillPrompt {
@@ -262,7 +262,7 @@ fn render_delegated_skill_prompt(
 summary: {summary}
 delegated_target: {target}
 
-This skill executes through Alan's delegated runtime path.
+This skill executes through alan's delegated runtime path.
 Do not inline or restate the full `SKILL.md` body in this session.
 When you need this capability, call `invoke_delegated_skill` with a concise bounded task for the delegated runtime.
 If the delegated task targets a different local workspace than the current runtime, include an explicit `workspace_root` and, when helpful, a narrower nested `cwd`.
@@ -328,7 +328,7 @@ Do not inline the `SKILL.md` body. Treat this skill as unavailable until its pac
 fn format_active_skill_context(envelope: &ActiveSkillEnvelope) -> String {
     let builtin_package = envelope.metadata.is_builtin_package();
     let mut lines = vec![
-        "### Alan Runtime Context".to_string(),
+        "### alan Runtime Context".to_string(),
         format!("skill_id: {}", envelope.metadata.id),
         format!(
             "package_id: {}",
@@ -1523,7 +1523,7 @@ mod tests {
             id: "skill-creator".to_string(),
             package_id: Some("builtin:alan-skill-creator".to_string()),
             name: "Skill Creator".to_string(),
-            description: "Create or update Alan skill packages".to_string(),
+            description: "Create or update alan skill packages".to_string(),
             short_description: None,
             path: std::path::PathBuf::from(
                 "/private/tmp/alan/builtin-skill-packages/0.1.0/123/skill-creator/SKILL.md",
@@ -1565,7 +1565,7 @@ mod tests {
             id: "skill-creator".to_string(),
             package_id: Some("builtin:alan-skill-creator".to_string()),
             name: "Skill Creator".to_string(),
-            description: "Create or update Alan skill packages".to_string(),
+            description: "Create or update alan skill packages".to_string(),
             short_description: None,
             path: std::path::PathBuf::from(
                 "/private/tmp/alan/builtin-skill-packages/0.1.0/123/skill-creator/SKILL.md",
@@ -1753,7 +1753,7 @@ mod tests {
 
         let injected = inject_skills(&[skill]);
         assert!(injected.contains("## Skill: Test Resource Skill"));
-        assert!(injected.contains("### Alan Runtime Context"));
+        assert!(injected.contains("### alan Runtime Context"));
         assert!(injected.contains("### Disclosed Resources"));
         assert!(injected.contains("#### script: scripts/test.sh"));
         assert!(injected.contains("#!/bin/bash"));

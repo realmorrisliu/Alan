@@ -6,20 +6,20 @@ live here.
 ## Operating Principles
 
 Treat this directory as a benchmark adapter layer, not as the place where
-Alan's coding behavior is defined.
+alan's coding behavior is defined.
 
 Rules:
 
-1. External benchmarks measure how well Alan's general coding behavior
+1. External benchmarks measure how well alan's general coding behavior
    transfers to outside corpora; they do not define repo-worker prompts or
    justify dataset-specific shortcuts.
-2. Full steward mode means the root Alan runtime remains the owner of routing,
+2. Full steward mode means the root alan runtime remains the owner of routing,
    continuity, and delivery framing. Repo-local work still runs through
    delegated `$repo-coding` child execution.
 3. Findings from SWE-bench or similar ladders should be generalized back into
    reusable contracts, prompts, tools, or harness checks rather than encoded
    as benchmark-only heuristics.
-4. Alan-native `passed` fields in local run artifacts are orchestration and
+4. alan-native `passed` fields in local run artifacts are orchestration and
    delivery assertions. Official resolved/unresolved status still comes from
    the external harness when that harness is run.
 5. Existing tests, nearby invariants, and public interfaces remain behavior
@@ -48,7 +48,7 @@ Rules:
 `run_swebench_full_steward_case.sh` is the M1 single-case external benchmark
 entrypoint for this package.
 
-It does not bypass Alan's orchestration layer. Instead it:
+It does not bypass alan's orchestration layer. Instead it:
 
 1. starts a real root/steward session,
 2. submits one benchmark problem to that steward,
@@ -65,7 +65,7 @@ It does not bypass Alan's orchestration layer. Instead it:
    - `assertion_report.json`
    - `kpi.json`
 
-The case-level `run.json` also records Alan-native orchestration metadata such
+The case-level `run.json` also records alan-native orchestration metadata such
 as:
 
 1. `spawn_count`
@@ -74,7 +74,7 @@ as:
 4. `duration_secs`
 5. `verification_summary`
 
-Case-level `run.json.passed` is intentionally an Alan-native orchestration
+Case-level `run.json.passed` is intentionally an alan-native orchestration
 result. It means the steward completed, delegated repo-local work through a
 child launch, and produced a non-empty patch. It is not the official
 SWE-bench resolved/unresolved outcome.
@@ -114,7 +114,7 @@ For the smoke-first gate before the larger pilot subset, use:
 
 - `evals/files/swebench_lite_smoke_v1.ids.txt`
 
-Before materializing the Alan suite, prepare one clean git workspace per
+Before materializing the alan suite, prepare one clean git workspace per
 instance id at the benchmark `base_commit`:
 
 ```bash
@@ -139,11 +139,11 @@ kept instead.
 
 The workspace preparer intentionally stops at clean git checkout
 materialization. It does not install repo dependencies or reproduce the
-official SWE-bench Docker images. Alan's final resolved/unresolved scoring
+official SWE-bench Docker images. alan's final resolved/unresolved scoring
 still comes from the official harness wrapper, while any richer host-native
 verification remains an operator-owned environment concern.
 
-To materialize a real pilot subset from official Lite rows into Alan case/suite
+To materialize a real pilot subset from official Lite rows into alan case/suite
 manifests, use:
 
 ```bash
@@ -241,7 +241,7 @@ artifacts when they exist:
 Use `official_harness_run.json` for the full raw wrapper manifest and
 `official_harness_submitted_report.json` for the compact subset-only summary.
 
-Official harness scoring still happens outside Alan's runtime loop, but the
+Official harness scoring still happens outside alan's runtime loop, but the
 package provides a thin wrapper so operators do not need to remember the raw
 Python module entrypoint:
 
@@ -264,7 +264,7 @@ export ALAN_SWEBENCH_HARNESS_PYTHON_BIN=/absolute/path/to/repo/target/benchmarks
 ```
 
 The setup script installs the official harness into a dedicated virtualenv so
-the harness Python does not have to match the Python that Alan child runtimes
+the harness Python does not have to match the Python that alan child runtimes
 use inside benchmark workspaces. It also installs `socksio` so the harness can
 run on hosts that expose Hugging Face access through a SOCKS proxy.
 

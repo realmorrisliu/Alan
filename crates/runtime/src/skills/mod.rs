@@ -1,7 +1,7 @@
 //! Skills framework for extending agent capabilities.
 //!
 //! Skills are directory-backed capability packages centered on a single
-//! portable `SKILL.md`, with optional Alan-native sidecars and package-local
+//! portable `SKILL.md`, with optional alan-native sidecars and package-local
 //! launch targets.
 //!
 //! # Example Skill Structure
@@ -9,7 +9,7 @@
 //! ```text
 //! my-skill/
 //! ├── SKILL.md              # Required
-//! ├── skill.yaml            # Optional Alan-native runtime metadata
+//! ├── skill.yaml            # Optional alan-native runtime metadata
 //! ├── package.yaml          # Optional package-level runtime defaults
 //! ├── bin/                  # Optional: package-local executable tools
 //! ├── scripts/              # Optional: executable code

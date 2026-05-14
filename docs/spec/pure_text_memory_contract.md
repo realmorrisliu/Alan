@@ -2,13 +2,13 @@
 
 > Status: target pure-text memory V2 contract.
 >
-> This document defines Alan's active target direction for memory: pure-text,
+> This document defines alan's active target direction for memory: pure-text,
 > file-backed, auditable memory with no required vector database, graph store,
 > SQLite index, or external memory service.
 
 ## Goal
 
-Make Alan feel meaningfully smarter across turns and across sessions while
+Make alan feel meaningfully smarter across turns and across sessions while
 keeping the implementation inspectable, portable, and easy to debug with
 ordinary files and shell tools.
 
@@ -37,7 +37,7 @@ are not the same thing as curated memory.
 
 1. **Files are the source of truth.** Memory must remain inspectable and
    editable with normal tools.
-2. **Runtime owns the read path.** Alan must not rely on the model to remember
+2. **Runtime owns the read path.** alan must not rely on the model to remember
    to open the right files before it can answer intelligently.
 3. **Curated summaries beat raw search.** Text retrieval quality must come
    primarily from better intermediate files, not from ever broader grep scope.
@@ -56,7 +56,7 @@ are not the same thing as curated memory.
 - **Episodic memory**: compact summaries of what happened in past sessions.
 - **Semantic memory**: stable facts about the user, workspace, constraints,
   conventions, and reusable decisions.
-- **Procedural memory**: instructions about how Alan should behave, usually
+- **Procedural memory**: instructions about how alan should behave, usually
   expressed through prompts, persona files, and skills.
 - **Recall bundle**: the bounded block of memory context injected into a turn
   after runtime retrieval.
@@ -140,7 +140,7 @@ It lives in:
 1. runtime/system prompts,
 2. workspace persona files,
 3. skills,
-4. future prompt-optimization outputs if Alan adopts them.
+4. future prompt-optimization outputs if alan adopts them.
 
 This separation is intentional. Behavioral rules must not be mixed into user
 identity or past-session summaries.
@@ -637,7 +637,7 @@ Compaction and memory are related but separate:
 
 ## Acceptance Criteria
 
-1. Alan can answer "who am I" or "what were we doing" from pure-text memory
+1. alan can answer "who am I" or "what were we doing" from pure-text memory
    without asking the user to repeat themselves when the evidence already
    exists.
 2. Runtime, not the model alone, performs session bootstrap and pre-turn recall.

@@ -2110,7 +2110,7 @@ fn update_plan_tool_definition() -> ToolDefinition {
 fn invoke_delegated_skill_tool_definition() -> ToolDefinition {
     ToolDefinition {
         name: "invoke_delegated_skill".to_string(),
-        description: "Invoke a delegated skill through Alan's runtime-owned delegated launch path. Use this for delegated skills listed in the skills catalog or in active-skill runtime context.".to_string(),
+        description: "Invoke a delegated skill through alan's runtime-owned delegated launch path. Use this for delegated skills listed in the skills catalog or in active-skill runtime context.".to_string(),
         parameters: serde_json::json!({
             "type": "object",
             "properties": {
@@ -2141,7 +2141,7 @@ fn invoke_delegated_skill_tool_definition() -> ToolDefinition {
                 },
                 "timeout_secs": {
                     "type": "integer",
-                    "description": "Optional bounded runtime timeout for the delegated child. When omitted, Alan applies a default bounded child timeout.",
+                    "description": "Optional bounded runtime timeout for the delegated child. When omitted, alan applies a default bounded child timeout.",
                     "minimum": 1,
                     "maximum": MAX_DELEGATED_TIMEOUT_SECS
                 }

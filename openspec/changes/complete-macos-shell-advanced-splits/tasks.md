@@ -34,5 +34,5 @@
 - [ ] 5.4 Run `git diff --check`.
 - [ ] 5.5 Run `openspec validate complete-macos-shell-advanced-splits --type change --strict --json`.
 - [ ] 5.6 Run `openspec validate --all --strict --json`.
-- [ ] 5.7 Build the macOS app with the documented `AlanNative` command.
+- [ ] 5.7 Build the macOS app with the renamed `alan-macos` command.
 - [ ] 5.8 Sync accepted delta requirements into `openspec/specs/` before archive.

@@ -1,6 +1,6 @@
 //! Runtime-owned provider request-control resolution.
 //!
-//! This module owns Alan-level precedence and validation for model request
+//! This module owns alan-level precedence and validation for model request
 //! controls. Provider adapters remain responsible for wire projection only.
 
 use crate::config::{Config, LlmProvider};

@@ -39,7 +39,7 @@ pub async fn run_server(config: Config) -> Result<()> {
 }
 
 pub async fn run_server_with_loaded_config(loaded_config: LoadedConfig) -> Result<()> {
-    info!("Starting Alan daemon");
+    info!("Starting alan daemon");
 
     // Create app state
     let state = AppState::from_loaded_config(loaded_config);

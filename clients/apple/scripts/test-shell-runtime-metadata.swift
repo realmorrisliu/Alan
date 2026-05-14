@@ -39,7 +39,7 @@ private enum ShellRuntimeMetadataTests {
                 backingSize: .zero,
                 displayName: "Studio Display",
                 displayID: "display_1",
-                attachedWindowTitle: "Alan",
+                attachedWindowTitle: "alan",
                 isFocused: false,
                 renderer: TerminalRendererSnapshot(
                     kind: .ghosttyLive,
@@ -100,7 +100,7 @@ private enum ShellRuntimeMetadataTests {
                 backingSize: .zero,
                 displayName: "Studio Display",
                 displayID: "display_1",
-                attachedWindowTitle: "Alan",
+                attachedWindowTitle: "alan",
                 isFocused: false,
                 renderer: TerminalRendererSnapshot(
                     kind: .ghosttyLive,
@@ -201,7 +201,7 @@ private enum ShellRuntimeMetadataTests {
         let title = shellPaneTitleBarTitle(
             for: pane(
                 context: context(
-                    workingDirectoryName: "Alan",
+                    workingDirectoryName: "alan",
                     processState: "running",
                     rendererHealth: "ready",
                     surfaceReadiness: "ready",
@@ -273,7 +273,7 @@ private enum ShellRuntimeMetadataTests {
                 attention: .idle
             )
         )
-        expect(alanTitle == "Alan", "pane title bar must expose Alan launch-target fallback")
+        expect(alanTitle == "alan", "pane title bar must expose alan launch-target fallback")
 
         let processTitle = shellPaneTitleBarTitle(
             for: pane(
@@ -297,7 +297,7 @@ private enum ShellRuntimeMetadataTests {
         let debugTitle = shellPaneTitleBarTitle(
             for: pane(
                 context: context(
-                    workingDirectoryName: "Alan",
+                    workingDirectoryName: "alan",
                     processState: "running",
                     rendererHealth: "ready",
                     surfaceReadiness: "ready",
@@ -314,7 +314,7 @@ private enum ShellRuntimeMetadataTests {
                 attention: .idle
             )
         )
-        expect(debugTitle == "Alan", "pane title bar must suppress debug title text")
+        expect(debugTitle == "alan", "pane title bar must suppress debug title text")
 
         let rawPaneTitle = shellPaneTitleBarTitle(
             for: pane(
@@ -448,7 +448,7 @@ private enum ShellRuntimeMetadataTests {
     }
 
     private static func context(
-        workingDirectoryName: String? = "Alan",
+        workingDirectoryName: String? = "alan",
         processState: String,
         rendererHealth: String,
         surfaceReadiness: String,

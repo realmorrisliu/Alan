@@ -1,4 +1,4 @@
-//! Alan — AI Turing Machine CLI & daemon library.
+//! alan — AI Turing Machine CLI & daemon library.
 //!
 //! This crate provides both the CLI binary and daemon server functionality.
 

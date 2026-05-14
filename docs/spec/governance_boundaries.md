@@ -10,7 +10,7 @@ Replace "approve every step" with boundary-driven intervention:
 `Human Defines -> Agent Executes -> Human Owns`
 
 The contract here is about authorization and ownership, not about requiring a
-strong sandbox before Alan can be useful.
+strong sandbox before alan can be useful.
 
 ## Boundary Classes
 

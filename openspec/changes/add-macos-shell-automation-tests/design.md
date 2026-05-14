@@ -1,6 +1,6 @@
 ## Context
 
-Alan's macOS shell already has an agent-facing file/socket control plane, which
+alan's macOS shell already has an agent-facing file/socket control plane, which
 is a product strength. What is missing is the native automation and test
 coverage expected from a terminal-grade Mac app: App Intents for user/system
 automation, focused Apple-client tests, UI smoke evidence, and repeatable
@@ -30,7 +30,7 @@ future macOS surfaces.
 - Implement all terminal runtime and surface parity work. This change supplies
   automation/test surfaces around those boundaries.
 - Expose private socket paths or raw pane IDs as user-facing App Intent copy.
-- Replace Alan's CLI/daemon tests or Rust runtime quality gates.
+- Replace alan's CLI/daemon tests or Rust runtime quality gates.
 
 ## Decisions
 

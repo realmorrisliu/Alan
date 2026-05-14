@@ -12,7 +12,7 @@ const PERSONA_DIRNAME: &str = "persona";
 const SKILLS_DIRNAME: &str = "skills";
 const POLICY_FILENAME: &str = "policy.yaml";
 
-/// Canonical path contract for Alan agent roots.
+/// Canonical path contract for alan agent roots.
 ///
 /// `AgentRootLayout` is the runtime-owned source of truth for agent definition
 /// roots and their standard assets. Host crates should use these semantic

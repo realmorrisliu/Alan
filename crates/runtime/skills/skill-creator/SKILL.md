@@ -1,7 +1,7 @@
 ---
 name: skill-creator
 description: |
-  Design, scaffold, validate, and iterate on Alan skill packages.
+  Design, scaffold, validate, and iterate on alan skill packages.
 
   Use this when:
   - The user wants to create a new skill package
@@ -12,7 +12,7 @@ description: |
   - You need to plan explicit authoring and evaluation workflows for a skill
 
 metadata:
-  short-description: Create or update Alan skill packages
+  short-description: Create or update alan skill packages
   tags: [skills, authoring, scaffolding, validation, eval]
 capabilities:
   required_tools: [bash]
@@ -22,7 +22,7 @@ compatibility:
 
 # Skill Creator
 
-This skill helps author ordinary directory-backed Alan skill packages.
+This skill helps author ordinary directory-backed alan skill packages.
 
 ## Working Model
 
@@ -31,7 +31,7 @@ Treat every skill as a single `skill package` with one root `SKILL.md`.
 Package-local surfaces:
 
 - `SKILL.md`: portable selection contract and core workflow
-- `skill.yaml` / `package.yaml`: Alan-native runtime defaults
+- `skill.yaml` / `package.yaml`: alan-native runtime defaults
 - `bin/`: package-local executable tools that should travel with the skill in
   source and packaged form
 - `scripts/`: package-private glue, wrappers, and compatibility helpers when a

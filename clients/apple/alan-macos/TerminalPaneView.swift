@@ -1,0 +1,1035 @@
+import SwiftUI
+
+#if os(macOS)
+struct TerminalPaneView: View {
+    @ObservedObject var host: ShellHostController
+    let terminalSurfaceInsets: EdgeInsets
+
+    var body: some View {
+        paneCanvas
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .padding(terminalSurfaceInsets)
+    }
+
+    private var paneCanvas: some View {
+        Group {
+            if let paneTree = host.selectedTabPaneTree {
+                ShellPaneTreeLayoutView(
+                    node: paneTree,
+                    host: host
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            } else {
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("No tab selected")
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundStyle(ShellPalette.ink)
+                    Text("Open a tab to start a new shell here.")
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundStyle(ShellPalette.mutedInk)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+                .padding(28)
+            }
+        }
+        .modifier(ShellTerminalSurfaceFrame())
+    }
+
+    private var runtimeCard: some View {
+        let runtime = host.selectedPaneRuntime
+        return TerminalInfoCard(title: "Host Runtime", accent: ShellPalette.accent) {
+            TerminalInfoRow(label: "Stage", value: runtime.stageLabel)
+            TerminalInfoRow(label: "Focus", value: runtime.isFocused ? "focused" : "background")
+            TerminalInfoRow(label: "Renderer", value: rendererKindLabel(for: runtime.renderer.kind))
+            TerminalInfoRow(label: "Phase", value: runtime.renderer.phaseLabel)
+            TerminalInfoRow(
+                label: "Logical",
+                value: sizeLabel(for: runtime.logicalSize)
+            )
+            TerminalInfoRow(
+                label: "Backing",
+                value: sizeLabel(for: runtime.backingSize)
+            )
+            TerminalInfoRow(
+                label: "Display",
+                value: runtime.displayName ?? "not attached"
+            )
+            TerminalInfoRow(
+                label: "Display ID",
+                value: host.selectedPane?.context?.displayID ?? runtime.displayID ?? "pending"
+            )
+            TerminalInfoRow(
+                label: "Window",
+                value: host.selectedPane?.context?.windowTitle ?? runtime.attachedWindowTitle ?? "pending"
+            )
+            TerminalInfoRow(
+                label: "Status",
+                value: runtime.renderer.summary
+            )
+            TerminalInfoRow(
+                label: "Surface",
+                value: surfaceReadinessLabel(runtime.surfaceState.readiness)
+            )
+            TerminalInfoRow(
+                label: "Input",
+                value: runtime.surfaceState.inputReady ? "ready" : "not ready"
+            )
+            TerminalInfoRow(
+                label: "Mode",
+                value: runtime.surfaceState.terminalMode.rawValue.replacingOccurrences(of: "_", with: " ")
+            )
+            TerminalInfoRow(
+                label: "Renderer Health",
+                value: runtime.surfaceState.rendererHealth
+            )
+            TerminalInfoRow(
+                label: "cwd",
+                value: runtime.paneMetadata.workingDirectory ?? "pending"
+            )
+            TerminalInfoRow(
+                label: "Title",
+                value: runtime.paneMetadata.title ?? "pending"
+            )
+            TerminalInfoRow(
+                label: "Attention",
+                value: runtime.paneMetadata.attention.rawValue
+            )
+            TerminalInfoRow(
+                label: "Process",
+                value: runtime.paneMetadata.processExited ? "exited" : "running"
+            )
+            TerminalInfoRow(
+                label: "Branch",
+                value: host.selectedPane?.context?.gitBranch ?? "pending"
+            )
+            TerminalInfoRow(
+                label: "Process State",
+                value: host.selectedPane?.context?.processState ?? "pending"
+            )
+            TerminalInfoRow(
+                label: "Exit",
+                value: host.selectedPane?.context?.lastCommandExitCode.map(String.init) ?? "pending"
+            )
+            TerminalInfoRow(
+                label: "Metadata",
+                value: host.selectedPane?.context?.lastMetadataAt ?? "pending"
+            )
+
+            if let failureReason = runtime.renderer.failureReason,
+               !failureReason.isEmpty {
+                Divider()
+                    .overlay(ShellPalette.line.opacity(0.22))
+
+                TerminalInfoRow(label: "Failure", value: failureReason)
+            }
+
+            if !runtime.renderer.recentEvents.isEmpty {
+                Divider()
+                    .overlay(ShellPalette.line.opacity(0.22))
+
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Recent Events")
+                        .font(.system(size: 11, weight: .semibold, design: .rounded))
+                        .textCase(.uppercase)
+                        .foregroundStyle(ShellPalette.mutedInk)
+
+                    ForEach(Array(runtime.renderer.recentEvents.enumerated()), id: \.offset) { entry in
+                        TerminalMonoLine(text: entry.element)
+                    }
+                }
+            }
+        }
+    }
+
+    private var bootCard: some View {
+        TerminalInfoCard(title: "Boot Contract", accent: ShellPalette.ink) {
+            TerminalInfoRow(
+                label: "Target",
+                value: host.selectedPane?.resolvedLaunchTarget.rawValue ?? "pending"
+            )
+            TerminalInfoRow(
+                label: "Strategy",
+                value: host.selectedPaneBootProfile?.command.strategy.rawValue ?? "pending"
+            )
+            TerminalInfoRow(
+                label: "Command",
+                value: host.selectedPaneBootProfile?.launchCommandString ?? "pending"
+            )
+            TerminalInfoRow(
+                label: "Resolved",
+                value: host.selectedPaneBootProfile?.command.detail ?? "PATH lookup"
+            )
+            TerminalInfoRow(
+                label: "cwd",
+                value: host.selectedPaneBootProfile?.workingDirectory ?? "pending"
+            )
+            TerminalInfoRow(
+                label: "Control",
+                value: host.selectedPaneBootProfile?.environment["ALAN_SHELL_CONTROL_DIR"] ?? "pending"
+            )
+            TerminalInfoRow(
+                label: "Socket",
+                value: host.selectedPaneBootProfile?.environment["ALAN_SHELL_SOCKET"] ?? "pending"
+            )
+            TerminalInfoRow(
+                label: "Binding",
+                value: host.selectedPaneBootProfile?.environment["ALAN_SHELL_BINDING_FILE"] ?? "pending"
+            )
+            TerminalInfoRow(
+                label: "Integration",
+                value: host.selectedPane?.context?.shellIntegrationSource ?? "pending"
+            )
+
+            if let bootProfile = host.selectedPaneBootProfile {
+                Divider()
+                    .overlay(ShellPalette.line.opacity(0.22))
+
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Environment")
+                        .font(.system(size: 11, weight: .semibold, design: .rounded))
+                        .textCase(.uppercase)
+                        .foregroundStyle(ShellPalette.mutedInk)
+
+                    ForEach(Array(bootProfile.environmentPreview.prefix(4)), id: \.key) { entry in
+                        TerminalMonoLine(text: "\(entry.key)=\(entry.value)")
+                    }
+                }
+
+                Divider()
+                    .overlay(ShellPalette.line.opacity(0.22))
+
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Command Discovery")
+                        .font(.system(size: 11, weight: .semibold, design: .rounded))
+                        .textCase(.uppercase)
+                        .foregroundStyle(ShellPalette.mutedInk)
+
+                    ForEach(Array(bootProfile.command.candidates.prefix(4))) { candidate in
+                        HStack(alignment: .top, spacing: 8) {
+                            Circle()
+                                .fill(candidate.isPresent ? Color.green.opacity(0.9) : Color.orange.opacity(0.82))
+                                .frame(width: 8, height: 8)
+                                .padding(.top, 4)
+
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(candidate.label)
+                                    .font(.system(size: 12, weight: .semibold, design: .rounded))
+                                    .foregroundStyle(ShellPalette.ink)
+                                Text(candidate.path)
+                                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                                    .foregroundStyle(ShellPalette.mutedInk)
+                                    .lineLimit(2)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private var ghosttyCard: some View {
+        TerminalInfoCard(title: "Ghostty", accent: ShellPalette.accent) {
+            TerminalInfoRow(
+                label: "Status",
+                value: host.selectedPaneBootProfile?.ghostty.summary ?? "pending"
+            )
+            TerminalInfoRow(
+                label: "Setup",
+                value: host.selectedPaneBootProfile?.ghostty.setupCommand ?? "pending"
+            )
+
+            if let candidates = host.selectedPaneBootProfile?.ghostty.candidates {
+                Divider()
+                    .overlay(ShellPalette.line.opacity(0.22))
+
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Discovery")
+                        .font(.system(size: 11, weight: .semibold, design: .rounded))
+                        .textCase(.uppercase)
+                        .foregroundStyle(ShellPalette.mutedInk)
+
+                    ForEach(Array(candidates.prefix(3))) { candidate in
+                        HStack(alignment: .top, spacing: 8) {
+                            Circle()
+                                .fill(candidate.isPresent ? Color.green.opacity(0.9) : Color.orange.opacity(0.82))
+                                .frame(width: 8, height: 8)
+                                .padding(.top, 4)
+
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(candidate.label)
+                                    .font(.system(size: 12, weight: .semibold, design: .rounded))
+                                    .foregroundStyle(ShellPalette.ink)
+                                Text(candidate.path)
+                                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                                    .foregroundStyle(ShellPalette.mutedInk)
+                                    .lineLimit(2)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private var alanBindingCard: some View {
+        TerminalInfoCard(title: "alan binding", accent: ShellPalette.ink) {
+            if let binding = host.selectedPane?.alanBinding {
+                TerminalInfoRow(label: "Session", value: binding.sessionID)
+                TerminalInfoRow(label: "Run", value: binding.runStatus)
+                TerminalInfoRow(label: "Yield", value: binding.pendingYield ? "pending" : "none")
+                TerminalInfoRow(label: "Source", value: binding.source ?? "binding file")
+                TerminalInfoRow(label: "Projected", value: binding.lastProjectedAt ?? "pending")
+            } else {
+                Text("This pane is shell-addressable even when no alan session is projected onto it.")
+                    .font(.system(size: 13, weight: .medium, design: .rounded))
+                    .foregroundStyle(ShellPalette.mutedInk)
+            }
+        }
+    }
+
+    private func sizeLabel(for size: CGSize) -> String {
+        guard size != .zero else { return "pending" }
+        return "\(Int(size.width)) × \(Int(size.height))"
+    }
+
+    private func rendererKindLabel(for kind: TerminalRendererKind) -> String {
+        kind.rawValue.replacingOccurrences(of: "_", with: " ")
+    }
+
+    private func surfaceReadinessLabel(_ readiness: AlanTerminalSurfaceReadiness) -> String {
+        switch readiness {
+        case .ready:
+            return "ready"
+        case .unready(let reason):
+            return reason.rawValue.replacingOccurrences(of: "_", with: " ")
+        }
+    }
+}
+
+private struct ShellTerminalSurfaceFrame: ViewModifier {
+    @Environment(\.colorScheme) private var colorScheme
+    private let shape = RoundedRectangle(cornerRadius: ShellRadii.terminalSurface, style: .continuous)
+
+    func body(content: Content) -> some View {
+        content
+            .clipShape(shape)
+            .background {
+                ShellMaterialShape(
+                    role: .terminalSurround,
+                    shape: shape
+                )
+                .shellShadow(ShellShadows.terminalSurfaceRim)
+                .shellShadow(ShellShadows.terminalSurface)
+            }
+            .overlay {
+                terminalSurfaceRim
+            }
+    }
+
+    private var terminalSurfaceRim: some View {
+        ZStack {
+            shape
+                .strokeBorder(
+                    ShellPalette.line.opacity(colorScheme == .light ? 0.30 : 0.26),
+                    lineWidth: 0.85
+                )
+
+            shape
+                .strokeBorder(
+                    LinearGradient(
+                        colors: [
+                            Color.white.opacity(colorScheme == .light ? 0.18 : 0.07),
+                            Color.white.opacity(0.015),
+                            Color.black.opacity(colorScheme == .light ? 0.14 : 0.32),
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    ),
+                    lineWidth: 0.65
+                )
+
+            shape
+                .inset(by: 1)
+                .strokeBorder(
+                    Color.white.opacity(colorScheme == .light ? 0.06 : 0.03),
+                    lineWidth: 0.4
+                )
+        }
+        .allowsHitTesting(false)
+    }
+}
+
+private struct ShellPaneTreeLayoutView: View {
+    let node: ShellPaneTreeNode
+    @ObservedObject var host: ShellHostController
+
+    var body: some View {
+        switch node.kind {
+        case .pane:
+            if let paneID = node.paneID,
+               let pane = host.shellState.panes.first(where: { $0.paneID == paneID }) {
+                ShellTerminalLeafView(
+                    pane: pane,
+                    bootProfile: host.bootProfile(for: pane),
+                    isSelected: host.selectedPane?.paneID == pane.paneID,
+                    runtimeRegistry: host.terminalRuntimeRegistry,
+                    activationDelegate: host,
+                    onWorkspaceCommand: { command in
+                        host.performShellWorkspaceCommand(command)
+                    },
+                    onCommandInput: {
+                        host.requestCommandInput()
+                    },
+                    onClosePane: {
+                        host.closePaneByID(pane.paneID)
+                    },
+                    onRuntimeUpdate: host.updateTerminalRuntime,
+                    onMetadataUpdate: { metadata in
+                        host.updateTerminalMetadata(metadata, for: pane.paneID)
+                    }
+                )
+            }
+        case .split:
+            ShellSplitLayoutView(node: node, host: host)
+        }
+    }
+}
+
+private struct ShellSplitLayoutView: View {
+    let node: ShellPaneTreeNode
+    @ObservedObject var host: ShellHostController
+    @State private var dragStartRatio: Double?
+    @State private var dragPreviewRatio: Double?
+
+    private var children: [ShellPaneTreeNode] {
+        node.children ?? []
+    }
+
+    var body: some View {
+        if children.count == 2 {
+            GeometryReader { proxy in
+                if node.direction == .vertical {
+                    HStack(spacing: 0) {
+                        ShellPaneTreeLayoutView(node: children[0], host: host)
+                            .frame(width: primaryLength(total: proxy.size.width))
+                        ShellSplitDividerView(direction: .vertical)
+                            .gesture(resizeGesture(totalLength: proxy.size.width))
+                        ShellPaneTreeLayoutView(node: children[1], host: host)
+                            .frame(width: secondaryLength(total: proxy.size.width))
+                    }
+                } else {
+                    VStack(spacing: 0) {
+                        ShellPaneTreeLayoutView(node: children[0], host: host)
+                            .frame(height: primaryLength(total: proxy.size.height))
+                        ShellSplitDividerView(direction: .horizontal)
+                            .gesture(resizeGesture(totalLength: proxy.size.height))
+                        ShellPaneTreeLayoutView(node: children[1], host: host)
+                            .frame(height: secondaryLength(total: proxy.size.height))
+                    }
+                }
+            }
+        } else if node.direction == .vertical {
+            HStack(spacing: 0) {
+                indexedChildrenWithDividers
+            }
+        } else {
+            VStack(spacing: 0) {
+                indexedChildrenWithDividers
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var indexedChildrenWithDividers: some View {
+        ForEach(Array(children.enumerated()), id: \.element.id) { index, child in
+            if index > 0 {
+                ShellSplitDividerView(direction: node.direction ?? .vertical)
+            }
+            ShellPaneTreeLayoutView(node: child, host: host)
+        }
+    }
+
+    private var dividerThickness: CGFloat { ShellSplitDividerMetrics.thickness }
+
+    private func primaryLength(total: CGFloat) -> CGFloat {
+        max((total - dividerThickness) * node.splitRatio, 0)
+    }
+
+    private func secondaryLength(total: CGFloat) -> CGFloat {
+        max(total - dividerThickness - primaryLength(total: total), 0)
+    }
+
+    private func resizeGesture(totalLength: CGFloat) -> some Gesture {
+        DragGesture(minimumDistance: 0)
+            .onChanged { value in
+                if dragStartRatio == nil {
+                    dragStartRatio = node.splitRatio
+                }
+                let delta = node.direction == .vertical
+                    ? value.translation.width
+                    : value.translation.height
+                let usableLength = max(totalLength - dividerThickness, 1)
+                let nextRatio = (dragStartRatio ?? node.splitRatio) + Double(delta / usableLength)
+                if host.resizeSplit(splitNodeID: node.nodeID, ratio: nextRatio, persist: false) {
+                    dragPreviewRatio = nextRatio
+                }
+            }
+            .onEnded { _ in
+                if let finalRatio = dragPreviewRatio {
+                    _ = host.resizeSplit(splitNodeID: node.nodeID, ratio: finalRatio, persist: true)
+                }
+                dragStartRatio = nil
+                dragPreviewRatio = nil
+            }
+    }
+}
+
+private struct ShellSplitDividerView: View {
+    @State private var isHovered = false
+    let direction: ShellSplitDirection
+
+    var body: some View {
+        seam
+            .frame(
+                width: direction == .vertical ? ShellSplitDividerMetrics.thickness : nil,
+                height: direction == .horizontal ? ShellSplitDividerMetrics.thickness : nil
+            )
+            .contentShape(Rectangle())
+            .onHover { isHovered = $0 }
+            .help("Resize split")
+    }
+
+    @ViewBuilder
+    private var seam: some View {
+        if direction == .vertical {
+            HStack(spacing: 0) {
+                Rectangle().fill(ShellSplitDividerTint.shadow(isHovered: isHovered))
+                Rectangle().fill(ShellSplitDividerTint.highlight(isHovered: isHovered))
+            }
+        } else {
+            VStack(spacing: 0) {
+                Rectangle().fill(ShellSplitDividerTint.shadow(isHovered: isHovered))
+                Rectangle().fill(ShellSplitDividerTint.highlight(isHovered: isHovered))
+            }
+        }
+    }
+}
+
+private enum ShellSplitDividerMetrics {
+    static let thickness: CGFloat = 2
+}
+
+private enum ShellSplitDividerTint {
+    static func shadow(isHovered: Bool) -> Color {
+        Color.black.opacity(isHovered ? 0.22 : 0.14)
+    }
+
+    static func highlight(isHovered: Bool) -> Color {
+        ShellPalette.terminalSoft.opacity(isHovered ? 0.48 : 0.34)
+    }
+}
+
+private struct ShellTerminalLeafView: View {
+    @AppStorage("alanShellDimsInactiveSplitPanes") private var dimsInactiveSplitPanes = true
+
+    let pane: ShellPane
+    let bootProfile: AlanShellBootProfile?
+    let isSelected: Bool
+    let runtimeRegistry: TerminalRuntimeRegistry
+    let activationDelegate: TerminalHostActivationDelegate?
+    let onWorkspaceCommand: (ShellWorkspaceCommand) -> Void
+    let onCommandInput: () -> Void
+    let onClosePane: () -> Void
+    let onRuntimeUpdate: (TerminalHostRuntimeSnapshot) -> Void
+    let onMetadataUpdate: (TerminalPaneMetadataSnapshot) -> Void
+
+    var body: some View {
+        VStack(spacing: 0) {
+            ShellPaneTitleBarView(
+                title: shellPaneTitleBarTitle(for: pane),
+                pane: pane,
+                isSelected: isSelected,
+                onFocusPane: {
+                    activationDelegate?.terminalHostDidRequestActivation(paneID: pane.paneID)
+                },
+                onClosePane: onClosePane
+            )
+
+            ZStack(alignment: .topTrailing) {
+                TerminalHostView(
+                    pane: pane,
+                    bootProfile: bootProfile,
+                    isSelected: isSelected,
+                    runtimeRegistry: runtimeRegistry,
+                    activationDelegate: activationDelegate,
+                    onWorkspaceCommand: onWorkspaceCommand,
+                    onCommandInput: onCommandInput,
+                    onRuntimeUpdate: onRuntimeUpdate,
+                    onMetadataUpdate: onMetadataUpdate
+                )
+                .id(pane.paneID)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .background(ShellPalette.terminal)
+                .overlay {
+                    ShellInactivePaneDim(
+                        isSelected: isSelected,
+                        isEnabled: dimsInactiveSplitPanes
+                    )
+                }
+
+                if isSelected,
+                   let searchState = runtimeRegistry.snapshot(for: pane.paneID).surfaceState.search,
+                   searchState.isActive
+                {
+                    ShellFindBarView(
+                        searchState: searchState,
+                        onQueryChange: { query in
+                            _ = runtimeRegistry.updateFindQuery(for: pane.paneID, query: query)
+                        },
+                        onNext: {
+                            runtimeRegistry.selectNextFindMatch(for: pane.paneID)
+                        },
+                        onPrevious: {
+                            runtimeRegistry.selectPreviousFindMatch(for: pane.paneID)
+                        },
+                        onClose: {
+                            runtimeRegistry.dismissFindInteraction(for: pane.paneID)
+                        }
+                    )
+                    .padding(10)
+                }
+            }
+        }
+    }
+}
+
+private struct ShellPaneTitleBarView: View {
+    let title: String
+    let pane: ShellPane
+    let isSelected: Bool
+    let onFocusPane: () -> Void
+    let onClosePane: () -> Void
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Text(title)
+                .font(.system(size: 11, weight: isSelected ? .semibold : .medium))
+                .foregroundStyle(isSelected ? ShellPalette.ink : ShellPalette.mutedInk)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            if !accessories.isEmpty {
+                HStack(spacing: 10) {
+                    ForEach(accessories) { accessory in
+                        ShellPaneTitleBarAccessoryView(accessory: accessory, isSelected: isSelected)
+                    }
+                }
+                .layoutPriority(1)
+            }
+
+            Button(action: onClosePane) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(ShellPalette.mutedInk)
+                    .frame(width: 22, height: 22)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Close pane")
+            .accessibilityLabel("Close pane")
+        }
+        .padding(.leading, 10)
+        .padding(.trailing, 6)
+        .frame(height: 28)
+        .background(
+            Rectangle()
+                .fill(
+                    isSelected
+                        ? ShellMaterialRole.terminalChromeSelected.fill
+                        : ShellMaterialRole.terminalChrome.fill
+                )
+        )
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(ShellPalette.line.opacity(isSelected ? 0.18 : 0.12))
+                .frame(height: 1)
+        }
+        .contentShape(Rectangle())
+        .onTapGesture(perform: onFocusPane)
+    }
+
+    private var accessories: [ShellPaneTitleBarAccessory] {
+        var items: [ShellPaneTitleBarAccessory] = []
+
+        if let status = shellTerminalStatusSummary(for: pane) {
+            items.append(
+                ShellPaneTitleBarAccessory(
+                    id: "status",
+                    icon: statusIcon,
+                    title: statusTitle(status),
+                    help: status,
+                    tint: statusTint
+                )
+            )
+        }
+
+        if let branch = shellVisibleLabel(pane.context?.gitBranch) {
+            items.append(
+                ShellPaneTitleBarAccessory(
+                    id: "branch",
+                    icon: "point.topleft.down.curvedto.point.bottomright.up",
+                    title: branch,
+                    help: "Git branch \(branch)",
+                    tint: ShellPalette.mutedInk,
+                    maxWidth: 120
+                )
+            )
+        }
+
+        if let binding = pane.alanBinding {
+            let bindingTitle = binding.pendingYield ? "Input" : shellVisibleLabel(binding.runStatus)
+            items.append(
+                ShellPaneTitleBarAccessory(
+                    id: "alan",
+                    icon: "sparkles",
+                    title: bindingTitle,
+                    help: "alan \(binding.runStatus)",
+                    tint: ShellPalette.accent,
+                    maxWidth: 72
+                )
+            )
+        }
+
+        return items
+    }
+
+    private var statusIcon: String {
+        if pane.context?.processState == "exited"
+            || pane.context?.surfaceReadiness == "child_exited"
+        {
+            return "checkmark.circle"
+        }
+        if pane.context?.rendererHealth == "failed"
+            || pane.context?.rendererPhase == "failed"
+            || pane.context?.surfaceReadiness == "renderer_failed"
+        {
+            return "exclamationmark.triangle"
+        }
+        if pane.attention == .awaitingUser || pane.attention == .notable {
+            return "bell.badge"
+        }
+        return "info.circle"
+    }
+
+    private var statusTint: Color {
+        if pane.context?.rendererHealth == "failed"
+            || pane.context?.rendererPhase == "failed"
+            || pane.context?.surfaceReadiness == "renderer_failed"
+            || pane.attention == .awaitingUser
+        {
+            return ShellPalette.attention
+        }
+        return ShellPalette.mutedInk
+    }
+
+    private func statusTitle(_ status: String) -> String? {
+        if pane.attention == .notable,
+           status == "Terminal bell"
+        {
+            return nil
+        }
+        return status
+    }
+}
+
+private struct ShellPaneTitleBarAccessory: Identifiable {
+    let id: String
+    let icon: String
+    let title: String?
+    let help: String
+    let tint: Color
+    var maxWidth: CGFloat?
+}
+
+private struct ShellPaneTitleBarAccessoryView: View {
+    let accessory: ShellPaneTitleBarAccessory
+    let isSelected: Bool
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Image(systemName: accessory.icon)
+                .font(.system(size: 10, weight: .semibold))
+
+            if let title = accessory.title {
+                Text(title)
+                    .font(.system(size: 10, weight: .semibold))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .frame(maxWidth: accessory.maxWidth, alignment: .leading)
+            }
+        }
+        .foregroundStyle(accessory.tint.opacity(isSelected ? 0.86 : 0.58))
+        .fixedSize(horizontal: false, vertical: true)
+        .help(accessory.help)
+        .accessibilityLabel(accessory.help)
+    }
+}
+
+private struct ShellFindBarView: View {
+    let searchState: AlanTerminalSearchState
+    let onQueryChange: (String) -> Void
+    let onNext: () -> Void
+    let onPrevious: () -> Void
+    let onClose: () -> Void
+
+    @State private var query: String
+    @FocusState private var isFocused: Bool
+
+    init(
+        searchState: AlanTerminalSearchState,
+        onQueryChange: @escaping (String) -> Void,
+        onNext: @escaping () -> Void,
+        onPrevious: @escaping () -> Void,
+        onClose: @escaping () -> Void
+    ) {
+        self.searchState = searchState
+        self.onQueryChange = onQueryChange
+        self.onNext = onNext
+        self.onPrevious = onPrevious
+        self.onClose = onClose
+        _query = State(initialValue: searchState.query)
+    }
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(ShellPalette.mutedInk)
+
+            TextField("Find", text: $query)
+                .textFieldStyle(.plain)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(ShellPalette.ink)
+                .focused($isFocused)
+                .frame(width: 180)
+                .onChange(of: query) { _, nextQuery in
+                    onQueryChange(nextQuery)
+                }
+                .onChange(of: searchState.query) { _, nextQuery in
+                    guard nextQuery != query else { return }
+                    query = nextQuery
+                }
+                .onChange(of: searchState.focusRequestID) { _, _ in
+                    isFocused = true
+                }
+                .onSubmit {
+                    onNext()
+                }
+
+            Text(resultLabel)
+                .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                .foregroundStyle(ShellPalette.mutedInk)
+                .frame(minWidth: 48, alignment: .trailing)
+
+            Button(action: onPrevious) {
+                Image(systemName: "chevron.up")
+                    .font(.system(size: 10, weight: .bold))
+                    .frame(width: 22, height: 22)
+            }
+            .buttonStyle(.plain)
+            .help("Previous match")
+            .keyboardShortcut("g", modifiers: [.command, .shift])
+
+            Button(action: onNext) {
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 10, weight: .bold))
+                    .frame(width: 22, height: 22)
+            }
+            .buttonStyle(.plain)
+            .help("Next match")
+            .keyboardShortcut("g", modifiers: [.command])
+
+            Button(action: onClose) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 10, weight: .bold))
+                    .frame(width: 22, height: 22)
+            }
+            .buttonStyle(.plain)
+            .help("Close Find")
+            .keyboardShortcut(.escape, modifiers: [])
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .background(
+            ShellMaterialShape(
+                role: .floatingInput,
+                shape: RoundedRectangle(cornerRadius: ShellRadii.surface, style: .continuous)
+            )
+        )
+        .overlay {
+            RoundedRectangle(cornerRadius: ShellRadii.surface, style: .continuous)
+                .stroke(ShellPalette.line.opacity(0.35), lineWidth: 1)
+        }
+        .shellShadow(ShellShadows.floatingInput)
+        .onAppear {
+            query = searchState.query
+            isFocused = true
+        }
+        .onExitCommand {
+            onClose()
+        }
+    }
+
+    private var resultLabel: String {
+        if let total = searchState.totalMatches,
+           let selected = searchState.selectedIndex
+        {
+            guard total > 0 else { return "0" }
+            return "\(selected + 1)/\(total)"
+        }
+        return query.isEmpty ? "" : "..."
+    }
+}
+
+private struct ShellInactivePaneDim: View {
+    let isSelected: Bool
+    let isEnabled: Bool
+
+    var body: some View {
+        Rectangle()
+            .fill(Color.black.opacity(isSelected || !isEnabled ? 0 : 0.14))
+            .allowsHitTesting(false)
+    }
+}
+
+private struct TerminalActionButton: View {
+    let icon: String
+    let title: String
+    var isDestructive = false
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            TerminalActionLabel(
+                icon: icon,
+                title: title,
+                foreground: isDestructive ? Color.red.opacity(0.8) : ShellPalette.ink
+            )
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+private struct TerminalActionLabel: View {
+    let icon: String
+    let title: String
+    var foreground: Color = ShellPalette.ink
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: icon)
+            Text(title)
+        }
+        .font(.system(size: 12, weight: .semibold))
+        .foregroundStyle(foreground)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(
+            ShellMaterialShape(
+                role: .controlGlass,
+                shape: RoundedRectangle(cornerRadius: ShellRadii.row, style: .continuous)
+            )
+        )
+    }
+}
+
+private struct TerminalPaneChip: View {
+    let icon: String
+    let title: String
+    let foreground: Color
+    let background: Color
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: icon)
+            Text(title)
+        }
+        .font(.system(size: 11, weight: .semibold))
+        .foregroundStyle(foreground)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: ShellRadii.row, style: .continuous)
+                .fill(background)
+        )
+    }
+}
+
+private struct TerminalInfoCard<Content: View>: View {
+    let title: String
+    let accent: Color
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(title)
+                .font(.system(size: 14, weight: .semibold, design: .rounded))
+                .foregroundStyle(ShellPalette.ink)
+
+            content
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            ShellMaterialShape(
+                role: .panel,
+                shape: RoundedRectangle(cornerRadius: ShellRadii.overlay, style: .continuous)
+            )
+        )
+        .overlay {
+            RoundedRectangle(cornerRadius: ShellRadii.overlay, style: .continuous)
+                .stroke(accent.opacity(0.16), lineWidth: 1)
+        }
+    }
+}
+
+private struct TerminalInfoRow: View {
+    let label: String
+    let value: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(label)
+                .font(.system(size: 11, weight: .semibold, design: .rounded))
+                .textCase(.uppercase)
+                .foregroundStyle(ShellPalette.mutedInk)
+            Text(value)
+                .font(.system(size: 13, weight: .medium, design: .rounded))
+                .foregroundStyle(ShellPalette.ink)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+}
+
+private struct TerminalMonoLine: View {
+    let text: String
+
+    var body: some View {
+        Text(text)
+            .font(.system(size: 11, weight: .medium, design: .monospaced))
+            .foregroundStyle(ShellPalette.mutedInk)
+            .lineLimit(2)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .background(
+                ShellMaterialShape(
+                    role: .panelSoft,
+                    shape: RoundedRectangle(cornerRadius: ShellRadii.surface, style: .continuous)
+                )
+            )
+    }
+}
+
+#endif

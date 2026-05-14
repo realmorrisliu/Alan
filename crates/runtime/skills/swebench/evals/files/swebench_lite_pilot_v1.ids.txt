@@ -1,4 +1,4 @@
-# SWE-bench Lite pilot subset for the first Alan full-steward external baseline.
+# SWE-bench Lite pilot subset for the first alan full-steward external baseline.
 # Selection bias: lighter operational footprint first, with repo diversity across
 # web/framework, HTTP, test runner, and docs-oriented Python projects.
 django__django-15789

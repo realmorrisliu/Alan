@@ -2,13 +2,13 @@
 
 > Status: proposed target contract for Rust test placement in workspace crates.
 >
-> This document defines where Rust tests belong in Alan's `crates/*` tree so
+> This document defines where Rust tests belong in alan's `crates/*` tree so
 > implementation files stay readable without forcing internal APIs to become
 > public just to satisfy test layout.
 
 ## Goal
 
-Alan's Rust test placement must optimize for four things at the same time:
+alan's Rust test placement must optimize for four things at the same time:
 
 1. Readable implementation files where production logic is easy to scan.
 2. Predictable placement so contributors do not invent a new layout per module.
@@ -53,7 +53,7 @@ principles later, but they are outside the scope of this document.
 
 ## Placement Tiers
 
-Rust tests in Alan must live in one of three placement tiers.
+Rust tests in alan must live in one of three placement tiers.
 
 ### Tier 1: Inline Unit Tests
 

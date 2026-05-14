@@ -1,6 +1,6 @@
 # Extension Contract (Plugin / Extension Host)
 
-> Status: VNext contract (defines Alan's extension mechanism and lifecycle contract).
+> Status: VNext contract (defines alan's extension mechanism and lifecycle contract).
 
 ## Goals
 

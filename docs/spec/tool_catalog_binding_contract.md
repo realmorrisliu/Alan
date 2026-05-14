@@ -5,7 +5,7 @@
 
 ## Goals
 
-This document defines how Alan should model tools so workspace routing,
+This document defines how alan should model tools so workspace routing,
 child-runtime launches, and host/tool composition all follow one contract:
 
 1. tool identity is stable across runtimes,
@@ -116,11 +116,11 @@ catalog per workspace.
 
 ### 7. Persistence And Audit Must Match Resolved Binding
 
-When Alan persists delegated-launch requests, routing decisions, or audit
+When alan persists delegated-launch requests, routing decisions, or audit
 records, the stored workspace-related fields must match the resolved execution
 binding that the child runtime will actually use.
 
-Alan must not persist unresolved relative workspace fields and then depend on
+alan must not persist unresolved relative workspace fields and then depend on
 process-local defaults at execution time.
 
 ## Relationship To Other Contracts

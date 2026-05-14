@@ -1,4 +1,4 @@
-//! Builtin tool implementations for the Alan agent runtime.
+//! Builtin tool implementations for the alan agent runtime.
 //!
 //! This crate provides 7 built-in tools as independent implementations of the
 //! `Tool` trait defined in `alan-runtime`.

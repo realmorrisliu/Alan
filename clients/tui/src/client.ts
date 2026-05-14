@@ -1,5 +1,5 @@
 /**
- * Alan Client - WebSocket and HTTP client for Alan agent daemon
+ * alan Client - WebSocket and HTTP client for alan agent daemon
  *
  * Supports two modes:
  * 1. Auto mode (default): TUI starts and manages the daemon process
@@ -142,7 +142,7 @@ export class AlanClient {
     const status = await this.daemon.start();
 
     if (this.options.verbose) {
-      console.log(`[Alan] daemon ${status.state}${status.pid ? ` (pid: ${status.pid})` : ""}`);
+      console.log(`[alan] daemon ${status.state}${status.pid ? ` (pid: ${status.pid})` : ""}`);
     }
   }
 

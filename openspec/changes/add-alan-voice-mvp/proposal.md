@@ -1,14 +1,14 @@
 ## Why
 
-Alan macOS needs a native, low-friction way for users to speak intent into the
-app without turning Alan into always-on dictation or a voice assistant. The MVP
+alan macOS needs a native, low-friction way for users to speak intent into the
+app without turning alan into always-on dictation or a voice assistant. The MVP
 should make hold-to-talk voice input fast enough for capture, commands, tasks,
-search, and agent starts while preserving Alan's terminal-first, low-distraction
+search, and agent starts while preserving alan's terminal-first, low-distraction
 macOS experience.
 
 ## What Changes
 
-- Add **Alan Voice** as the feature brand for macOS voice input, with **Hold to
+- Add **alan Voice** as the feature brand for macOS voice input, with **Hold to
   Talk** as the first interaction model.
 - Add a push-to-talk flow where pressing and holding a configurable shortcut
   starts recording, releasing the shortcut stops recording, and Escape cancels
@@ -19,10 +19,10 @@ macOS experience.
 - Add Cloud Mode as an optional higher-quality recognition path for Chinese,
   mixed Chinese/English, long utterances, colloquial phrasing, and richer
   speech-to-intent handling.
-- Add a speech-to-intent pipeline that turns recognized speech into typed Alan
+- Add a speech-to-intent pipeline that turns recognized speech into typed alan
   intents instead of inserting only raw transcripts.
 - Retire the existing `NSSpeechRecognizer` fixed-command shell voice control so
-  voice input is owned by Alan Voice rather than a parallel command vocabulary.
+  voice input is owned by alan Voice rather than a parallel command vocabulary.
 - Add a quiet, keyboard-first capture layer that reports recording,
   transcribing, intent resolution, success, cancellation, and recoverable
   errors without taking over the main terminal surface.
@@ -34,7 +34,7 @@ macOS experience.
 
 ### New Capabilities
 
-- `alan-voice-input`: Defines Alan Voice on macOS, including hold-to-talk
+- `alan-voice-input`: Defines alan Voice on macOS, including hold-to-talk
   interaction, local/cloud speech recognition modes, speech-to-intent routing,
   low-distraction UI feedback, cancellation, permissions, privacy, and first
   phase intent types.
@@ -50,7 +50,7 @@ None.
   clients, settings surfaces, the voice capture overlay, and removal of the old
   shell voice command controller.
 - Runtime/client bridge: a typed voice-intent model and routing layer that can
-  submit Alan turns, create tasks/captures, run search, or invoke local commands
+  submit alan turns, create tasks/captures, run search, or invoke local commands
   against the current app context.
 - Configuration and credentials: local mode defaults, cloud mode provider
   selection, API-key storage, and clear mode/provider disclosure.

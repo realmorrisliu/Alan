@@ -8,7 +8,7 @@
 
 ## Goals
 
-Provide a unified protocol layer for multi-client Alan frontends (TUI/Native/Web/IDE) with:
+Provide a unified protocol layer for multi-client alan frontends (TUI/Native/Web/IDE) with:
 
 1. Streaming interaction over long-lived connections.
 2. Explicit thread/turn lifecycle semantics.

@@ -1,4 +1,4 @@
-//! Alan Core — the AI Turing Machine runtime.
+//! alan Core — the AI Turing Machine runtime.
 //!
 //! This crate implements a generic agent runtime modeled as a Turing machine:
 //! - **Tape**: `tape::Tape` — manages conversation context

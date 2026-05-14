@@ -296,7 +296,7 @@ pub fn run_shell_events(
 
         if follow {
             let Some(events) = rows.as_array() else {
-                bail!("Alan Shell returned malformed events payload");
+                bail!("alan shell returned malformed events payload");
             };
 
             for event in events {
@@ -373,8 +373,9 @@ fn resolve_target(options: &ShellTargetOptions) -> Result<ShellTarget> {
     let window_root = options.window.as_deref().map(control_dir_for_window);
 
     let control_dir = explicit_control_dir
-        .or(env_control_dir)
-        .or(window_root)
+        .clone()
+        .or_else(|| window_root.clone())
+        .or_else(|| env_control_dir.clone())
         .or_else(|| {
             explicit_socket
                 .as_ref()
@@ -387,17 +388,23 @@ fn resolve_target(options: &ShellTargetOptions) -> Result<ShellTarget> {
         });
 
     let socket_path = explicit_socket
+        .or_else(|| {
+            explicit_control_dir
+                .as_ref()
+                .map(|dir| dir.join("shell.sock"))
+        })
+        .or_else(|| window_root.as_ref().map(|dir| dir.join("shell.sock")))
         .or(env_socket)
         .or_else(|| control_dir.as_ref().map(|dir| dir.join("shell.sock")));
 
     let Some(socket_path) = socket_path else {
         bail!(
-            "No Alan Shell target found. Pass --socket/--control-dir/--window or set ALAN_SHELL_SOCKET."
+            "No alan shell target found. Pass --socket/--control-dir/--window or set ALAN_SHELL_SOCKET."
         );
     };
     let Some(control_dir) = control_dir else {
         bail!(
-            "No Alan Shell control directory found. Pass --control-dir/--window or set ALAN_SHELL_CONTROL_DIR."
+            "No alan shell control directory found. Pass --control-dir/--window or set ALAN_SHELL_CONTROL_DIR."
         );
     };
 
@@ -418,7 +425,7 @@ fn invoke_via_socket(
 ) -> std::result::Result<ShellControlResponse, SocketInvocationFailure> {
     let mut stream = UnixStream::connect(&target.socket_path).map_err(|error| {
         SocketInvocationFailure::Unavailable(anyhow::anyhow!(
-            "Failed to connect to Alan Shell socket at {}: {error}",
+            "Failed to connect to alan shell socket at {}: {error}",
             target.socket_path.display()
         ))
     })?;
@@ -473,13 +480,13 @@ fn invoke_via_files(
     let results_dir = target.control_dir.join("results");
     fs::create_dir_all(&commands_dir).with_context(|| {
         format!(
-            "Failed to create Alan Shell commands dir at {}",
+            "Failed to create alan shell commands dir at {}",
             commands_dir.display()
         )
     })?;
     fs::create_dir_all(&results_dir).with_context(|| {
         format!(
-            "Failed to create Alan Shell results dir at {}",
+            "Failed to create alan shell results dir at {}",
             results_dir.display()
         )
     })?;
@@ -489,7 +496,7 @@ fn invoke_via_files(
     let payload = serde_json::to_vec_pretty(command).context("Failed to encode shell command")?;
     write_bytes_atomically(&command_path, &payload).with_context(|| {
         format!(
-            "Failed to write Alan Shell command file at {}",
+            "Failed to write alan shell command file at {}",
             command_path.display()
         )
     })?;
@@ -507,14 +514,14 @@ fn invoke_via_files(
                     }
                     Err(error) => {
                         last_response_error = Some(anyhow::Error::new(error).context(format!(
-                            "Alan Shell response file at {} is not complete yet",
+                            "alan shell response file at {} is not complete yet",
                             result_path.display()
                         )));
                     }
                 },
                 Err(error) => {
                     last_response_error = Some(anyhow::Error::new(error).context(format!(
-                        "Failed to read Alan Shell response file at {}",
+                        "Failed to read alan shell response file at {}",
                         result_path.display()
                     )));
                 }
@@ -525,12 +532,12 @@ fn invoke_via_files(
             let _ = fs::remove_file(&command_path);
             if let Some(error) = last_response_error {
                 bail!(
-                    "Timed out waiting for Alan Shell response in {}: {error}",
+                    "Timed out waiting for alan shell response in {}: {error}",
                     result_path.display()
                 );
             }
             bail!(
-                "Timed out waiting for Alan Shell response in {}",
+                "Timed out waiting for alan shell response in {}",
                 result_path.display()
             );
         }
@@ -540,7 +547,7 @@ fn invoke_via_files(
 }
 
 fn decode_response(bytes: &[u8]) -> Result<ShellControlResponse> {
-    try_decode_response(bytes).context("Failed to decode Alan Shell response")
+    try_decode_response(bytes).context("Failed to decode alan shell response")
 }
 
 fn try_decode_response(
@@ -566,7 +573,7 @@ fn trim_json_payload(bytes: &[u8]) -> &[u8] {
 fn write_bytes_atomically(path: &Path, bytes: &[u8]) -> Result<()> {
     let parent = path.parent().with_context(|| {
         format!(
-            "Alan Shell control path has no parent directory: {}",
+            "alan shell control path has no parent directory: {}",
             path.display()
         )
     })?;
@@ -598,7 +605,7 @@ fn write_bytes_atomically(path: &Path, bytes: &[u8]) -> Result<()> {
 fn ensure_success(response: &ShellControlResponse) -> Result<()> {
     if response.contract_version != CONTRACT_VERSION {
         bail!(
-            "Alan Shell contract mismatch: expected {}, got {}",
+            "alan shell contract mismatch: expected {}, got {}",
             CONTRACT_VERSION,
             response.contract_version
         );
@@ -606,7 +613,7 @@ fn ensure_success(response: &ShellControlResponse) -> Result<()> {
 
     if let Some(error_code) = response.error_code.as_deref() {
         bail!(
-            "Alan Shell returned {}{}",
+            "alan shell returned {}{}",
             error_code,
             response
                 .error_message
@@ -617,14 +624,14 @@ fn ensure_success(response: &ShellControlResponse) -> Result<()> {
     }
 
     if response.applied == Some(false) {
-        bail!("Alan Shell rejected the request without an explicit error");
+        bail!("alan shell rejected the request without an explicit error");
     }
 
     Ok(())
 }
 
 fn print_required_json(value: Option<Value>, operation: &str) -> Result<()> {
-    let value = value.with_context(|| format!("Alan Shell returned no payload for {operation}"))?;
+    let value = value.with_context(|| format!("alan shell returned no payload for {operation}"))?;
     print_pretty(&value)
 }
 
@@ -944,7 +951,7 @@ mod tests {
         assert!(
             error
                 .to_string()
-                .contains("Failed to decode Alan Shell response")
+                .contains("Failed to decode alan shell response")
         );
         assert!(fs::read_dir(&commands_dir).unwrap().next().is_none());
     }

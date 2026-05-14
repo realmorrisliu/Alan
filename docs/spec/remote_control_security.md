@@ -1,6 +1,6 @@
 # Remote Control Security Model
 
-> Status: VNext security model for remote client control over Alan nodes.
+> Status: VNext security model for remote client control over alan nodes.
 
 ## Goals
 

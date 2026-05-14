@@ -1,4 +1,4 @@
-# Alan - Development Tasks
+# alan - Development Tasks
 
 # List available commands
 default:
@@ -63,7 +63,7 @@ install:
 # Uninstall alan from ~/.alan/bin
 uninstall:
     rm -rf "$HOME/.alan/bin/alan" "$HOME/.alan/bin/alan-tui" "$HOME/.alan/bin/alan-tui.js"
-    echo "Alan uninstalled from ~/.alan/bin/"
+    echo "alan uninstalled from ~/.alan/bin/"
 
 # Clean artifacts
 clean:

@@ -1,16 +1,16 @@
-# Alan macOS Shell Contract
+# alan for macOS Terminal Workspace Contract
 
-> Status: VNext product contract for the macOS Alan shell host.
+> Status: VNext product contract for the alan for macOS terminal workspace host.
 
 ## Goal
 
-Define the product-layer contract for a macOS terminal host that:
+Define the product-layer contract for a macOS terminal workspace host that:
 
 1. behaves like a real terminal app for human operators,
 2. remains centered on terminal tabs that can boot directly into `alan-tui`,
-3. exposes a typed shell model and control surface that Alan can query and operate.
+3. exposes a typed terminal workspace model and control surface that alan can query and operate.
 
-This contract is about the macOS shell host. It does not redefine Alan runtime
+This contract is about the macOS terminal workspace host. It does not redefine alan runtime
 internals and it does not replace the current TUI with a custom chat UI.
 
 ## Non-Goals
@@ -20,12 +20,12 @@ This contract does not require:
 1. a GUI-first transcript surface replacing `alan-tui`,
 2. iOS parity with the macOS host,
 3. full process resurrection after host restart,
-4. browser-first or IDE-first expansion before the terminal shell is stable,
+4. browser-first or IDE-first expansion before the terminal workspace is stable,
 5. unrestricted shell introspection beyond the explicit metadata boundary.
 
 ## Product Thesis
 
-Alan is a real terminal app whose shell is readable and operable by both
+alan is a real terminal app whose workspace is readable and operable by both
 humans and agents.
 
 ## Companion UI / UX Contract
@@ -45,7 +45,7 @@ The companion UI / UX contract is authoritative for:
 
 1. what a user sees and names as a space, tab, pane, or explicit debug surface,
 2. how the sidebar, toolbar, content area, and default debug surfaces are organized,
-3. how attention and Alan-specific status appear in the native app.
+3. how attention and alan-specific status appear in the native app.
 
 `docs/spec/alan_macos_shell_ui_ux.md` is kept only as a superseded bridge for
 older links and must not override the OpenSpec contract.
@@ -70,9 +70,9 @@ The macOS host owns:
 3. shell metadata capture and projection,
 4. the local shell control surface.
 
-### Alan Runtime
+### alan Runtime
 
-Alan runtime owns:
+alan runtime owns:
 
 1. sessions, turns, runs, yields, checkpoints, and event history,
 2. the daemon protocol and session lifecycle,
@@ -82,7 +82,7 @@ Alan runtime owns:
 
 The builtin shell capability package owns:
 
-1. the shell object-model instructions exposed to Alan,
+1. the shell object-model instructions exposed to alan,
 2. the shell command vocabulary and routing heuristics,
 3. query-before-mutate behavior and operator safety rules.
 
@@ -92,10 +92,10 @@ The package must be implemented as a builtin package such as
 ## Core Principles
 
 1. **Real terminal app first**. The host must still make sense as a terminal app
-   even when no Alan session is running.
-2. **Shell state and Alan state are separate**. A pane may expose Alan-related
-   metadata, but a pane is not an Alan session.
-3. **No UI scraping as the primary interface**. Alan must consume typed shell
+   even when no alan session is running.
+2. **Shell state and alan state are separate**. A pane may expose alan-related
+   metadata, but a pane is not an alan session.
+3. **No UI scraping as the primary interface**. alan must consume typed shell
    state rather than infer the shell by reading pixels or accessibility labels.
 4. **Object identity over visible position**. Automation and routing must target
    stable IDs rather than tab order alone.
@@ -178,7 +178,7 @@ Rules:
 
 1. A pane is the smallest shell object that can receive focus or input.
 2. A pane may host `alan-tui`, a shell, or another terminal process.
-3. A pane identity is owned by the shell, not by Alan runtime.
+3. A pane identity is owned by the shell, not by alan runtime.
 
 ### ProcessBinding
 
@@ -193,7 +193,7 @@ Minimum fields:
 ### AlanBinding
 
 Optional metadata projected onto a pane when the shell can reliably associate
-that pane with Alan state.
+that pane with alan state.
 
 This metadata is additive only. It must not replace pane identity.
 
@@ -210,7 +210,7 @@ Minimum states:
 
 ### ViewportSnapshot
 
-Safe shell summary describing what Alan can know about a pane without requiring
+Safe shell summary describing what alan can know about a pane without requiring
 full scrollback access.
 
 Suggested minimum fields:
@@ -223,12 +223,12 @@ Suggested minimum fields:
 ## Identity and Relationship Rules
 
 1. `Window -> Space -> Tab -> PaneTree -> Pane` is the shell model.
-2. `Session -> Turn/Run -> Yield/Checkpoint -> Event history` is the Alan
+2. `Session -> Turn/Run -> Yield/Checkpoint -> Event history` is the alan
    runtime model.
 3. A pane may optionally carry `AlanBinding` metadata.
-4. A pane is never the primary identifier for an Alan session.
-5. An Alan session is never required for a pane to exist.
-6. The shell must answer structural questions even when no Alan session is
+4. A pane is never the primary identifier for an alan session.
+5. An alan session is never required for a pane to exist.
+6. The shell must answer structural questions even when no alan session is
    running.
 
 ## State Ownership
@@ -246,9 +246,9 @@ The shell host is authoritative for:
 7. shell-derived metadata,
 8. restore/persistence metadata.
 
-### Alan-Owned State
+### alan-Owned State
 
-Alan runtime is authoritative for:
+alan runtime is authoritative for:
 
 1. session identity,
 2. run status,
@@ -258,7 +258,7 @@ Alan runtime is authoritative for:
 
 ### Projected State
 
-The shell may project bounded Alan metadata onto panes, such as:
+The shell may project bounded alan metadata onto panes, such as:
 
 1. `session_id`,
 2. `run_status`,
@@ -266,7 +266,7 @@ The shell may project bounded Alan metadata onto panes, such as:
 4. `latest_summary`.
 
 Projected state is best treated as a cached view. It must not become the source
-of truth for Alan runtime.
+of truth for alan runtime.
 
 ## Normative Shell Snapshot
 
@@ -283,7 +283,7 @@ but the model should be equivalent to the following shape:
   "spaces": [
     {
       "space_id": "space_alan_app",
-      "title": "Alan App",
+      "title": "alan App",
       "attention": "awaiting_user",
       "tabs": [
         {
@@ -312,7 +312,7 @@ but the model should be equivalent to the following shape:
       "process": {"program": "alan-tui"},
       "attention": "awaiting_user",
       "viewport": {
-        "title": "Alan",
+        "title": "alan",
         "summary": "waiting for approval",
         "last_activity_at": "2026-04-01T10:30:00Z"
       },
@@ -389,7 +389,7 @@ The contract must support these questions without UI scraping:
 3. Which pane is focused?
 4. What is happening in each pane at a summary level?
 5. Which panes are waiting on user attention?
-6. Which pane, if any, is currently associated with Alan state?
+6. Which pane, if any, is currently associated with alan state?
 
 ## Local Control Plane Contract
 
@@ -545,7 +545,7 @@ alan shell attention inbox
     "cwd": "/Users/morris/Developer/Alan",
     "attention": "awaiting_user",
     "viewport": {
-      "title": "Alan",
+      "title": "alan",
       "summary": "waiting for approval"
     }
   },
@@ -658,7 +658,7 @@ Required event families:
 4. attention changed,
 5. tab created,
 6. tab closed,
-7. Alan binding changed.
+7. alan binding changed.
 
 ### Event Envelope
 
@@ -740,7 +740,7 @@ mechanism.
 
 1. Ghostty shell integration for cwd and shell-context signals,
 2. app-owned shell state for space/tab/pane identity and focus,
-3. Alan runtime projection for bounded run/yield metadata,
+3. alan runtime projection for bounded run/yield metadata,
 4. explicit shell notifications for attention and notable events.
 
 ### Metadata Rules
@@ -753,7 +753,7 @@ mechanism.
    not imply unrestricted raw scrollback access.
 4. Sidebar rows and pane snapshots must be producible without scraping the UI.
 
-## Alan Binding Contract
+## alan Binding Contract
 
 When the shell launches `alan-tui`, it must be able to pass shell identity into
 that process environment.
@@ -770,10 +770,10 @@ ALAN_SHELL_PANE_ID=pane_1
 
 ### Binding Rules
 
-1. These variables identify shell location, not Alan session identity.
+1. These variables identify shell location, not alan session identity.
 2. `AlanBinding` must remain optional on panes.
-3. A pane may stop hosting Alan without losing pane identity.
-4. Alan-related status projected into the shell must remain bounded and
+3. A pane may stop hosting alan without losing pane identity.
+4. alan-related status projected into the shell must remain bounded and
    additive.
 
 ## Persistence Boundary
@@ -789,7 +789,7 @@ Persist:
 4. working directory,
 5. shell metadata needed for restore,
 6. last known attention state,
-7. Alan binding metadata when available.
+7. alan binding metadata when available.
 
 Do not promise in this contract:
 
@@ -800,13 +800,13 @@ Do not promise in this contract:
 ## Safety and Privacy Boundary
 
 1. The shell contract must make metadata exposure explicit.
-2. Shell state may be queryable by Alan, but only through the bounded contract.
+2. Shell state may be queryable by alan, but only through the bounded contract.
 3. The host should prefer summaries, identity, and attention metadata over raw
    content whenever that is sufficient for routing.
 4. High-risk mutations should remain explicit CLI/IPC operations, not hidden
    behind inferred UI gestures.
 
-## Relationship To Existing Alan Contracts
+## Relationship To Existing alan Contracts
 
 This contract complements, but does not replace:
 
@@ -823,15 +823,15 @@ not a runtime fork.
 1. The macOS shell is specified as a real terminal host rather than a transcript
    UI wrapper.
 2. The shell object model defines `Window -> Space -> Tab -> PaneTree ->
-   Pane` and keeps pane identity separate from Alan session identity.
+   Pane` and keeps pane identity separate from alan session identity.
 3. The contract defines a canonical shell snapshot shape that can answer the
    product's core structural questions without UI scraping.
 4. The control plane defines a minimum local IPC/CLI surface for query and
    mutation operations.
 5. The metadata contract defines explicit source boundaries and stale-or-missing
    behavior.
-6. The Alan binding contract defines how shell identity is injected into
-   Alan-launched panes.
+6. The alan binding contract defines how shell identity is injected into
+   alan-launched panes.
 7. The persistence boundary is explicit about what is and is not restored in the
    first milestone.
 8. The contract is sufficient to drive shell-host implementation from

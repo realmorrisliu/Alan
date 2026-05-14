@@ -1,6 +1,6 @@
-//! Alan — AI Turing Machine CLI & daemon.
+//! alan — AI Turing Machine CLI & daemon.
 //!
-//! This is the unified entry point for all Alan operations:
+//! This is the unified entry point for all alan operations:
 //! - `alan daemon start` — run the workspace daemon
 //! - `alan init` — initialize a workspace
 //! - `alan workspace` — manage workspaces
@@ -22,7 +22,7 @@ use tracing::Level;
 use tracing_subscriber::EnvFilter;
 
 #[derive(Parser)]
-#[command(name = "alan", about = "Alan — AI Turing Machine", version)]
+#[command(name = "alan", about = "alan — AI Turing Machine", version)]
 struct Cli {
     /// Select a named agent root on top of the base workspace/global agent
     #[arg(long, global = true)]
@@ -93,7 +93,7 @@ enum Commands {
         #[arg(long = "partial-stream-recovery", value_parser = ["continue_once", "off"])]
         partial_stream_recovery: Option<String>,
     },
-    /// Control a local Alan Shell host via IPC
+    /// Control a local `alan shell` host via IPC
     Shell {
         #[command(subcommand)]
         action: ShellAction,
@@ -309,7 +309,7 @@ enum SkillsAction {
         #[arg(long)]
         force: bool,
     },
-    /// Validate a skill package against Alan's current package contract
+    /// Validate a skill package against alan's current package contract
     Validate {
         /// Skill package directory (defaults to current directory)
         path: Option<PathBuf>,
@@ -411,13 +411,13 @@ struct SwebenchLiteMaterializeSubsetArgs {
 
 #[derive(Args, Clone)]
 struct ShellTargetArgs {
-    /// Explicit Alan Shell socket path
+    /// Explicit `alan shell` socket path
     #[arg(long)]
     socket: Option<PathBuf>,
-    /// Explicit Alan Shell control directory
+    /// Explicit `alan shell` control directory
     #[arg(long = "control-dir")]
     control_dir: Option<PathBuf>,
-    /// Window id used to derive the local Alan Shell control directory
+    /// Window id used to derive the local alan shell control directory
     #[arg(long)]
     window: Option<String>,
     /// Timeout for IPC requests in milliseconds
@@ -491,7 +491,7 @@ enum ShellSpaceAction {
         #[command(flatten)]
         target: ShellTargetArgs,
     },
-    /// Open a new Alan space directly
+    /// Open a new alan space directly
     OpenAlan {
         /// Optional title for the space
         #[arg(long)]

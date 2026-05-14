@@ -4,7 +4,7 @@ description: |
   Delegate bounded repo-scoped coding work to a fresh repo worker.
 
   Use this when:
-  - Alan has already selected the target repo or directory
+  - alan has already selected the target repo or directory
   - The task needs inspect -> plan -> edit -> verify -> deliver inside that bound scope
   - The work should run in a focused child runtime instead of the home-root steward
 
@@ -22,7 +22,7 @@ work.
 
 ## Working Model
 
-1. Treat the parent Alan runtime as the coding steward.
+1. Treat the parent alan runtime as the coding steward.
 2. Use this package when the task should move into a fresh repo worker bound to
    one repo or directory.
 3. Keep launch inputs explicit: delegated task, cwd, workspace boundary, child
@@ -35,7 +35,7 @@ work.
 
 ## Working Principles
 
-1. Treat this package as Alan's general repo-local coding mode, not as a
+1. Treat this package as alan's general repo-local coding mode, not as a
    benchmark adapter.
 2. Optimize reusable coding behavior such as understanding constraints, keeping
    edits bounded, verifying honestly, and delivering clear residual risk.

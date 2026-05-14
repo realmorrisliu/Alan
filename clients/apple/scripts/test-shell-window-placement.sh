@@ -10,8 +10,8 @@ TEST_BINARY="${BUILD_DIR}/shell-window-placement-tests"
 mkdir -p "$MODULE_CACHE_DIR"
 
 CLANG_MODULE_CACHE_PATH="$MODULE_CACHE_DIR" swiftc \
-    "$REPO_ROOT/clients/apple/AlanNative/Support/ShellDesignTokens.swift" \
-    "$REPO_ROOT/clients/apple/AlanNative/Support/ShellWindowPlacement.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/Support/ShellDesignTokens.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/Support/ShellWindowPlacement.swift" \
     "$REPO_ROOT/clients/apple/scripts/test-shell-window-placement.swift" \
     -o "$TEST_BINARY"
 

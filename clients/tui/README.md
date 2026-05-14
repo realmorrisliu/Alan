@@ -1,6 +1,6 @@
-# Alan TUI
+# alan TUI
 
-Terminal client for Alan (Ink on Bun). The build chain is Oxc/Oxfmt/Oxlint for
+Terminal client for alan (Ink on Bun). The build chain is Oxc/Oxfmt/Oxlint for
 frontend checks, Rolldown for bundling, and `bun compile` for the standalone
 executable. By default it auto-manages the backend via `alan daemon`.
 

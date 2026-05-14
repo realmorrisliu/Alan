@@ -12,7 +12,7 @@ Rules:
 
 1. `repo-coding` local evals check skill selection, bounded repo-local routing,
    delivery-contract honesty, and evaluator-boundary behavior.
-2. Full steward mode still means the root Alan runtime owns routing,
+2. Full steward mode still means the root alan runtime owns routing,
    continuity, and delivery framing. The repo-worker child owns only bounded
    repo-local execution.
 3. Findings motivated by SWE-bench or similar ladders must still be

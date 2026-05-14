@@ -4,7 +4,7 @@
 
 ## Goals
 
-1. Allow mobile/web/desktop clients to control Alan running on a remote node.
+1. Allow mobile/web/desktop clients to control alan running on a remote node.
 2. Preserve execution continuity on the agent node (laptop/cloud host).
 3. Keep multi-client state consistent with replayable event semantics.
 4. Preserve governance/execution-backend/yield invariants end-to-end.

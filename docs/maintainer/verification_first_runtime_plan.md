@@ -19,7 +19,7 @@ Recent sessions exposed a recurring class of failures:
 4. Rollout persistence stored raw network payloads that are useful during the
    current turn but too sensitive for durable audit by default.
 
-Alan already has the right philosophy for these issues:
+alan already has the right philosophy for these issues:
 
 1. Files are the source of truth, not implicit model memory.
 2. Policy/governance semantics belong to runtime, not prompt hope.

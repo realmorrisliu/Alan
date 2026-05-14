@@ -2,21 +2,21 @@
 
 > Status: mixed current/target contract.
 >
-> The active target direction for Alan memory is the pure-text contract in
+> The active target direction for alan memory is the pure-text contract in
 > [`pure_text_memory_contract.md`](./pure_text_memory_contract.md). This
 > document is the shorter architectural summary: what memory is for, how the
 > layers relate, and which pieces are already present versus still target-only.
 
 ## Goal
 
-Give Alan durable continuity across turns and sessions without requiring hidden
+Give alan durable continuity across turns and sessions without requiring hidden
 provider memory or external indexing infrastructure.
 
 The memory architecture must make four things simultaneously true:
 
-1. Alan can continue active work without re-deriving everything from raw tape.
-2. Alan can recall what happened in earlier sessions.
-3. Alan can preserve stable user/workspace knowledge without bloating prompts.
+1. alan can continue active work without re-deriving everything from raw tape.
+2. alan can recall what happened in earlier sessions.
+3. alan can preserve stable user/workspace knowledge without bloating prompts.
 4. Operators can inspect and debug the whole system with ordinary files.
 
 ## Core Principles
@@ -32,7 +32,7 @@ The memory architecture must make four things simultaneously true:
 Implemented in the current tree:
 
 1. L0 execution memory persists through tape and rollout.
-2. Basic workspace memory exists under the active workspace Alan state
+2. Basic workspace memory exists under the active workspace alan state
    directory's `memory/` folder.
 3. Automatic pre-compaction memory flush writes durable context to a daily note
    surface before soft-threshold compaction.
@@ -68,7 +68,7 @@ matter. It is not a durable knowledge base.
 - Lifecycle: cross-session
 - Purpose: answer "what happened", "what were we doing", and "what remains"
 
-Episodic memory is Alan's pure-text answer to long-horizon session recall. It
+Episodic memory is alan's pure-text answer to long-horizon session recall. It
 must be readable by both runtime and humans without replaying whole JSONL logs.
 
 ### L2: Semantic Memory
@@ -84,7 +84,7 @@ Semantic memory is durable knowledge, not recent chronology.
 
 - Carrier: runtime/system prompts, workspace persona, and skills
 - Lifecycle: agent-definition-level
-- Purpose: tell Alan how to behave
+- Purpose: tell alan how to behave
 
 Procedural memory must remain separate from user identity and session history.
 
@@ -189,7 +189,7 @@ This architecture does not aim to:
 
 ## Acceptance Criteria
 
-1. Alan can answer identity and prior-work questions from pure-text memory when
+1. alan can answer identity and prior-work questions from pure-text memory when
    the evidence already exists on disk.
 2. Runtime bootstrap and recall no longer depend on the model deciding to
    inspect the right files.

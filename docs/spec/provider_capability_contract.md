@@ -5,7 +5,7 @@
 > Scope: LLM-adapter capability boundaries, wire-semantics targets, and
 > provider-specific degradation rules above the kernel and below product UX.
 
-This document defines how Alan's provider adapters relate to the core
+This document defines how alan's provider adapters relate to the core
 Turing-machine abstraction and to each provider family's official API
 semantics.
 
@@ -18,14 +18,14 @@ Those are specified separately in:
 
 ## Problem Statement
 
-Alan needs one stable machine model and several non-identical provider
+alan needs one stable machine model and several non-identical provider
 adapters.
 
 The failure mode to avoid is pretending all providers are the same at the wire
 level. That creates silent capability loss, ambiguous behavior, and adapter
 bugs that are difficult to audit.
 
-Alan therefore needs an explicit contract for:
+alan therefore needs an explicit contract for:
 
 1. which semantics are part of the shared machine model
 2. which semantics are provider-native and must remain explicit
@@ -36,7 +36,7 @@ Alan therefore needs an explicit contract for:
 
 This contract must satisfy all of the following:
 
-1. Keep Alan's kernel semantics provider-agnostic.
+1. Keep alan's kernel semantics provider-agnostic.
 2. Preserve provider-native semantics when they matter to correctness.
 3. Prevent feature loss caused by prematurely flattening rich provider inputs
    into plain text.
@@ -50,13 +50,13 @@ This contract does not require:
 1. making all providers expose identical wire formats
 2. exposing every provider-native feature as a kernel primitive
 3. promising full fidelity for generic compatible endpoints
-4. collapsing provider-native server tools into Alan's host-side tool loop
+4. collapsing provider-native server tools into alan's host-side tool loop
 
 ## Core Model
 
-Alan's machine model remains:
+alan's machine model remains:
 
-| Machine concept | Alan surface |
+| Machine concept | alan surface |
 | --- | --- |
 | tape | [`tape::Message`](../../crates/runtime/src/tape.rs) and `ContentPart` |
 | transition input | `GenerationRequest` |
@@ -101,11 +101,11 @@ The stable adapter boundary is the unified LLM contract in
 
 ## Stable Vocabulary
 
-- **Common core**: semantics Alan expects across all first-class providers when
+- **Common core**: semantics alan expects across all first-class providers when
   the underlying API supports them.
 - **Provider-native extension**: semantics that belong to one provider family
   and must remain explicit.
-- **First-class provider**: a provider family Alan intends to support with
+- **First-class provider**: a provider family alan intends to support with
   deliberate, documented fidelity.
 - **Compatibility provider**: an endpoint family that follows another
   provider's API shape only partially and is therefore supported on a
@@ -117,7 +117,7 @@ The stable adapter boundary is the unified LLM contract in
 
 ## Provider Tiers
 
-Alan recognizes three support tiers.
+alan recognizes three support tiers.
 
 ### Tier A: full-fidelity stateful provider
 
@@ -150,15 +150,15 @@ V1 targets:
 1. `openai_chat_completions_compatible`
 2. `openrouter`
 
-`openrouter` is a first-class Alan provider id with an SDK-backed adapter, but
+`openrouter` is a first-class alan provider id with an SDK-backed adapter, but
 its upstream surface routes across multiple model/provider implementations.
-For capability-tier purposes it remains Tier C: Alan must preserve verified
+For capability-tier purposes it remains Tier C: alan must preserve verified
 OpenRouter fields explicitly and must not infer universal semantics from the
 generic OpenAI-compatible wire shape.
 
 ## Common Core Contract
 
-The following capabilities are part of Alan's common core for first-class
+The following capabilities are part of alan's common core for first-class
 providers whenever the provider API supports them:
 
 1. text input and text output
@@ -180,18 +180,18 @@ providers whenever the provider API supports them:
 Normative rules:
 
 1. If an official first-class provider exposes a capability in its public API,
-   Alan should preserve it whenever it affects turn semantics, context,
+   alan should preserve it whenever it affects turn semantics, context,
    streaming, or tool orchestration.
-2. If a capability is unsupported by the provider, Alan must either emulate it
+2. If a capability is unsupported by the provider, alan must either emulate it
    intentionally or reject it. Silent no-op behavior is not acceptable.
-3. If a capability is unsupported by a compatibility provider, Alan may drop
+3. If a capability is unsupported by a compatibility provider, alan may drop
    it only when the degradation is explicit and observable.
 
 ## Capability Classes
 
 ### Class 1: must be unified
 
-These semantics belong to Alan's machine model and must have one unified
+These semantics belong to alan's machine model and must have one unified
 surface:
 
 1. final text
@@ -207,7 +207,7 @@ surface:
 ### Class 2: must be preserved when present
 
 These semantics are optional in the kernel, but once a provider supports them
-Alan should preserve them:
+alan should preserve them:
 
 1. reasoning or thinking text
 2. encrypted or signed reasoning state
@@ -231,9 +231,9 @@ kernel invariants:
 
 ## Reasoning Effort Controls
 
-Alan's canonical user-facing reasoning control is a typed reasoning effort,
+alan's canonical user-facing reasoning control is a typed reasoning effort,
 not a raw token budget. The shared effort values are `none`, `minimal`, `low`,
-`medium`, `high`, and `xhigh`; omitted effort means "let Alan/provider defaults
+`medium`, `high`, and `xhigh`; omitted effort means "let alan/provider defaults
 apply" and is distinct from explicit `none`.
 
 Normative rules:
@@ -241,27 +241,27 @@ Normative rules:
 1. `alan-runtime` owns effective request-control resolution. Config, daemon
    routes, clients, and provider adapters may carry request-control intent or
    metadata, but they must not independently decide the final effective value.
-2. Alan must resolve effective controls before provider dispatch from turn
+2. alan must resolve effective controls before provider dispatch from turn
    override, session/runtime override, agent config, model catalog default, then
    provider default.
-3. If a resolved model catalog entry declares supported efforts, Alan must
+3. If a resolved model catalog entry declares supported efforts, alan must
    reject explicit unsupported effort before making the provider request.
 4. `thinking_budget_tokens` is a removed legacy public control. Config and API
    payloads that still contain it must be rejected with migration guidance.
 5. `model_reasoning_effort` is the only user-facing cross-provider reasoning
    control.
 6. Compatibility providers must not silently drop explicit effort. They may
-   receive effort only when Alan has model/provider metadata declaring support;
+   receive effort only when alan has model/provider metadata declaring support;
    otherwise the request must fail before dispatch.
 7. Reasoning-effort metadata may be logged or persisted as request/session
-   metadata, but Alan must not expose hidden reasoning content as a side effect
+   metadata, but alan must not expose hidden reasoning content as a side effect
    of enabling effort controls.
 
 Provider projection rules:
 
 1. Provider adapters consume normalized `GenerationRequest.reasoning` controls
    and project them to provider-specific wire fields. They must not re-run
-   Alan-level precedence, model default, or config conflict logic.
+   alan-level precedence, model default, or config conflict logic.
 2. OpenAI Responses maps effort to `reasoning.effort`.
 3. OpenAI Chat Completions maps effort to `reasoning_effort`.
 4. Managed ChatGPT Responses may use the Responses-shaped field only when the
@@ -284,7 +284,7 @@ Migration guidance:
 
 ## Rich Content Contract
 
-Alan must not reduce all provider input to plain strings before the adapter
+alan must not reduce all provider input to plain strings before the adapter
 boundary.
 
 Normative rules:
@@ -300,7 +300,7 @@ Implication:
 
 1. The current `llm::Message { content: String }` surface is insufficient as
    the long-term canonical projection surface for full provider fidelity.
-2. Alan should evolve toward a richer provider-input abstraction that can
+2. alan should evolve toward a richer provider-input abstraction that can
    preserve text, image, document, tool, and reasoning items until the final
    adapter step.
 
@@ -311,7 +311,7 @@ Every capability mismatch must use one of four strategies:
 1. **Preserve**
    Use the provider's native representation.
 2. **Emulate**
-   Recreate the semantics in Alan, for example replaying full history for a
+   Recreate the semantics in alan, for example replaying full history for a
    stateless API.
 3. **Reject**
    Return a first-class error when the capability is incompatible with the
@@ -332,7 +332,7 @@ Silent degradation is forbidden for:
 
 ### OpenAI Responses
 
-This provider is the closest fit for Alan's item-oriented machine model.
+This provider is the closest fit for alan's item-oriented machine model.
 
 Required fidelity target:
 
@@ -352,10 +352,10 @@ Required fidelity target:
 Normative rules:
 
 1. `openai_responses` is the canonical full-fidelity stateful Responses
-   provider in Alan.
+   provider in alan.
 2. Server-managed continuation must be modeled as provider-native state, not
    as a fake kernel invariant.
-3. Alan must not assume that every Responses-compatible provider supports the
+3. alan must not assume that every Responses-compatible provider supports the
    same `store`, `background`, `retrieve`, `cancel`, or provider-compaction
    semantics.
 4. `previous_response_id` support and `store=true` support are related but not
@@ -396,7 +396,7 @@ Normative rules:
 1. `chatgpt` must remain a separate provider from `openai_responses` for auth,
    account, and capability semantics as defined in
    [`provider_auth_contract.md`](./provider_auth_contract.md).
-2. Alan must reject unsupported continuation semantics for `chatgpt` rather
+2. alan must reject unsupported continuation semantics for `chatgpt` rather
    than silently dropping them.
 3. Product/runtime code must branch on explicit `chatgpt` capabilities instead
    of assuming official Responses parity.
@@ -420,7 +420,7 @@ Required fidelity target:
 
 Normative rules:
 
-1. Alan must not pretend Chat Completions has Responses-style
+1. alan must not pretend Chat Completions has Responses-style
    `previous_response_id`.
 2. Multi-turn state must be emulated by replay.
 3. Differences from Responses such as `choices`, `response_format`, and
@@ -448,12 +448,12 @@ Required fidelity target:
 
 Normative rules:
 
-1. Alan must not map Anthropic tool results through a fake `tool` role at the
+1. alan must not map Anthropic tool results through a fake `tool` role at the
    wire layer.
-2. Alan must preserve the fact that tool results are carried inside a `user`
+2. alan must preserve the fact that tool results are carried inside a `user`
    message and must immediately follow the corresponding assistant tool-use
    message.
-3. Alan must preserve block structure until the Anthropic adapter step.
+3. alan must preserve block structure until the Anthropic adapter step.
 4. Extended thinking constraints that are incompatible with certain
    `tool_choice` modes must be enforced explicitly.
 
@@ -474,8 +474,8 @@ Required fidelity target:
 
 Normative rules:
 
-1. Alan must not define its own universal semantics from this family.
-2. No capability should be marked "supported" unless Alan has explicit schema
+1. alan must not define its own universal semantics from this family.
+2. No capability should be marked "supported" unless alan has explicit schema
    knowledge or verified behavior for that endpoint family.
 3. Features such as native multimodal inputs, cached-token accounting,
    response retrieval, or official reasoning-state continuity must default to
@@ -484,7 +484,7 @@ Normative rules:
 ### OpenRouter
 
 OpenRouter is represented by the `openrouter` provider id and uses the
-OpenRouter SDK-backed chat adapter rather than Alan's generic
+OpenRouter SDK-backed chat adapter rather than alan's generic
 `openai_chat_completions_compatible` path.
 
 Required fidelity target:
@@ -501,9 +501,9 @@ Normative rules:
 
 1. OpenRouter-specific metadata such as `http_referer`, `x_title`, and
    `app_categories` must remain provider-specific connection settings.
-2. Alan must not silently route `openrouter` through the generic compatible
+2. alan must not silently route `openrouter` through the generic compatible
    provider family.
-3. Alan must keep unsupported OpenRouter request extras explicit by allowlist,
+3. alan must keep unsupported OpenRouter request extras explicit by allowlist,
    rejection, or observable warning.
 
 ## Capability Matrix
@@ -545,7 +545,7 @@ Normative rules:
 
 ## Minimum V1 Gap Closures
 
-Before Alan can claim this contract is materially implemented, the following
+Before alan can claim this contract is materially implemented, the following
 gaps must be closed:
 
 1. propagate provider response identifiers for official Chat Completions and
@@ -565,7 +565,7 @@ gaps must be closed:
 
 ## Near-Term Rich Input Bridge
 
-Alan still needs a richer long-term provider-input abstraction than the current
+alan still needs a richer long-term provider-input abstraction than the current
 `llm::Message { content: String }` surface.
 
 That deeper refactor is not a prerequisite for every fidelity improvement in
@@ -583,7 +583,7 @@ Near-term rule for current implementation batches:
 
 This contract is satisfied when all of the following are true:
 
-1. Alan has one documented common-core adapter surface.
+1. alan has one documented common-core adapter surface.
 2. Responses-class providers preserve official item semantics and
    provider-managed continuation.
 3. Official Chat Completions preserves official message semantics without

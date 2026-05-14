@@ -7,17 +7,17 @@ maintainability, not product behavior.
 ## Current Inventory
 
 The Apple client is being migrated out of the original flat
-`clients/apple/AlanNative` source directory. Files listed with owner folders are
-already split into the target layout and remain members of the `AlanNative`
+`clients/apple/alan-macos` source directory. Files listed with owner folders are
+already split into the target layout and remain members of the `alan-macos`
 Xcode target.
 
 | File | Lines | Platform / bridge imports | Primary responsibility today | Target owner |
 | --- | ---: | --- | --- | --- |
-| `AlanNativeApp.swift` | 34 | SwiftUI; macOS gates | Thin app entry and scene composition | `App/` |
-| `App/AlanMacAppDelegate.swift` | 13 | AppKit; macOS gates | Reopen handling for the primary Alan window | `App/` |
+| `AlanApp.swift` | 34 | SwiftUI; macOS gates | Thin app entry and scene composition | `App/` |
+| `App/AlanMacAppDelegate.swift` | 13 | AppKit; macOS gates | Reopen handling for the primary alan window | `App/` |
 | `App/AlanMacAppStartup.swift` | 19 | Darwin; macOS gates | Duplicate-instance startup and singleton guard handling | `App/` |
 | `App/AlanMacPrimaryShellOwner.swift` | 21 | Foundation, SwiftUI; macOS gates | Primary `window_main` shell owner creation | `App/` |
-| `App/AlanMacPrimaryWindowPresenter.swift` | 20 | AppKit; macOS gates | Primary Alan window focusing and activation | `App/` |
+| `App/AlanMacPrimaryWindowPresenter.swift` | 20 | AppKit; macOS gates | Primary alan window focusing and activation | `App/` |
 | `App/AlanMacShellCommands.swift` | 91 | SwiftUI; macOS gates | App menu and keyboard command definitions routed through shell workspace commands | `App/` |
 | `AlanAppSingletonGuard.swift` | 141 | Foundation, AppKit, Darwin; macOS gates | OS-backed duplicate-instance guard | `App/` or `Support/Windowing/` |
 | `Support/ShellDesignTokens.swift` | 200 | AppKit, SwiftUI; macOS gates | Shell palette, corner radii, and native material wrapper | `Support/` |
@@ -43,11 +43,11 @@ Xcode target.
 | `ShellModel.swift` | 169 | Foundation | Shell title, label, and status presentation helpers | `Models/Shell/` or `Support/ShellPresentation/` |
 | `ShellHostController.swift` | 1100 | Foundation, SwiftUI; macOS gates | Observable shell controller, runtime update intake, command routing, and shell state mutation coordination | `Controllers/Shell/` plus service collaborators |
 | `Controllers/Shell/ShellHostControlCommandHandling.swift` | 538 | Foundation; macOS gates | Shell control-plane command response handling and routing/list helpers | `Controllers/Shell/` |
-| `Services/Shell/ShellControlFilePoller.swift` | 182 | Foundation; macOS gates | File-backed command/result polling and Alan binding-file projection | `Services/Shell/` |
+| `Services/Shell/ShellControlFilePoller.swift` | 182 | Foundation; macOS gates | File-backed command/result polling and alan binding-file projection | `Services/Shell/` |
 | `Services/Shell/ShellDiagnostics.swift` | 16 | Foundation; macOS gates | Shell service diagnostic routing | `Services/Shell/` |
 | `Services/Shell/ShellEventStore.swift` | 298 | Foundation; macOS gates | Shell event buffering, diffing, `events.read`, and jsonl persistence | `Services/Shell/` |
 | `Services/Shell/ShellLocalCommandExecutor.swift` | 706 | Foundation; macOS gates | Local shell control command execution against shell state | `Services/Shell/` |
-| `Services/Shell/ShellPaneProjectionService.swift` | 266 | Foundation; macOS gates | Pane boot context, runtime metadata, viewport, attention, and Alan binding projection | `Services/Shell/` |
+| `Services/Shell/ShellPaneProjectionService.swift` | 266 | Foundation; macOS gates | Pane boot context, runtime metadata, viewport, attention, and alan binding projection | `Services/Shell/` |
 | `Services/Shell/ShellPublishedStateMerger.swift` | 158 | Foundation; macOS gates | Merge published shell state with authoritative runtime metadata | `Services/Shell/` |
 | `Services/Shell/ShellSocketServer.swift` | 397 | Foundation, Darwin; macOS gates | Bounded local socket transport, request parsing, and client response handling | `Services/Shell/` |
 | `Services/Shell/ShellStatePersistenceStore.swift` | 116 | Foundation; macOS gates | Shell state save/restore, persistence URL selection, and restored window context lookup | `Services/Shell/` |
@@ -63,9 +63,9 @@ Xcode target.
 
 ## Target Layout
 
-The accepted target under `clients/apple/AlanNative` is:
+The accepted target under `clients/apple/alan-macos` is:
 
-- `App/`: `AlanNativeApp`, app delegate, duplicate-instance startup, primary
+- `App/`: `AlanApp`, app delegate, duplicate-instance startup, primary
   shell owner creation, app commands, and primary window coordination.
 - `Views/Shell/`: the default macOS shell composition, sidebar, workspace,
   command palette, pane title/search UI, and shell-specific SwiftUI components.
@@ -119,7 +119,7 @@ preserving PR slices. The final validation pass before syncing this spec ran:
 - `git diff --check`
 - `openspec validate improve-macos-app-architecture-maintainability --type change --strict --json`
 - `openspec validate --all --strict --json`
-- `xcodebuild -project clients/apple/AlanNative.xcodeproj -scheme AlanNative -configuration Debug -destination platform=macOS -derivedDataPath target/xcode-derived build`
+- `xcodebuild -project clients/apple/alan-macos.xcodeproj -scheme alan-macos -configuration Debug -destination platform=macOS -derivedDataPath target/xcode-derived build`
 
 The macOS build succeeded. Local Xcode continued to print the existing
 CoreSimulator version warning while building for `platform=macOS`; simulator

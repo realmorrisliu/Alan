@@ -1,11 +1,11 @@
-# Alan Coding Eval Contract
+# alan Coding Eval Contract
 
 > Status: executable V1 contract for steward orchestration harness,
 > repo-worker harness, and package-local benchmark scaffolding.
 
 ## Goal
 
-Define the minimum validation ladder for Alan's coding line so evaluation is
+Define the minimum validation ladder for alan's coding line so evaluation is
 not reduced to a single repo-worker smoke loop or an ad hoc external benchmark.
 
 The coding eval surface should distinguish:
@@ -54,7 +54,7 @@ The `coding_steward` suite validates parent-side orchestration behavior:
 5. fail-safe behavior when delegated execution or artifact routing is
    unavailable.
 
-This suite exists because repo-worker-only validation does not prove that Alan
+This suite exists because repo-worker-only validation does not prove that alan
 itself is behaving like the home-root steward.
 
 ### 2) Repo-Worker Harness
@@ -122,7 +122,7 @@ CI-blocking:
 6. `bash crates/runtime/skills/swebench/scripts/score_swebench_predictions.sh <predictions-jsonl>`
 
 For the Lite-first path, first-party scripts may also prepare clean benchmark
-git workspaces and materialize Alan suite manifests from official dataset rows.
+git workspaces and materialize alan suite manifests from official dataset rows.
 That workspace preparation step is separate from official Docker-backed
 SWE-bench scoring and does not by itself promise identical host-native runtime
 dependencies.

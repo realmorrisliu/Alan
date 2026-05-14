@@ -1,6 +1,6 @@
-# Alan
+# alan
 
-**Alan** is a Rust-native Agent Runtime built around the **AI Turing Machine** metaphor — a state machine where LLMs drive transitions while the runtime manages tape (context), tooling, and persistence.
+**alan** is a Rust-native Agent Runtime built around the **AI Turing Machine** metaphor — a state machine where LLMs drive transitions while the runtime manages tape (context), tooling, and persistence.
 
 > **⚠️ Project Status: Early Development**
 >
@@ -14,7 +14,7 @@
 
 ## Core Concept: AI Turing Machine
 
-Alan models AI agents as **Turing machines**: LLM generation is the transition
+alan models AI agents as **Turing machines**: LLM generation is the transition
 function, the tape is the conversation/context state, and tools are the side
 effects. That computation model sits inside a separate hosting model:
 
@@ -88,7 +88,7 @@ the primary user-facing hosting abstraction.
 ## Project Structure
 
 ```
-Alan/
+alan/
 ├── crates/
 │   ├── protocol/     # Event/Op protocol definitions + ContentPart
 │   ├── llm/          # LLM provider adapters (Gemini, OpenAI, Anthropic)
@@ -138,7 +138,7 @@ Alan/
 
 ## Thinking / Reasoning Support
 
-Alan exposes `model_reasoning_effort` as the canonical runtime config control.
+alan exposes `model_reasoning_effort` as the canonical runtime config control.
 The old public `thinking_budget_tokens` field has been removed; provider-native
 budgets are derived internally from named effort presets when a provider requires
 budget-shaped wire fields. Current provider behavior:
@@ -230,7 +230,7 @@ skill = "release-checklist"
 enabled = false
 
 # Optional explicit compaction budgeting override
-# By default Alan derives this from its model catalog.
+# By default alan derives this from its model catalog.
 # context_window_tokens = 128000
 # Deprecated hard-threshold alias:
 # compaction_trigger_ratio = 0.8
@@ -247,7 +247,7 @@ Host-facing daemon/client settings live in `~/.alan/host.toml`. You can also set
 
 ### AgentRoot Layout
 
-Alan resolves an agent definition from on-disk `AgentRoot`s:
+alan resolves an agent definition from on-disk `AgentRoot`s:
 
 ```text
 ~/.alan/agents/default/         # global default agent root
@@ -273,27 +273,27 @@ The former singular default root `.alan/agent/` is not a supported compatibility
 path. Move authored files from `.alan/agent/` to `.alan/agents/default/`.
 
 Each resolved root contributes its `skills/` directory as a capability-package
-source in the definition layer. Alan combines those sources with built-in
+source in the definition layer. alan combines those sources with built-in
 first-party packages into one `ResolvedCapabilityView`, and a
 standards-compatible skill directory is adapted automatically as a single-skill
-package without an Alan-specific manifest.
+package without an alan-specific manifest.
 
 The authoritative skill-system contract lives in
 `docs/spec/skill_system_contract.md`. `docs/skills_and_tools.md` is the current
 implementation guide, and the plan documents under `plans/` are historical
 rollout/design references.
 
-Alan also supports optional Alan-native sidecars inside a skill package:
+alan also supports optional alan-native sidecars inside a skill package:
 
 - `skill.yaml` for skill-specific machine metadata
 - `package.yaml` for package-level defaults applied before the skill sidecar
 
 Precedence is `SKILL.md` frontmatter -> `package.yaml` `skill_defaults` ->
-`skill.yaml`. Sidecars are fail-open: when absent, Alan continues to load the
+`skill.yaml`. Sidecars are fail-open: when absent, alan continues to load the
 skill from `SKILL.md` alone, and an invalid sidecar only drops that overlay
 instead of poisoning the whole skill package.
 
-Alan also recognizes zero-conversion public skill install directories:
+alan also recognizes zero-conversion public skill install directories:
 
 - `~/.agents/skills/` for user-wide public skills
 - `<workspace>/.agents/skills/` for workspace-local public skills
@@ -338,21 +338,21 @@ wizard writes canonical provider config, and `alan init` creates
 for public skills.
 
 Skill frontmatter can also declare runtime requirements such as
-`required_tools` or `min_version`. Alan now evaluates those constraints when
+`required_tools` or `min_version`. alan now evaluates those constraints when
 building the runtime skill catalog and in
 `alan skills ...` output, so unavailable skills are surfaced with explicit
 reasons instead of silently appearing activatable.
 
 This is definition overlay, not runtime parent-child inheritance.
 
-Alan resolves model metadata in this order:
+alan resolves model metadata in this order:
 
 1. Bundled catalog
 2. `~/.alan/models.toml`
 3. `{workspace}/.alan/models.toml`
 
 Overlay catalogs currently extend `openai_chat_completions_compatible` models only. Official
-`openai_responses` and `openai_chat_completions` models stay pinned to Alan's curated catalog.
+`openai_responses` and `openai_chat_completions` models stay pinned to alan's curated catalog.
 
 Example overlay:
 
@@ -463,7 +463,7 @@ curl -N http://localhost:8090/api/v1/sessions/{id}/events
 
 Create `{workspace}/.alan/agents/default/policy.yaml` to override builtin policy profile rules.
 When present, the file replaces the builtin profile rule set for that session;
-Alan does not implicitly merge policy files with builtin rules.
+alan does not implicitly merge policy files with builtin rules.
 
 ```yaml
 rules:

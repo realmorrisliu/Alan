@@ -319,7 +319,7 @@ pub struct Config {
     pub tool_repeat_limit: usize,
 
     /// Optional prompt context window budget used for compaction heuristics.
-    /// When omitted, Alan prefers curated model metadata and only falls back
+    /// When omitted, alan prefers curated model metadata and only falls back
     /// conservatively before provider validation runs.
     #[serde(default)]
     pub context_window_tokens: Option<u32>,
@@ -612,7 +612,7 @@ impl Config {
         let home_paths = home_paths
             .cloned()
             .or_else(AlanHomePaths::detect)
-            .ok_or_else(|| anyhow::anyhow!("Could not determine Alan home directory"))?;
+            .ok_or_else(|| anyhow::anyhow!("Could not determine alan home directory"))?;
         let (connections, _) = ConnectionsFile::load_from_home_paths(&home_paths)?;
         let secret_store = SecretStore::from_home_paths(&home_paths)?;
         let selected_profile = self.connection_profile.clone();
@@ -1331,7 +1331,7 @@ fn validate_supported_model(
 
     let supported = catalog.supported_model_slugs(provider).join(", ");
     anyhow::bail!(
-        "{provider_name} model `{model}` is not in Alan's curated catalog. Supported models: {supported}"
+        "{provider_name} model `{model}` is not in alan's curated catalog. Supported models: {supported}"
     );
 }
 
@@ -1566,7 +1566,7 @@ mod tests {
             None,
             Some("anthropic/claude-sonnet-4"),
             Some("https://alan.local"),
-            Some("Alan"),
+            Some("alan"),
             vec!["cli-agent".to_string()],
         );
         assert_eq!(config.llm_provider, LlmProvider::OpenRouter);
@@ -1577,7 +1577,7 @@ mod tests {
             config.openrouter_http_referer.as_deref(),
             Some("https://alan.local")
         );
-        assert_eq!(config.openrouter_x_title.as_deref(), Some("Alan"));
+        assert_eq!(config.openrouter_x_title.as_deref(), Some("alan"));
         assert_eq!(config.openrouter_app_categories, vec!["cli-agent"]);
         assert!(config.has_openrouter_config());
         assert!(config.has_llm_config());
@@ -2637,7 +2637,7 @@ supports_reasoning = true
             Some("https://openrouter.example/api/v1"),
             Some("anthropic/claude-sonnet-4"),
             Some("https://alan.local"),
-            Some("Alan"),
+            Some("alan"),
             vec!["cli-agent".to_string()],
         );
         let provider_config = config.to_provider_config().unwrap();
@@ -2655,7 +2655,7 @@ supports_reasoning = true
             provider_config.http_referer.as_deref(),
             Some("https://alan.local")
         );
-        assert_eq!(provider_config.x_title.as_deref(), Some("Alan"));
+        assert_eq!(provider_config.x_title.as_deref(), Some("alan"));
         assert_eq!(
             provider_config.app_categories,
             Some(vec!["cli-agent".to_string()])

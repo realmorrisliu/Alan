@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # ============================================================
-# Alan E2E Smoke Test
+# alan E2E Smoke Test
 # Needs a valid LLM config file
 # ============================================================
 

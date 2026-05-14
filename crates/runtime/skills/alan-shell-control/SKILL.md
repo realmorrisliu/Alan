@@ -1,29 +1,29 @@
 ---
 name: alan-shell-control
 description: |
-  Inspect and operate the native Alan shell control surface.
+  Inspect and operate the native alan shell control surface.
 
   Use this when:
   - The user asks about spaces, tabs, surfaces, panes, focus, or splits
-  - Alan needs to decide which pane or surface should receive an action
-  - Alan needs to create a space, split a pane, focus a pane, or send text
+  - alan needs to decide which pane or surface should receive an action
+  - alan needs to create a space, split a pane, focus a pane, or send text
   - The task depends on understanding the outer terminal app rather than only
-    understanding Alan session state
+    understanding alan session state
 
   This skill assumes the local `alan shell` CLI namespace backed by the shell's
   IPC/socket API. If that CLI is unavailable, report that clearly and fall back
   to other available context.
 
 metadata:
-  short-description: Control the native Alan terminal shell
+  short-description: Control the native alan terminal shell
   tags: [shell, terminal, panes, spaces, routing, focus]
 capabilities:
   required_tools: [bash]
 ---
 
-# Alan Shell Control
+# alan Shell Control
 
-The shell model and the Alan runtime model are separate.
+The shell model and the alan runtime model are separate.
 
 Shell model:
 
@@ -31,13 +31,13 @@ Shell model:
 Window -> Space -> Surface -> PaneTree -> Pane
 ```
 
-Alan model:
+alan model:
 
 ```text
 Session -> Turn/Run -> Yield/Checkpoint -> Event history
 ```
 
-A pane may optionally expose Alan metadata, but a pane is not an Alan session.
+A pane may optionally expose alan metadata, but a pane is not an alan session.
 
 ## Commands
 
@@ -75,7 +75,7 @@ When choosing a pane, prioritize in this order:
 1. Explicit pane or space ID given by the user
 2. Currently focused pane, if it matches the request
 3. Pane whose process or metadata matches the task
-4. Pane with relevant Alan binding
+4. Pane with relevant alan binding
 5. Pane with relevant cwd or title
 
 If two or more panes remain equally plausible, ask the user rather than acting
@@ -97,6 +97,6 @@ entire scrollback by default.
 
 1. Query before mutate.
 2. Never assume the focused pane is correct without checking.
-3. Do not treat shell structure as equivalent to Alan session structure.
+3. Do not treat shell structure as equivalent to alan session structure.
 4. If `alan shell` is unavailable, say so explicitly.
 5. If the shell reports stale or missing state, re-query before acting.

@@ -22,5 +22,5 @@ if command -v alan >/dev/null 2>&1; then
     exec alan skills generate-review "$@"
 fi
 
-echo "error: could not find repo-local alan build, Alan source checkout, or alan on PATH" >&2
+echo "error: could not find repo-local alan build, alan source checkout, or alan on PATH" >&2
 exit 127

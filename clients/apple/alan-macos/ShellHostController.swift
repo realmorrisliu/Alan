@@ -1,0 +1,1113 @@
+import Foundation
+
+#if os(macOS)
+import SwiftUI
+
+struct ShellAttentionItem: Identifiable, Equatable {
+    let paneID: String
+    let spaceID: String
+    let tabID: String
+    let title: String
+    let summary: String
+    let attention: ShellAttentionState
+
+    var id: String { paneID }
+}
+
+enum ShellTabCloseResult {
+    case closed
+    case tabNotFound
+    case lastTab
+}
+
+enum ShellPaneCloseResult {
+    case closed
+    case paneNotFound
+    case lastTab
+}
+
+enum ShellPaneLiftResult {
+    case lifted
+    case paneNotFound
+    case lastPane
+}
+
+@MainActor
+struct ShellWindowContext {
+    let windowID: String
+    let persistenceURL: URL
+    let terminalRuntimeRegistry: TerminalRuntimeRegistry
+
+    var controlRootURL: URL {
+        alanShellControlPlaneRootURL(windowID: windowID)
+    }
+
+    var socketURL: URL {
+        alanShellControlPlaneSocketURL(windowID: windowID)
+    }
+
+    var stateURL: URL {
+        controlRootURL.appendingPathComponent("state.json")
+    }
+
+    var eventsURL: URL {
+        controlRootURL.appendingPathComponent("events.jsonl")
+    }
+
+    static func make(
+        fileManager: FileManager = .default,
+        windowID: String = "window_\(UUID().uuidString.lowercased())",
+        terminalRuntimeRegistry: TerminalRuntimeRegistry? = nil
+    ) -> ShellWindowContext {
+        ShellWindowContext(
+            windowID: windowID,
+            persistenceURL: ShellStatePersistenceStore.defaultPersistenceURL(
+                windowID: windowID,
+                fileManager: fileManager
+            ),
+            terminalRuntimeRegistry: terminalRuntimeRegistry ?? TerminalRuntimeRegistry()
+        )
+    }
+}
+
+@MainActor
+final class ShellHostController: ObservableObject, TerminalHostActivationDelegate {
+    enum StartupMode {
+        case fresh
+        case restorePrevious
+    }
+
+    private static let iso8601Formatter = ISO8601DateFormatter()
+    private let fileManager: FileManager
+    private let windowContext: ShellWindowContext
+    private let persistenceURL: URL
+    private let persistenceStore: ShellStatePersistenceStore
+    private let paneProjection: ShellPaneProjectionService
+    private let clipboardWriter: ShellClipboardWriter
+    lazy var controlPlane = AlanShellControlPlane(windowID: windowContext.windowID) { [weak self] command in
+        self?.handleControlPlaneCommand(command)
+            ?? AlanShellControlResponse(
+                requestID: command.requestID,
+                contractVersion: "0.1",
+                applied: false,
+                state: nil,
+                spaces: nil,
+                tabs: nil,
+                panes: nil,
+                pane: nil,
+                items: nil,
+                candidates: nil,
+                events: nil,
+                focusedPaneID: nil,
+                spaceID: command.spaceID,
+                tabID: command.tabID,
+                paneID: command.paneID,
+                acceptedBytes: nil,
+                deliveryCode: nil,
+                runtimePhase: nil,
+                latestEventID: nil,
+                errorCode: "host_unavailable",
+                errorMessage: "alan terminal workspace host is unavailable."
+            )
+    } stateAdoptionHandler: { [weak self] state in
+        self?.adoptStateFromControlPlane(state)
+    } bindingProjectionHandler: { [weak self] paneID, binding in
+        self?.applyAlanBinding(binding, for: paneID)
+    } diagnosticHandler: { [weak self] message in
+        self?.recordControlPlaneDiagnostic(message)
+    }
+
+    @Published private(set) var shellState: ShellStateSnapshot
+    @Published var selectedSpaceID: String?
+    @Published var selectedTabID: String?
+    @Published private(set) var lastCopiedAt: Date?
+    @Published private(set) var terminalRuntime: TerminalHostRuntimeSnapshot = .placeholder
+    @Published private(set) var controlPlaneDiagnostics: [String] = []
+    @Published private(set) var commandInputRequestID = 0
+
+    let terminalRuntimeRegistry: TerminalRuntimeRegistry
+
+    init(
+        shellState: ShellStateSnapshot,
+        fileManager: FileManager = .default,
+        windowContext: ShellWindowContext? = nil,
+        persistenceURL: URL? = nil,
+        terminalRuntimeRegistry: TerminalRuntimeRegistry? = nil
+    ) {
+        self.fileManager = fileManager
+        self.paneProjection = ShellPaneProjectionService(fileManager: fileManager)
+        let resolvedContext = windowContext ?? ShellWindowContext.make(fileManager: fileManager)
+        self.windowContext = resolvedContext
+        self.persistenceURL = persistenceURL ?? resolvedContext.persistenceURL
+        self.persistenceStore = ShellStatePersistenceStore(
+            fileManager: fileManager,
+            persistenceURL: self.persistenceURL
+        )
+        self.clipboardWriter = ShellClipboardWriter()
+        self.shellState = shellState
+        self.terminalRuntimeRegistry =
+            terminalRuntimeRegistry
+            ?? resolvedContext.terminalRuntimeRegistry
+        self.selectedSpaceID = shellState.focusedSpaceID ?? shellState.spaces.first?.spaceID
+        self.selectedTabID = shellState.focusedTabID ?? shellState.spaces.first?.tabs.first?.tabID
+
+        if shellState.panes.isEmpty {
+            publishControlPlaneState()
+        } else {
+            shellState.panes.map(\.paneID).forEach(primeBootContext)
+        }
+        synchronizeSelection()
+    }
+
+    deinit {
+        let terminalRuntimeRegistry = terminalRuntimeRegistry
+        Task { @MainActor in
+            terminalRuntimeRegistry.releaseAllRuntimes()
+        }
+    }
+
+    static func live(
+        fileManager: FileManager = .default,
+        windowContext: ShellWindowContext? = nil,
+        startupMode: StartupMode = .fresh
+    ) -> ShellHostController {
+        let resolvedWindowContext =
+            windowContext
+            ?? ShellStatePersistenceStore.restoredWindowContext(
+                fileManager: fileManager,
+                restorePrevious: startupMode == .restorePrevious
+            )
+            ?? ShellStatePersistenceStore.defaultWindowContext(
+                fileManager: fileManager,
+                restorePrevious: startupMode == .restorePrevious
+            )
+        let persistenceURL = resolvedWindowContext.persistenceURL
+        let shellState: ShellStateSnapshot
+        switch startupMode {
+        case .fresh:
+            shellState = .bootstrapDefault(windowID: resolvedWindowContext.windowID)
+        case .restorePrevious:
+            shellState =
+                ShellStatePersistenceStore.restoreShellState(
+                    fileManager: fileManager,
+                    persistenceURL: persistenceURL
+                )
+                ?? .bootstrapDefault(windowID: resolvedWindowContext.windowID)
+        }
+
+        let controller = ShellHostController(
+            shellState: shellState,
+            fileManager: fileManager,
+            windowContext: resolvedWindowContext,
+            persistenceURL: persistenceURL
+        )
+        if startupMode == .fresh {
+            controller.persistShellState()
+        }
+        return controller
+    }
+
+    var spaces: [ShellSpace] {
+        shellState.spaces
+    }
+
+    var selectedSpace: ShellSpace? {
+        shellState.spaces.first { $0.spaceID == selectedSpaceID } ?? shellState.spaces.first
+    }
+
+    var selectedTab: ShellTab? {
+        guard let selectedTabID else {
+            return selectedSpace?.tabs.first
+        }
+        return selectedSpace?.tabs.first { $0.tabID == selectedTabID } ?? selectedSpace?.tabs.first
+    }
+
+    var selectedTabPaneTree: ShellPaneTreeNode? {
+        selectedTab?.paneTree
+    }
+
+    var panesForSelectedTab: [ShellPane] {
+        guard let tabID = selectedTab?.tabID else { return [] }
+        return shellState.panes.filter { $0.tabID == tabID }
+    }
+
+    var selectedPane: ShellPane? {
+        if let focusedPane, focusedPane.tabID == selectedTab?.tabID {
+            return focusedPane
+        }
+        return panesForSelectedTab.first
+    }
+
+    var focusedPane: ShellPane? {
+        guard let focusedPaneID = shellState.focusedPaneID else { return nil }
+        return pane(paneID: focusedPaneID)
+    }
+
+    var selectedPaneBootProfile: AlanShellBootProfile? {
+        bootProfile(for: selectedPane)
+    }
+
+    var selectedPaneRuntime: TerminalHostRuntimeSnapshot {
+        runtime(for: selectedPane?.paneID)
+    }
+
+    var attentionItems: [ShellAttentionItem] {
+        shellState.panes
+            .compactMap { pane in
+                guard pane.attention != .idle else { return nil }
+                return ShellAttentionItem(
+                    paneID: pane.paneID,
+                    spaceID: pane.spaceID,
+                    tabID: pane.tabID,
+                    title: pane.viewport?.title ?? pane.process?.program ?? "Pane",
+                    summary: pane.viewport?.summary ?? "Activity detected",
+                    attention: pane.attention
+                )
+            }
+            .sorted {
+                Self.attentionRank(for: $0.attention) == Self.attentionRank(for: $1.attention)
+                    ? $0.paneID < $1.paneID
+                    : Self.attentionRank(for: $0.attention) > Self.attentionRank(for: $1.attention)
+            }
+    }
+
+    var routingCandidates: [AlanShellRoutingCandidate] {
+        routingCandidates(preferredPaneID: selectedPane?.paneID)
+    }
+
+    var moveDestinationTabs: [ShellTab] {
+        guard let selectedPane else { return [] }
+        return shellState.spaces
+            .flatMap(\.tabs)
+            .filter { $0.tabID != selectedPane.tabID }
+            .sorted {
+                if $0.tabID == $1.tabID {
+                    return ($0.title ?? "") < ($1.title ?? "")
+                }
+                return $0.tabID < $1.tabID
+            }
+    }
+
+    var awaitingAttentionCount: Int {
+        attentionItems.filter { $0.attention == .awaitingUser }.count
+    }
+
+    var snapshotJSON: String {
+        shellState.prettyPrintedJSON
+    }
+
+    func bootProfile(for pane: ShellPane?) -> AlanShellBootProfile? {
+        guard let pane else { return nil }
+        return AlanShellBootProfile.forPane(pane, shellState: shellState)
+    }
+
+    func runtime(for paneID: String?) -> TerminalHostRuntimeSnapshot {
+        terminalRuntimeRegistry.snapshot(for: paneID)
+    }
+
+    func select(spaceID: String) {
+        guard let space = shellState.spaces.first(where: { $0.spaceID == spaceID }) else { return }
+        selectedSpaceID = spaceID
+        selectedTabID = space.tabs.first?.tabID
+        terminalRuntime = runtime(for: selectedPane?.paneID)
+    }
+
+    func select(tabID: String) {
+        guard selectedSpace?.tabs.contains(where: { $0.tabID == tabID }) == true else { return }
+        selectedTabID = tabID
+        terminalRuntime = runtime(for: selectedPane?.paneID)
+    }
+
+    func selectSpace(at index: Int) {
+        guard spaces.indices.contains(index) else { return }
+        select(spaceID: spaces[index].spaceID)
+    }
+
+    func selectAdjacentSpace(offset: Int) {
+        guard !spaces.isEmpty else { return }
+        guard let selectedSpaceID,
+              let currentIndex = spaces.firstIndex(where: { $0.spaceID == selectedSpaceID })
+        else {
+            select(spaceID: spaces[0].spaceID)
+            return
+        }
+
+        let nextIndex = (currentIndex + offset + spaces.count) % spaces.count
+        select(spaceID: spaces[nextIndex].spaceID)
+    }
+
+    func focusAttentionItem(_ item: ShellAttentionItem) {
+        select(spaceID: item.spaceID)
+        select(tabID: item.tabID)
+        focus(paneID: item.paneID)
+    }
+
+    func focus(paneID: String) {
+        guard let result = try? shellState.focusingPane(paneID) else { return }
+        applyMutationResult(result)
+    }
+
+    func requestCommandInput() {
+        commandInputRequestID += 1
+    }
+
+    func refocusSelectedTerminalPane() {
+        guard let paneID = selectedPane?.paneID else { return }
+        terminalRuntimeRegistry.requestFocus(for: paneID)
+    }
+
+    func terminalHostDidRequestActivation(paneID: String) {
+        focus(paneID: paneID)
+    }
+
+    @discardableResult
+    func createSpace(
+        launchTarget: ShellLaunchTarget = .shell,
+        title: String? = nil,
+        workingDirectory: String? = nil
+    ) -> String? {
+        let result = shellState.creatingSpace(
+            launchTarget: launchTarget,
+            title: title,
+            workingDirectory: workingDirectory,
+            reservedPaneIDs: terminalRuntimeRegistry.registeredPaneIDs
+        )
+        applyMutationResult(result)
+        return result.spaceID
+    }
+
+    @discardableResult
+    func createTerminalSpace(title: String? = nil, workingDirectory: String? = nil) -> String? {
+        createSpace(launchTarget: .shell, title: title, workingDirectory: workingDirectory)
+    }
+
+    @discardableResult
+    func createAlanSpace(title: String? = nil, workingDirectory: String? = nil) -> String? {
+        createSpace(launchTarget: .alan, title: title, workingDirectory: workingDirectory)
+    }
+
+    @discardableResult
+    func openTab(
+        launchTarget: ShellLaunchTarget = .shell,
+        in spaceID: String? = nil,
+        title: String? = nil,
+        workingDirectory: String? = nil
+    ) -> String? {
+        let result: ShellStateMutationResult
+        do {
+            result = try shellState.openingTab(
+                launchTarget: launchTarget,
+                in: spaceID,
+                title: title,
+                workingDirectory: workingDirectory,
+                reservedPaneIDs: terminalRuntimeRegistry.registeredPaneIDs
+            )
+        } catch {
+            return nil
+        }
+        applyMutationResult(result)
+        return result.tabID
+    }
+
+    @discardableResult
+    func openTerminalTab(
+        in spaceID: String? = nil,
+        title: String? = nil,
+        workingDirectory: String? = nil
+    ) -> String? {
+        openTab(
+            launchTarget: .shell,
+            in: spaceID,
+            title: title,
+            workingDirectory: workingDirectory
+        )
+    }
+
+    @discardableResult
+    func openAlanTab(
+        in spaceID: String? = nil,
+        title: String? = nil,
+        workingDirectory: String? = nil
+    ) -> String? {
+        openTab(
+            launchTarget: .alan,
+            in: spaceID,
+            title: title,
+            workingDirectory: workingDirectory
+        )
+    }
+
+    @discardableResult
+    func splitFocusedPane(direction: ShellSplitDirection) -> String? {
+        splitFocusedPane(placement: .defaultPlacement(for: direction))
+    }
+
+    @discardableResult
+    func splitFocusedPane(placement: ShellPaneSplitDirection) -> String? {
+        guard let focusedPaneID = shellState.focusedPaneID else { return nil }
+        return splitPane(paneID: focusedPaneID, placement: placement)
+    }
+
+    @discardableResult
+    func splitPane(paneID: String, direction: ShellSplitDirection) -> String? {
+        splitPane(paneID: paneID, placement: .defaultPlacement(for: direction))
+    }
+
+    @discardableResult
+    func splitPane(paneID: String, placement: ShellPaneSplitDirection) -> String? {
+        let result: ShellStateMutationResult
+        do {
+            result = try shellState.splittingPane(
+                paneID,
+                placement: placement,
+                reservedPaneIDs: terminalRuntimeRegistry.registeredPaneIDs
+            )
+        } catch {
+            return nil
+        }
+        applyMutationResult(result)
+        return result.paneID
+    }
+
+    @discardableResult
+    func focusAdjacentPane(direction: ShellSpatialFocusDirection) -> Bool {
+        let result: ShellStateMutationResult
+        do {
+            result = try shellState.focusingAdjacentPane(direction)
+        } catch {
+            return false
+        }
+        applyMutationResult(result)
+        return true
+    }
+
+    @discardableResult
+    func performShellWorkspaceCommand(_ command: ShellWorkspaceCommand) -> Bool {
+        switch command {
+        case .newTerminalTab:
+            return openTerminalTab() != nil
+        case .newAlanTab:
+            return openAlanTab() != nil
+        case .splitLeft:
+            return splitFocusedPane(placement: .left) != nil
+        case .splitRight:
+            return splitFocusedPane(placement: .right) != nil
+        case .splitUp:
+            return splitFocusedPane(placement: .up) != nil
+        case .splitDown:
+            return splitFocusedPane(placement: .down) != nil
+        case .focusLeft:
+            return focusAdjacentPane(direction: .left)
+        case .focusRight:
+            return focusAdjacentPane(direction: .right)
+        case .focusUp:
+            return focusAdjacentPane(direction: .up)
+        case .focusDown:
+            return focusAdjacentPane(direction: .down)
+        case .equalizeSplits:
+            return equalizeSelectedTabSplits()
+        case .closePane:
+            return closeSelectedPane()
+        case .closeTab:
+            return closeSelectedTab()
+        }
+    }
+
+    @discardableResult
+    func resizeSplit(splitNodeID: String, ratio: Double, persist: Bool = true) -> Bool {
+        let result: ShellStateMutationResult
+        do {
+            result = try shellState.resizingSplit(splitNodeID, ratio: ratio)
+        } catch {
+            return false
+        }
+        applyMutationResult(result, publish: persist)
+        return true
+    }
+
+    @discardableResult
+    func equalizeSelectedTabSplits() -> Bool {
+        let result: ShellStateMutationResult
+        do {
+            result = try shellState.equalizingSplits(in: selectedTabID)
+        } catch {
+            return false
+        }
+        applyMutationResult(result)
+        return true
+    }
+
+    @discardableResult
+    func closeSelectedTab() -> Bool {
+        guard let selectedTabID else { return false }
+        return closeTab(tabID: selectedTabID) == .closed
+    }
+
+    @discardableResult
+    func closeSelectedPane() -> Bool {
+        guard let paneID = selectedPane?.paneID else { return false }
+        return closePane(paneID: paneID) == .closed
+    }
+
+    @discardableResult
+    func closePaneByID(_ paneID: String) -> Bool {
+        closePane(paneID: paneID) == .closed
+    }
+
+    @discardableResult
+    func liftSelectedPaneToTab(title: String? = nil) -> Bool {
+        guard let paneID = selectedPane?.paneID else { return false }
+        return liftPaneToTab(paneID: paneID, title: title) == .lifted
+    }
+
+    @discardableResult
+    func moveSelectedPane(
+        toTab tabID: String,
+        direction: ShellSplitDirection = .vertical
+    ) -> Bool {
+        guard let paneID = selectedPane?.paneID else { return false }
+        return movePane(paneID: paneID, toTab: tabID, direction: direction)
+    }
+
+    @discardableResult
+    func focusTopRoutingCandidate(preferredPaneID: String? = nil) -> String? {
+        guard let candidate = routingCandidates(preferredPaneID: preferredPaneID).first else {
+            return nil
+        }
+        focus(paneID: candidate.paneID)
+        return candidate.paneID
+    }
+
+    @discardableResult
+    func setAttention(_ attention: ShellAttentionState, for paneID: String) -> Bool {
+        let result: ShellStateMutationResult
+        do {
+            result = try shellState.settingAttention(attention, for: paneID)
+        } catch {
+            return false
+        }
+        applyMutationResult(result)
+        return true
+    }
+
+    func copySnapshotJSON() {
+        clipboardWriter.writeString(snapshotJSON)
+        lastCopiedAt = .now
+    }
+
+    func updateTerminalRuntime(_ runtime: TerminalHostRuntimeSnapshot) {
+        terminalRuntimeRegistry.updateSnapshot(runtime)
+
+        if let paneID = runtime.paneID,
+           runtime.isFocused,
+           shellState.focusedPaneID != paneID
+        {
+            focus(paneID: paneID)
+            return
+        }
+
+        if runtime.paneID == selectedPane?.paneID || runtime.paneID == shellState.focusedPaneID {
+            terminalRuntime = runtime
+        }
+
+        if let paneID = runtime.paneID,
+           let pane = pane(paneID: paneID)
+        {
+            let bootProfile = AlanShellBootProfile.forPane(pane, shellState: shellState)
+            let runtimeProcessExited = paneProjection.projectedProcessExited(
+                metadataProcessExited: runtime.paneMetadata.processExited,
+                surfaceState: runtime.surfaceState
+            ) ?? runtime.paneMetadata.processExited
+            let projectedContext = paneProjection.projectedContext(
+                for: pane,
+                bootProfile: bootProfile,
+                workingDirectory: runtime.paneMetadata.workingDirectory ?? pane.cwd,
+                processExited: runtime.paneMetadata.processExited,
+                lastCommandExitCode: runtime.paneMetadata.lastCommandExitCode,
+                lastMetadataAt: runtime.paneMetadata.lastUpdatedAt,
+                existing: pane.context,
+                runtime: runtime
+            )
+
+            updatePaneState(paneID: paneID) { current in
+                let projectedBinding = paneProjection.projectedAlanBinding(
+                    for: current,
+                    binding: current.alanBinding,
+                    processExited: runtimeProcessExited
+                )
+                let viewport = paneProjection.projectedViewport(
+                    current: current,
+                    metadata: runtime.paneMetadata,
+                    runtime: runtime
+                )
+                return ShellPane(
+                    paneID: current.paneID,
+                    tabID: current.tabID,
+                    spaceID: current.spaceID,
+                    launchTarget: current.launchTarget,
+                    cwd: current.cwd ?? bootProfile.workingDirectory,
+                    process: current.process,
+                    attention: paneProjection.projectedAttention(
+                        metadataAttention: runtime.paneMetadata.attention,
+                        processExited: runtimeProcessExited,
+                        binding: projectedBinding,
+                        surfaceState: runtime.surfaceState
+                    ),
+                    context: projectedContext,
+                    viewport: viewport,
+                    alanBinding: projectedBinding
+                )
+            }
+        }
+    }
+
+    func updateTerminalMetadata(_ metadata: TerminalPaneMetadataSnapshot, for paneID: String) {
+        guard let pane = pane(paneID: paneID) else { return }
+        let bootProfile = AlanShellBootProfile.forPane(pane, shellState: shellState)
+        let runtime = runtime(for: pane.paneID)
+        let metadataProcessExited = paneProjection.projectedProcessExited(
+            metadataProcessExited: metadata.processExited,
+            surfaceState: runtime.surfaceState
+        ) ?? metadata.processExited
+        let projectedContext = paneProjection.projectedContext(
+            for: pane,
+            bootProfile: bootProfile,
+            workingDirectory: metadata.workingDirectory ?? pane.cwd,
+            processExited: metadata.processExited,
+            lastCommandExitCode: metadata.lastCommandExitCode,
+            lastMetadataAt: metadata.lastUpdatedAt,
+            existing: pane.context,
+            runtime: runtime
+        )
+
+        updatePaneState(
+            paneID: pane.paneID,
+            tabTitleOverride: metadata.title
+        ) { current in
+            let projectedBinding = paneProjection.projectedAlanBinding(
+                for: current,
+                binding: current.alanBinding,
+                processExited: metadataProcessExited
+            )
+            let viewport = paneProjection.projectedViewport(
+                current: current,
+                metadata: metadata,
+                runtime: runtime
+            )
+
+            return ShellPane(
+                paneID: current.paneID,
+                tabID: current.tabID,
+                spaceID: current.spaceID,
+                launchTarget: current.launchTarget,
+                cwd: metadata.workingDirectory ?? current.cwd ?? bootProfile.workingDirectory,
+                process: current.process,
+                attention: paneProjection.projectedAttention(
+                    metadataAttention: metadata.attention,
+                    processExited: metadataProcessExited,
+                    binding: projectedBinding,
+                    surfaceState: runtime.surfaceState
+                ),
+                context: projectedContext,
+                viewport: viewport,
+                alanBinding: projectedBinding
+            )
+        }
+    }
+
+    private func applyAlanBinding(_ binding: ShellAlanBinding?, for paneID: String) {
+        guard let pane = pane(paneID: paneID) else { return }
+        let bootProfile = AlanShellBootProfile.forPane(pane, shellState: shellState)
+        let runtime = runtime(for: pane.paneID)
+        let runtimeProcessExited = paneProjection.projectedProcessExited(
+            metadataProcessExited: runtime.paneMetadata.processExited,
+            surfaceState: runtime.surfaceState
+        ) ?? runtime.paneMetadata.processExited
+        let projectedBinding = paneProjection.projectedAlanBinding(
+            for: pane,
+            binding: binding,
+            processExited: runtimeProcessExited
+        )
+        let projectedContext = paneProjection.projectedContext(
+            for: pane,
+            bootProfile: bootProfile,
+            workingDirectory: pane.cwd,
+            processExited: nil,
+            lastCommandExitCode: pane.context?.lastCommandExitCode,
+            lastMetadataAt: nil,
+            existing: pane.context,
+            runtime: runtime
+        )
+
+        updatePaneState(paneID: paneID) { current in
+            let bindingSummary: String?
+            if let projectedBinding {
+                bindingSummary = projectedBinding.pendingYield
+                    ? "alan is waiting for user input"
+                    : "alan run status: \(projectedBinding.runStatus)"
+            } else {
+                bindingSummary = nil
+            }
+
+            let viewport = ShellViewportSnapshot(
+                title: current.viewport?.title,
+                summary: bindingSummary ?? current.viewport?.summary,
+                visibleExcerpt: current.viewport?.visibleExcerpt,
+                lastActivityAt: binding?.lastProjectedAt ?? current.viewport?.lastActivityAt
+            )
+
+            return ShellPane(
+                paneID: current.paneID,
+                tabID: current.tabID,
+                spaceID: current.spaceID,
+                launchTarget: current.launchTarget,
+                cwd: current.cwd ?? bootProfile.workingDirectory,
+                process: current.process,
+                attention: projectedBinding?.pendingYield == true ? .awaitingUser : current.attention,
+                context: projectedContext,
+                viewport: viewport,
+                alanBinding: projectedBinding
+            )
+        }
+    }
+
+    private func primeBootContext(for paneID: String) {
+        guard let pane = pane(paneID: paneID) else { return }
+        let bootProfile = AlanShellBootProfile.forPane(pane, shellState: shellState)
+        let runtime = runtime(for: pane.paneID)
+        let runtimeProcessExited = paneProjection.projectedProcessExited(
+            metadataProcessExited: nil,
+            surfaceState: runtime.surfaceState
+        ) ?? false
+        let projectedContext = paneProjection.projectedContext(
+            for: pane,
+            bootProfile: bootProfile,
+            workingDirectory: pane.cwd ?? bootProfile.workingDirectory,
+            processExited: nil,
+            lastCommandExitCode: pane.context?.lastCommandExitCode,
+            lastMetadataAt: nil,
+            existing: pane.context,
+            runtime: runtime
+        )
+
+        updatePaneState(paneID: paneID) { current in
+            let projectedBinding = paneProjection.projectedAlanBinding(
+                for: current,
+                binding: current.alanBinding,
+                processExited: runtimeProcessExited
+            )
+            return ShellPane(
+                paneID: current.paneID,
+                tabID: current.tabID,
+                spaceID: current.spaceID,
+                launchTarget: current.launchTarget,
+                cwd: current.cwd ?? bootProfile.workingDirectory,
+                process: current.process,
+                attention: current.attention,
+                context: projectedContext,
+                viewport: current.viewport,
+                alanBinding: projectedBinding
+            )
+        }
+    }
+
+    private func updatePaneState(
+        paneID: String,
+        tabTitleOverride: String? = nil,
+        transform: (ShellPane) -> ShellPane
+    ) {
+        guard let existingPane = shellState.panes.first(where: { $0.paneID == paneID }) else { return }
+        let transformedPane = transform(existingPane)
+        let currentTabTitle = shellState.tab(tabID: existingPane.tabID)?.title
+        let requestedTabTitle = tabTitleOverride ?? currentTabTitle
+
+        guard transformedPane != existingPane || requestedTabTitle != currentTabTitle else {
+            return
+        }
+
+        let updatedPanes = shellState.panes.map { pane in
+            pane.paneID == paneID ? transformedPane : pane
+        }
+        let updatedSpaces = rebuildSpaces(
+            using: updatedPanes,
+            tabTitleOverride: tabTitleOverride,
+            paneID: paneID
+        )
+
+        shellState = ShellStateSnapshot(
+            contractVersion: shellState.contractVersion,
+            windowID: shellState.windowID,
+            focusedSpaceID: shellState.focusedSpaceID,
+            focusedTabID: shellState.focusedTabID,
+            focusedPaneID: shellState.focusedPaneID,
+            spaces: updatedSpaces,
+            panes: updatedPanes
+        )
+        synchronizeSelection()
+        publishControlPlaneState()
+    }
+
+    private func rebuildSpaces(
+        using panes: [ShellPane],
+        tabTitleOverride: String?,
+        paneID: String
+    ) -> [ShellSpace] {
+        let tabID = shellState.panes.first(where: { $0.paneID == paneID })?.tabID
+
+        return shellState.spaces.map { space in
+            let tabs = space.tabs.map { tab in
+                let nextTitle: String?
+                if tab.tabID == tabID, let tabTitleOverride {
+                    nextTitle = tabTitleOverride
+                } else {
+                    nextTitle = tab.title
+                }
+
+                return ShellTab(
+                    tabID: tab.tabID,
+                    kind: tab.kind,
+                    title: nextTitle,
+                    paneTree: tab.paneTree
+                )
+            }
+
+            return ShellSpace(
+                spaceID: space.spaceID,
+                title: space.title,
+                attention: strongestAttention(in: panes.filter { $0.spaceID == space.spaceID }),
+                tabs: tabs
+            )
+        }
+    }
+
+    private func replaceShellState(
+        spaces: [ShellSpace],
+        panes: [ShellPane],
+        focusedPaneID: String?
+    ) {
+        let resolvedFocusedPaneID =
+            focusedPaneID.flatMap { candidate in
+                panes.contains(where: { $0.paneID == candidate }) ? candidate : nil
+            } ?? panes.first?.paneID
+        let focusedPane = resolvedFocusedPaneID.flatMap { candidate in
+            panes.first(where: { $0.paneID == candidate })
+        }
+
+        shellState = ShellStateSnapshot(
+            contractVersion: shellState.contractVersion,
+            windowID: shellState.windowID,
+            focusedSpaceID: focusedPane?.spaceID ?? spaces.first?.spaceID,
+            focusedTabID: focusedPane?.tabID ?? spaces.first?.tabs.first?.tabID,
+            focusedPaneID: resolvedFocusedPaneID,
+            spaces: spaces,
+            panes: panes
+        )
+        synchronizeSelection()
+        publishControlPlaneState()
+    }
+
+    private func applyMutationResult(
+        _ result: ShellStateMutationResult,
+        publish: Bool = true
+    ) {
+        adoptStateFromControlPlane(result.state, publish: publish)
+    }
+
+    private func adoptStateFromControlPlane(
+        _ state: ShellStateSnapshot,
+        publish: Bool = true
+    ) {
+        let paneIDs = Set(state.panes.map(\.paneID))
+        terminalRuntimeRegistry.releaseRuntimes(excluding: paneIDs)
+
+        let hydratedPanes = state.panes.map { pane in
+            guard paneProjection.needsBootContextProjection(pane) else { return pane }
+            let bootProfile = AlanShellBootProfile.forPane(pane, shellState: state)
+            let projectedContext = paneProjection.projectedContext(
+                for: pane,
+                bootProfile: bootProfile,
+                workingDirectory: pane.cwd ?? bootProfile.workingDirectory,
+                processExited: nil,
+                lastCommandExitCode: pane.context?.lastCommandExitCode,
+                lastMetadataAt: nil,
+                existing: pane.context,
+                runtime: self.runtime(for: pane.paneID)
+            )
+            return ShellPane(
+                paneID: pane.paneID,
+                tabID: pane.tabID,
+                spaceID: pane.spaceID,
+                launchTarget: pane.launchTarget,
+                cwd: pane.cwd ?? bootProfile.workingDirectory,
+                process: pane.process,
+                attention: pane.attention,
+                context: projectedContext,
+                viewport: pane.viewport,
+                alanBinding: pane.alanBinding
+            )
+        }
+
+        let hydratedSpaces = state.spaces.map { space in
+            ShellSpace(
+                spaceID: space.spaceID,
+                title: space.title,
+                attention: strongestAttention(in: hydratedPanes.filter { $0.spaceID == space.spaceID }),
+                tabs: space.tabs
+            )
+        }
+
+        shellState = ShellStateSnapshot(
+            contractVersion: state.contractVersion,
+            windowID: state.windowID,
+            focusedSpaceID: state.focusedSpaceID,
+            focusedTabID: state.focusedTabID,
+            focusedPaneID: state.focusedPaneID,
+            spaces: hydratedSpaces,
+            panes: hydratedPanes
+        )
+        synchronizeSelection()
+        if publish {
+            publishControlPlaneState()
+        }
+    }
+
+    private func recordControlPlaneDiagnostic(_ message: String) {
+        let line = "\(Self.iso8601Formatter.string(from: .now)) \(message)"
+        guard controlPlaneDiagnostics.last != line else { return }
+        controlPlaneDiagnostics.append(line)
+        if controlPlaneDiagnostics.count > 12 {
+            controlPlaneDiagnostics.removeFirst(controlPlaneDiagnostics.count - 12)
+        }
+    }
+
+    private func synchronizeSelection() {
+        if let focusedPane = focusedPane {
+            selectedSpaceID = focusedPane.spaceID
+            selectedTabID = focusedPane.tabID
+            terminalRuntime = runtime(for: focusedPane.paneID)
+            return
+        }
+
+        selectedSpaceID = selectedSpaceID ?? shellState.spaces.first?.spaceID
+        selectedTabID = selectedTabID ?? selectedSpace?.tabs.first?.tabID
+        terminalRuntime = runtime(for: selectedPane?.paneID)
+    }
+
+    private func persistShellState() {
+        persistenceStore.save(shellState)
+    }
+
+    func pane(paneID: String) -> ShellPane? {
+        shellState.panes.first { $0.paneID == paneID }
+    }
+
+    private func nextID(prefix: String, existing: [String]) -> String {
+        let nextOrdinal = existing
+            .compactMap { identifier -> Int? in
+                let components = identifier.split(separator: "_")
+                guard let last = components.last else { return nil }
+                return Int(last)
+            }
+            .max()
+            .map { $0 + 1 }
+            ?? (existing.isEmpty ? 1 : existing.count + 1)
+
+        return "\(prefix)_\(nextOrdinal)"
+    }
+
+    func closeTab(tabID: String) -> ShellTabCloseResult {
+        do {
+            let result = try shellState.closingTab(tabID)
+            applyMutationResult(result)
+            return .closed
+        } catch ShellStateMutationError.lastTab {
+            return .lastTab
+        } catch ShellStateMutationError.tabNotFound {
+            return .tabNotFound
+        } catch {
+            return .tabNotFound
+        }
+    }
+
+    func closePane(paneID: String) -> ShellPaneCloseResult {
+        do {
+            let result = try shellState.closingPane(paneID)
+            applyMutationResult(result)
+            return .closed
+        } catch ShellStateMutationError.lastTab {
+            return .lastTab
+        } catch ShellStateMutationError.paneNotFound {
+            return .paneNotFound
+        } catch {
+            return .paneNotFound
+        }
+    }
+
+    func movePane(
+        paneID: String,
+        toTab targetTabID: String,
+        direction: ShellSplitDirection
+    ) -> Bool {
+        do {
+            let result = try shellState.movingPane(
+                paneID,
+                toTab: targetTabID,
+                direction: direction
+            )
+            applyMutationResult(result)
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    func liftPaneToTab(paneID: String, title: String? = nil) -> ShellPaneLiftResult {
+        do {
+            let result = try shellState.movingPaneToNewTab(paneID, title: title)
+            applyMutationResult(result)
+            return .lifted
+        } catch ShellStateMutationError.lastPane {
+            return .lastPane
+        } catch ShellStateMutationError.paneNotFound {
+            return .paneNotFound
+        } catch {
+            return .paneNotFound
+        }
+    }
+
+    private var totalTabCount: Int {
+        shellState.spaces.reduce(into: 0) { partialResult, space in
+            partialResult += space.tabs.count
+        }
+    }
+
+    private func strongestAttention(in panes: [ShellPane]) -> ShellAttentionState {
+        panes
+            .map(\.attention)
+            .max(by: { Self.attentionRank(for: $0) < Self.attentionRank(for: $1) })
+            ?? .idle
+    }
+
+    private func publishControlPlaneState() {
+        persistShellState()
+        controlPlane.publish(state: shellState)
+    }
+
+    static func attentionRank(for attention: ShellAttentionState) -> Int {
+        switch attention {
+        case .idle:
+            return 0
+        case .active:
+            return 1
+        case .notable:
+            return 2
+        case .awaitingUser:
+            return 3
+        }
+    }
+}
+
+extension ShellHostController {
+    static let spikePreview = ShellHostController(shellState: .spikePreview)
+}
+#endif

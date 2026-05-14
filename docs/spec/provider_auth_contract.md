@@ -11,7 +11,7 @@
 
 ## Goal
 
-Keep Alan's model access surface small and explicit:
+Keep alan's model access surface small and explicit:
 
 1. Provider selection chooses a concrete transport and auth surface.
 2. API Platform auth and ChatGPT/Codex subscription auth remain separate.
@@ -26,7 +26,7 @@ without changing the provider/auth boundaries defined here.
 Adapter-level capability fidelity and provider-specific wire semantics are
 specified separately in
 [`provider_capability_contract.md`](./provider_capability_contract.md). That
-document defines what Alan should preserve, emulate, reject, or expose
+document defines what alan should preserve, emulate, reject, or expose
 explicitly for Responses, Chat Completions, Anthropic Messages, and
 compatibility providers.
 
@@ -98,7 +98,7 @@ Normative boundary:
 
 ## Auth Surface Split
 
-Alan recognizes two OpenAI-family auth classes:
+alan recognizes two OpenAI-family auth classes:
 
 1. **API Platform auth**
    Based on explicit secret-bearing credentials attached to a connection
@@ -148,13 +148,13 @@ Managed ChatGPT auth state must live outside resolved agent config:
 
 1. It must not be stored in `agent.toml`.
 2. It must not be treated as part of agent identity.
-3. It should be stored under Alan home, for example `~/.alan/auth.json`, keyring, or an equivalent managed store.
+3. It should be stored under alan home, for example `~/.alan/auth.json`, keyring, or an equivalent managed store.
 
 Rationale:
 
 1. Provider login state is operator-local state, not agent-definition state.
 2. This keeps checked-in/workspace agent roots free of local secrets.
-3. It matches the existing Alan split between agent-facing config and machine-local host state.
+3. It matches the existing alan split between agent-facing config and machine-local host state.
 
 ## Login Flows
 
@@ -167,7 +167,7 @@ The local managed ChatGPT path currently supports:
 
 ## Host Auth Control Plane
 
-When Alan is hosted behind a daemon or app-server, the host layer currently
+When alan is hosted behind a daemon or app-server, the host layer currently
 exposes managed ChatGPT auth state through the generic connection-management
 control plane defined in
 [`connection_profile_contract.md`](./connection_profile_contract.md).
@@ -180,7 +180,7 @@ Normative behavior:
    credential `status`, `logout`, `login start`, auth completion handling, and
    auth event observation for connection profiles whose provider is `chatgpt`.
 4. Host auth observation and mutation must be independently scope-gated from session I/O.
-5. Alan's current host scope names are `host.auth.read` and `host.auth.write`.
+5. alan's current host scope names are `host.auth.read` and `host.auth.write`.
 6. Browser login should support a daemon-owned callback path so UI clients only
    need to start the flow, open the returned `auth_url`, and observe
    completion through host events/status.
@@ -247,13 +247,13 @@ Compaction remains governed by [`compaction_contract.md`](./compaction_contract.
 
 Normative boundary:
 
-1. Alan's compaction contract is provider-agnostic.
+1. alan's compaction contract is provider-agnostic.
 2. A provider-specific auxiliary endpoint such as remote `/responses/compact` may be used as an optimization, but it is not part of the ChatGPT auth contract.
-3. ChatGPT authentication must not require Alan to adopt provider-specific compaction endpoints as a kernel dependency.
+3. ChatGPT authentication must not require alan to adopt provider-specific compaction endpoints as a kernel dependency.
 
-## Relationship to the Alan Coding Steward / Worker Line
+## Relationship to the alan Coding Steward / Worker Line
 
-The first real consumer of this provider/auth surface is Alan's coding steward /
+The first real consumer of this provider/auth surface is alan's coding steward /
 worker line:
 
 1. This document defines the provider/auth half.

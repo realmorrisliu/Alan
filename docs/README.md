@@ -1,4 +1,4 @@
-# Alan Documentation Index
+# alan Documentation Index
 
 This repository now treats documentation as a small set of explicit categories:
 

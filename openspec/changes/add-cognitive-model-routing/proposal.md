@@ -1,8 +1,8 @@
 ## Why
 
-Alan can already control reasoning effort for a selected model, but it cannot
+alan can already control reasoning effort for a selected model, but it cannot
 act like a two-speed agent that normally thinks quickly and deliberately
-escalates when a task needs deeper reasoning. Alan should support configurable
+escalates when a task needs deeper reasoning. alan should support configurable
 System 1/System 2 model bindings with automatic, visible, and overridable
 routing.
 

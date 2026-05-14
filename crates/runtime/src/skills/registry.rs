@@ -1010,7 +1010,7 @@ interface:
         assert_eq!(skill.display_name(), "Skill Creator");
         assert_eq!(
             skill.effective_short_description(),
-            Some("Create or update Alan skill packages")
+            Some("Create or update alan skill packages")
         );
         assert_eq!(
             skill
@@ -1069,7 +1069,7 @@ interface:
                 .default_prompt
                 .as_deref(),
             Some(
-                "Use this package when Alan should hand off focused coding work to a repo-scoped child worker with a clear verification and delivery contract."
+                "Use this package when alan should hand off focused coding work to a repo-scoped child worker with a clear verification and delivery contract."
             )
         );
         assert_eq!(

@@ -22,7 +22,7 @@ before any pane surface is created.
 
 ### Requirement: Runtime services are window scoped
 Each macOS shell window SHALL own a terminal runtime service that maps stable
-Alan pane IDs to terminal surface handles for that window only.
+alan pane IDs to terminal surface handles for that window only.
 
 #### Scenario: Pane lookup in one window
 - **WHEN** a control-plane command targets a pane ID in a shell window
@@ -64,7 +64,7 @@ NOT own Ghostty app lifetime or pane runtime truth.
 
 ### Requirement: Runtime metadata is projected by pane identity
 The runtime service SHALL project terminal title, cwd, process status,
-attention, renderer phase, readiness, and delivery diagnostics into Alan shell
+attention, renderer phase, readiness, and delivery diagnostics into alan shell
 state using stable pane IDs.
 
 #### Scenario: Metadata event from background pane

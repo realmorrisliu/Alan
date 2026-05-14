@@ -179,7 +179,7 @@ mod tests {
 
         assert!(prompt.contains("Runtime Base Constraints"));
         assert!(prompt.contains("No Self-Modification"));
-        assert!(prompt.contains("Alan System Prompt"));
+        assert!(prompt.contains("alan System Prompt"));
         assert!(prompt.contains("Domain Prompt"));
     }
 
@@ -246,7 +246,7 @@ mod tests {
             build_agent_system_prompt_from_persona_dirs("DOMAIN content", &workspace_persona_dirs);
 
         let runtime_base_pos = prompt.find("Runtime Base Constraints").unwrap();
-        let system_pos = prompt.find("Alan System Prompt").unwrap();
+        let system_pos = prompt.find("alan System Prompt").unwrap();
         let skills_pos = prompt.find("DOMAIN content").unwrap();
         let workspace_pos = prompt.find("Workspace Persona Context").unwrap();
 

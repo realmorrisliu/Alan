@@ -172,7 +172,7 @@ describe("service-first setup catalog", () => {
   test("host config content uses canonical split host file shape", () => {
     const rendered = buildHostConfigContent();
 
-    expect(rendered).toContain("# Alan Host Configuration");
+    expect(rendered).toContain("# alan Host Configuration");
     expect(rendered).toContain('bind_address = "127.0.0.1:8090"');
     expect(rendered).toContain('daemon_url = "http://127.0.0.1:8090"');
   });

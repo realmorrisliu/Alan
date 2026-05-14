@@ -1,4 +1,4 @@
-# Alan - AI Agent Guide
+# alan - AI Agent Guide
 
 > **⚠️ Project Status: Early Development**
 >
@@ -8,9 +8,9 @@
 
 ## Core Concept: AI Turing Machine
 
-Alan treats each agent as a **Turing machine** where the LLM is the transition function:
+alan treats each agent as a **Turing machine** where the LLM is the transition function:
 
-| TM Concept              | Alan Implementation                                        |
+| TM Concept              | alan Implementation                                        |
 | ----------------------- | ---------------------------------------------------------- |
 | **Tape**                | `Tape` — messages, context items, and conversation summary |
 | **Transition Function** | LLM generation — maps (state, input) → (action, new state) |
@@ -69,20 +69,20 @@ serving as the primary user-facing hosting model.
 
 ### Users
 
-Alan's native macOS experience is designed first for the project owner and
+alan's native macOS experience is designed first for the project owner and
 developer users who live inside terminal, code, and agent workflows. They need a
 real terminal workspace that remains fast to scan, comfortable for long sessions,
 and readable by both humans and agents.
 
 The core job is to organize developer work into spaces, tabs, and splits while
-making Alan available as an optional capability layered onto the terminal rather
+making alan available as an optional capability layered onto the terminal rather
 than the reason the interface exists.
 
 ### Brand Personality
 
 The product personality is calm, precise, and intelligent.
 
-Alan should feel confident and quiet: a native tool that understands developer
+alan should feel confident and quiet: a native tool that understands developer
 workflow, removes unnecessary surface area, and exposes power through structure
 instead of decoration. The interface should evoke focus, control, and trust
 rather than novelty or spectacle.
@@ -106,7 +106,7 @@ debug-first composition.
 
 ### Design Principles
 
-1. Terminal first: the active terminal tab is the center of gravity, with Alan
+1. Terminal first: the active terminal tab is the center of gravity, with alan
    status and debug details kept secondary.
 2. Arc-like organization: spaces and tabs live in a native, material sidebar
    built for scanning and switching, not in dashboard sections.
@@ -122,7 +122,7 @@ debug-first composition.
 ## Project Structure
 
 ```
-Alan/
+alan/
 ├── Cargo.toml                 # Workspace configuration
 ├── README.md                  # Project overview
 ├── AGENTS.md                  # This file
@@ -172,7 +172,7 @@ Alan/
 │   │       ├── config.rs      # Agent-facing config + connection-profile resolution
 │   │       ├── connections.rs # Connection profiles, provider descriptors, secret store
 │   │       ├── models.rs      # Model catalog metadata
-│   │       ├── paths.rs       # Alan home / workspace path helpers
+│   │       ├── paths.rs       # alan home / workspace path helpers
 │   │       ├── tape.rs        # Tape (messages, context, compaction)
 │   │       ├── session.rs     # Session lifecycle + persistence
 │   │       ├── approval.rs    # Pending approval / interaction checkpoint types
@@ -463,7 +463,7 @@ Agent definitions are resolved from `AgentRoot`s on disk:
 ```
 
 Each root may contribute `agent.toml`, `persona/`, `skills/`, and `policy.yaml`.
-Alan also scans the standard public skill install directories `~/.agents/skills/`
+alan also scans the standard public skill install directories `~/.agents/skills/`
 and `<workspace>/.agents/skills/` as single-skill package sources for the
 global and workspace default layers.
 Default workspace agents resolve `~/.alan/agents/default -> <workspace>/.alan/agents/default`.
@@ -506,7 +506,7 @@ context_window_tokens = 128000
 prompt_snapshot_enabled = false
 prompt_snapshot_max_chars = 8000
 # Optional canonical reasoning effort. If omitted and the selected model is in
-# Alan's model catalog, Alan uses the model's catalog default.
+# alan's model catalog, alan uses the model's catalog default.
 model_reasoning_effort = "medium"
 
 [memory]
@@ -548,7 +548,7 @@ Model metadata resolves in this order:
 3. `{workspace}/.alan/models.toml`
 
 Overlay catalogs currently extend `openai_chat_completions_compatible` models only. Official
-`openai_responses` and `openai_chat_completions` models stay pinned to Alan's curated catalog.
+`openai_responses` and `openai_chat_completions` models stay pinned to alan's curated catalog.
 
 ---
 
@@ -562,7 +562,7 @@ the examples below remain the stable public paths.
 # Health check
 curl http://localhost:8090/health
 
-# Create session; profile_id is optional. If omitted, Alan resolves a pinned
+# Create session; profile_id is optional. If omitted, alan resolves a pinned
 # connection_profile / default profile during runtime startup.
 curl -X POST http://localhost:8090/api/v1/sessions \
   -H "Content-Type: application/json" \
@@ -911,4 +911,4 @@ alan  # or: alan chat
 ---
 
 *Last updated: 2026-04-23*
-*Project: Alan v0.1.0 (early development)*
+*Project: alan v0.1.0 (early development)*

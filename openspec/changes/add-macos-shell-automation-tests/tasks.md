@@ -8,7 +8,7 @@
 ## 2. App Intents
 
 - [ ] 2.1 Add App Entity types and queries for shell windows, spaces, tabs, panes, and attention items.
-- [ ] 2.2 Add intents for creating terminal tabs, creating Alan tabs, splitting panes, focusing panes, closing panes/tabs, sending text, reading pane summaries, and opening attention items.
+- [ ] 2.2 Add intents for creating terminal tabs, creating alan tabs, splitting panes, focusing panes, closing panes/tabs, sending text, reading pane summaries, and opening attention items.
 - [ ] 2.3 Align intent success and failure results with shared shell command/control-plane result categories.
 - [ ] 2.4 Gate App Intent availability by supported macOS versions and document fallback behavior.
 - [ ] 2.5 Verify secure-input and privacy restrictions in intent summaries and logs.
@@ -34,7 +34,7 @@
 - [ ] 5.2 Run the focused Apple shell test command added by this change.
 - [ ] 5.3 Run the UI smoke/screenshot command added by this change.
 - [ ] 5.4 Run the Ghostty integration lane when local artifacts are prepared.
-- [ ] 5.5 Run the documented `AlanNative` macOS build command.
+- [ ] 5.5 Run the renamed `alan-macos` macOS build command.
 
 ## 6. PR And Archive Readiness
 

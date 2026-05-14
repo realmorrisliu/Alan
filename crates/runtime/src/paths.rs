@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use crate::agent_root::AgentRootLayout;
 
-/// Canonical Alan home paths derived from a user home directory.
+/// Canonical alan home paths derived from a user home directory.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AlanHomePaths {
     pub home_dir: PathBuf,
@@ -18,19 +18,19 @@ pub struct AlanHomePaths {
 }
 
 impl AlanHomePaths {
-    /// Resolve Alan home paths from the current user's home directory.
+    /// Resolve alan home paths from the current user's home directory.
     pub fn detect() -> Option<Self> {
         dirs::home_dir().map(|home| Self::from_home_dir(&home))
     }
 
-    /// Resolve Alan home paths from an explicit home directory.
+    /// Resolve alan home paths from an explicit home directory.
     pub fn from_home_dir(home_dir: &Path) -> Self {
         let home_dir = home_dir.to_path_buf();
         let alan_home_dir = home_dir.join(".alan");
         Self::from_explicit_alan_home_dir(home_dir, alan_home_dir)
     }
 
-    /// Resolve Alan home paths from an explicit Alan home directory.
+    /// Resolve alan home paths from an explicit alan home directory.
     pub fn from_alan_home_dir(alan_home_dir: &Path) -> Self {
         let home_dir = alan_home_dir
             .parent()

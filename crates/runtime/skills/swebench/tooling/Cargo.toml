@@ -1,6 +1,6 @@
 [package]
 name = "alan-swebench-tooling"
-description = "SWE-bench package-local tooling for Alan"
+description = "SWE-bench package-local tooling for alan"
 version.workspace = true
 edition.workspace = true
 

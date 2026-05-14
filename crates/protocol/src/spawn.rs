@@ -45,7 +45,7 @@ pub struct SpawnLaunchInputs {
 
 /// First-version tool profile override for a child launch.
 ///
-/// Alan does not have stable named host profiles yet, so the initial contract
+/// alan does not have stable named host profiles yet, so the initial contract
 /// models a profile override as an explicit tool allowlist.
 ///
 /// The allowlist is strict: child launch must fail instead of silently dropping

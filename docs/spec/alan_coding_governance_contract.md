@@ -1,11 +1,11 @@
-# Alan Coding Governance Contract
+# alan Coding Governance Contract
 
 > Status: partially implemented target contract for workspace-aware coding
 > governance across the steward and repo-worker line.
 
 ## Goal
 
-Define how Alan's coding governance should distinguish:
+Define how alan's coding governance should distinguish:
 
 1. the home-root steward's discovery and routing actions,
 2. the repo worker's bounded repo-local coding loop,
@@ -97,7 +97,7 @@ Coding governance should escalate or deny at least these classes:
 
 ## Current Implementation Hooks
 
-Today Alan can express part of this boundary through `policy.yaml` plus the
+Today alan can express part of this boundary through `policy.yaml` plus the
 runtime policy engine.
 
 Current matcher surface:
@@ -109,12 +109,12 @@ Current matcher surface:
 
 `match_path_prefix` is currently evaluated against common file-oriented
 arguments such as `path`, `paths`, `directory`, `cwd`, and `workspace_root`.
-Before matching, Alan lexically normalizes `.` / `..` segments and lets
+Before matching, alan lexically normalizes `.` / `..` segments and lets
 relative policy prefixes still match absolute tool paths on component
 boundaries.
 When the runtime has a current tool `cwd`, relative path arguments are also
 evaluated against that base so parent-traversal paths do not bypass policy.
-Alan also case-folds path-prefix comparisons conservatively so case variants do
+alan also case-folds path-prefix comparisons conservatively so case variants do
 not bypass policy on case-insensitive hosts.
 
 This does not make bash fully path-aware. For shell commands, `match_command`

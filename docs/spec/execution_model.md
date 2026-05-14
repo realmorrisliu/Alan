@@ -4,7 +4,7 @@
 
 ## Goals
 
-Alan must support both:
+alan must support both:
 
 1. Short interactive tasks (instant Q&A).
 2. Long-running autonomous execution (across context windows and time slices).
@@ -53,7 +53,7 @@ Execution hierarchy is therefore: `Task -> Run -> Session -> Turn`.
 
 ## Current-to-Target Mapping
 
-Current Alan centers on Session/Turn. Mapping:
+Current alan centers on Session/Turn. Mapping:
 
 - Current `Session` ~= target `Session`
 - Ongoing interaction inside one session ~= single `Run`

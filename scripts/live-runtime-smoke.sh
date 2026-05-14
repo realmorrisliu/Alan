@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # ============================================================
-# Alan live runtime smoke
+# alan live runtime smoke
 # Runs ignored runtime integration smoke tests against real providers.
 # ============================================================
 

@@ -1,7 +1,7 @@
 ---
 name: swebench
 description: |
-  Run and inspect SWE-bench benchmark workflows for Alan's coding line.
+  Run and inspect SWE-bench benchmark workflows for alan's coding line.
 
   Use this when:
   - The user wants to run SWE-bench Lite or curated SWE-bench subsets
@@ -20,7 +20,7 @@ compatibility:
 
 # SWE-bench
 
-This first-party package owns SWE-bench benchmark orchestration for Alan's
+This first-party package owns SWE-bench benchmark orchestration for alan's
 coding line.
 
 ## Working Model
@@ -44,7 +44,7 @@ coding line.
 
 ## Rules
 
-1. Do not encode repository-specific or corpus-specific behavior into Alan's
+1. Do not encode repository-specific or corpus-specific behavior into alan's
    coding product.
 2. Benchmark findings should be generalized back into reusable coding,
    governance, prompt, or harness improvements.

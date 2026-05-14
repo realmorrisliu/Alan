@@ -1,6 +1,6 @@
 # Repo-Coding Package
 
-This first-party package productizes Alan's repo-scoped coding worker under
+This first-party package productizes alan's repo-scoped coding worker under
 `crates/runtime/skills/repo-coding/`.
 
 It is not the full coding product boundary by itself. The steward/worker model
@@ -8,12 +8,12 @@ is defined in `docs/spec/alan_coding_steward_contract.md`.
 
 ## Package Principles
 
-This package should make Alan better at general repo-local coding work. It
+This package should make alan better at general repo-local coding work. It
 must not absorb benchmark orchestration or corpus-specific behavior.
 
 Rules:
 
-1. The parent Alan runtime remains the coding steward; this package provides
+1. The parent alan runtime remains the coding steward; this package provides
    the bounded repo-worker path inside that broader stewardship model.
 2. Any improvements motivated by benchmark findings should be reusable coding
    improvements that help normal repository work as well.

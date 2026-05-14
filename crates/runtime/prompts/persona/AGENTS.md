@@ -1,6 +1,6 @@
 # AGENTS
 
-This workspace defines how Alan should operate for this user and project.
+This workspace defines how alan should operate for this user and project.
 
 ## Session Start
 
