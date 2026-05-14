@@ -1,4 +1,4 @@
-import { statSync } from "node:fs";
+import { realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 
@@ -12,15 +12,44 @@ function defaultIsDirectory(path: string): boolean {
   }
 }
 
+function canonicalizeExistingOrParent(path: string): string {
+  const normalized = resolve(path);
+  try {
+    return realpathSync(normalized);
+  } catch {
+    // Continue below: the path may be a not-yet-created child under a symlinked parent.
+  }
+
+  const suffix: string[] = [];
+  let cursor = normalized;
+  while (true) {
+    const parent = dirname(cursor);
+    const name = basename(cursor);
+    if (!name || parent === cursor) {
+      return normalized;
+    }
+    suffix.push(name);
+    try {
+      return suffix.reduceRight(
+        (canonical, component) => join(canonical, component),
+        realpathSync(parent),
+      );
+    } catch {
+      cursor = parent;
+    }
+  }
+}
+
 export function detectWorkspaceDirFromCwd(
   cwd: string,
   isDirectory: IsDirectoryFn = defaultIsDirectory,
   alanHomeDir: string = join(homedir(), ".alan"),
 ): string | undefined {
   const normalizedCwd = resolve(cwd);
-  const normalizedAlanHomeDir = resolve(alanHomeDir);
+  const comparableCwd = canonicalizeExistingOrParent(normalizedCwd);
+  const comparableAlanHomeDir = canonicalizeExistingOrParent(alanHomeDir);
 
-  if (normalizedCwd === normalizedAlanHomeDir) {
+  if (comparableCwd === comparableAlanHomeDir) {
     return undefined;
   }
 
@@ -29,7 +58,7 @@ export function detectWorkspaceDirFromCwd(
   }
 
   const alanDir = join(normalizedCwd, ".alan");
-  if (resolve(alanDir) === normalizedAlanHomeDir) {
+  if (canonicalizeExistingOrParent(alanDir) === comparableAlanHomeDir) {
     return undefined;
   }
 
