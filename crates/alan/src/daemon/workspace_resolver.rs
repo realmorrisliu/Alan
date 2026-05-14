@@ -545,7 +545,35 @@ impl WorkspaceResolver {
 }
 
 fn canonicalize_existing_or_self(path: PathBuf) -> PathBuf {
-    std::fs::canonicalize(&path).unwrap_or(path)
+    if path.is_relative() {
+        return path;
+    }
+    if let Ok(canonical) = std::fs::canonicalize(&path) {
+        return canonical;
+    }
+
+    let mut suffix = Vec::<OsString>::new();
+    let mut cursor = path.as_path();
+    loop {
+        let Some(file_name) = cursor.file_name() else {
+            return path;
+        };
+        suffix.push(file_name.to_os_string());
+        let Some(parent) = cursor.parent() else {
+            return path;
+        };
+        match std::fs::canonicalize(parent) {
+            Ok(mut canonical_parent) => {
+                for component in suffix.iter().rev() {
+                    canonical_parent.push(component);
+                }
+                return canonical_parent;
+            }
+            Err(_) => {
+                cursor = parent;
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -661,11 +689,12 @@ mod tests {
         };
 
         let default_dir = temp.path().join("default-workspace");
+        let expected_default_dir = canonicalize_existing_or_self(default_dir.clone());
         let resolver = WorkspaceResolver::with_registry(registry, default_dir.clone());
 
         let resolved = resolver.resolve(None).unwrap();
-        assert_eq!(resolved.path, default_dir);
-        assert_eq!(resolved.alan_dir, default_dir);
+        assert_eq!(resolved.path, expected_default_dir);
+        assert_eq!(resolved.alan_dir, expected_default_dir);
         assert_eq!(resolved.alias, Some("default".to_string()));
     }
 
@@ -724,6 +753,34 @@ mod tests {
         assert_eq!(resolved.id, id);
         assert_eq!(resolved.path, default_dir);
         assert_eq!(resolved.alan_dir, default_dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_resolve_or_create_missing_symlinked_home_uses_default_workspace() {
+        use std::os::unix::fs::symlink;
+
+        let temp = TempDir::new().unwrap();
+        let real_home_dir = temp.path().join("real-home");
+        std::fs::create_dir_all(&real_home_dir).unwrap();
+        let linked_home_dir = temp.path().join("linked-home");
+        symlink(&real_home_dir, &linked_home_dir).unwrap();
+        let default_dir = linked_home_dir.join(".alan");
+
+        let registry = WorkspaceRegistry {
+            version: 1,
+            workspaces: vec![],
+        };
+
+        let resolver = WorkspaceResolver::with_registry(registry, default_dir);
+        let resolved = resolver
+            .resolve_or_create(Some(linked_home_dir.to_str().unwrap()))
+            .unwrap();
+        let expected_default_dir = std::fs::canonicalize(linked_home_dir.join(".alan")).unwrap();
+
+        assert_eq!(resolved.path, expected_default_dir);
+        assert_eq!(resolved.alan_dir, expected_default_dir);
+        assert!(resolved.alan_dir.join("sessions").exists());
     }
 
     #[test]
