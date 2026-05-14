@@ -1,6 +1,36 @@
 ## MODIFIED Requirements
 
-### Requirement: Sidebar matches space rail plus tab list
+### Requirement: Visual system follows native material guidance
+The default macOS shell SHALL use a light-mode-first native material visual
+system that feels calm, precise, and terminal-oriented. It SHALL avoid
+card-heavy dashboard composition, decorative gradients, hard-coded dominant
+theme panels, and ornamental controls.
+
+#### Scenario: Material sidebar
+- **WHEN** the app window is visible in the default light appearance
+- **THEN** the unified sidebar column, active-space tab list, bottom space switcher, and compact sidebar controls use material-backed surfaces, subtle separators where useful, and restrained selection states rather than an opaque themed sidebar panel or separate space rail
+
+#### Scenario: Stable compact controls
+- **WHEN** the user hovers, selects, inserts, closes, or switches tabs and spaces
+- **THEN** rows, icon controls, counters, and status marks keep stable dimensions and do not resize the sidebar or terminal content
+- **AND** the bottom space switcher aligns its visible controls to the sidebar edge inset so the leading and bottom margins match optically
+- **AND** the bottom space switcher add button directly creates a standard new space instead of opening a menu of space variants
+
+### Requirement: UI conformance is verified visually
+Mac shell UI changes SHALL be reviewed against the documented UI contract before
+the UI conformance tasks are marked complete.
+
+#### Scenario: Default screenshot review
+- **WHEN** a UI conformance implementation pass is ready for review
+- **THEN** maintainers can inspect a running-app screenshot of the default light-mode window showing the narrow command entry, active-space tab list, bottom space switcher, terminal-first content area, and no inspector surface
+
+#### Scenario: Removed-inspector review
+- **WHEN** inspector-removal UI tasks are marked complete
+- **THEN** maintainers can inspect screenshots or recorded notes confirming the default shell has no right-side inspector and no inspector toggle
+
+## ADDED Requirements
+
+### Requirement: Sidebar matches single-column space/tab navigation
 The default macOS sidebar SHALL remain a single vertical navigation column that
 aligns cleanly around the macOS traffic-light area, with a restrained initial
 width around 264 pt. Spaces SHALL be switched through a compact bottom
@@ -86,8 +116,6 @@ accessibility labels rather than persistent instructional copy.
 - **WHEN** visible explanatory copy is removed from the sidebar
 - **THEN** controls, space switcher items, tab rows, creation buttons, and reduced state cues retain accessibility labels, help text, or menu labels that expose their purpose to assistive technologies
 
-## ADDED Requirements
-
 ### Requirement: Sidebar actions are progressively disclosed
 The default macOS sidebar SHALL keep repeated tab and space rows visually quiet
 by showing secondary actions through hover, keyboard focus, context menu, or
@@ -126,3 +154,13 @@ focused pane without attempting to render exact split ratios in the tab row.
 #### Scenario: Split tab avoids notification dots
 - **WHEN** a non-focused pane inside a split tab needs attention
 - **THEN** the split indicator and tab row do not add notification dots, expose raw pane IDs, or add a separate sidebar attention block
+
+## REMOVED Requirements
+
+### Requirement: Sidebar matches space rail plus tab list
+**Reason**: The latest accepted sidebar direction is a single material sidebar
+column with a bottom borderless space switcher, not a separate vertical space
+rail plus tab-list layout.
+
+**Migration**: Use `Sidebar matches single-column space/tab navigation` as the
+normative sidebar IA requirement for default macOS shell UI work.

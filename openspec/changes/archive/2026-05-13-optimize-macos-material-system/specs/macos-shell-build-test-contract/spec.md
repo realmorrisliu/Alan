@@ -19,7 +19,7 @@ reintroduce hard-coded visual effects.
 
 #### Scenario: Elevation hierarchy is reviewed
 - **WHEN** active macOS shell radius, shadow, rim, or floating-surface treatment changes
-- **THEN** focused review confirms terminal surface, sidebar selection, titlebar controls, command launcher, Find bar, command palette, and collapsed sidebar panel use the shared semantic radius/elevation scale
+- **THEN** focused review confirms terminal surface, sidebar selection, titlebar controls, command launcher, Find bar, command input, and collapsed sidebar panel use the shared semantic radius/elevation scale
 
 #### Scenario: Light-mode shadow cleanliness is reviewed
 - **WHEN** active shell elevation changes are marked complete

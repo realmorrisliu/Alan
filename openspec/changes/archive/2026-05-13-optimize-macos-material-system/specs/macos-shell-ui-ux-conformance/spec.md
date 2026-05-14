@@ -9,7 +9,7 @@ standard materials, tonal surfaces, or stable opaque fills that preserve
 readability.
 
 #### Scenario: Sidebar uses functional material
-- **WHEN** the default shell renders the space rail, active-space tab list, and compact sidebar controls
+- **WHEN** the default shell renders the sidebar command entry, active-space tab list, bottom space switcher, and compact sidebar controls
 - **THEN** those navigation surfaces use a consistent functional material treatment with legible foreground content and restrained selection states
 
 #### Scenario: Terminal content avoids decorative glass
@@ -55,7 +55,7 @@ interaction state rather than decorate every translucent control.
 - **THEN** it may use a very light adaptive contact shadow that is smaller than floating overlay shadows and does not produce dirty dark halos in light mode
 
 #### Scenario: Floating surfaces carry stronger elevation
-- **WHEN** the command palette, pane Find bar, or collapsed sidebar panel floats above the shell
+- **WHEN** the command input, pane Find bar, or collapsed sidebar panel floats above the shell
 - **THEN** it uses semantic floating-surface shadows that are visible, focused, and adaptive while keeping the terminal content visually dominant
 
 #### Scenario: Radius scale remains role-based

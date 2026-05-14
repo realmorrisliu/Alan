@@ -128,8 +128,8 @@ steps, it is probably a plan rather than a spec.
   console UX contract.
 - [alan_shell_macos_contract.md](./alan_shell_macos_contract.md): macOS shell
   host product contract.
-- [alan_macos_shell_ui_ux.md](./alan_macos_shell_ui_ux.md): native macOS shell
-  UI/UX contract.
+- [alan_macos_shell_ui_ux.md](./alan_macos_shell_ui_ux.md): superseded bridge
+  pointing older links to the OpenSpec macOS shell UI/UX capabilities.
 
 ## Engineering And Repo Conventions
 
