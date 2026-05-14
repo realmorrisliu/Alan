@@ -518,7 +518,15 @@ impl WorkspaceResolver {
             return (parent.to_path_buf(), canonical.to_path_buf());
         }
 
-        (canonical.to_path_buf(), self.workspace_alan_dir(canonical))
+        let alan_dir = self.workspace_alan_dir(canonical);
+        if alan_dir == self.default_workspace_dir {
+            return (
+                self.default_workspace_dir.clone(),
+                self.default_workspace_dir.clone(),
+            );
+        }
+
+        (canonical.to_path_buf(), alan_dir)
     }
 
     /// Refresh the registry (if modified externally)
@@ -658,6 +666,30 @@ mod tests {
         assert_eq!(resolved.path, default_dir);
         assert_eq!(resolved.alan_dir, default_dir);
         assert_eq!(resolved.alias, Some("default".to_string()));
+    }
+
+    #[test]
+    fn test_resolve_or_create_home_path_uses_default_workspace() {
+        let temp = TempDir::new().unwrap();
+        let home_dir = temp.path().join("home");
+        std::fs::create_dir_all(&home_dir).unwrap();
+        let default_dir = home_dir.join(".alan");
+        std::fs::create_dir_all(&default_dir).unwrap();
+        let default_dir = std::fs::canonicalize(&default_dir).unwrap();
+
+        let registry = WorkspaceRegistry {
+            version: 1,
+            workspaces: vec![],
+        };
+
+        let resolver = WorkspaceResolver::with_registry(registry, default_dir.clone());
+        let resolved = resolver
+            .resolve_or_create(Some(home_dir.to_str().unwrap()))
+            .unwrap();
+
+        assert_eq!(resolved.path, default_dir);
+        assert_eq!(resolved.alan_dir, default_dir);
+        assert!(resolved.alan_dir.join("sessions").exists());
     }
 
     #[test]
