@@ -14,10 +14,12 @@ private enum ShellWindowPlacementTests {
         try verifiesDefaultFrameFitsSmallVisibleRegions()
         try verifiesZoomFrameUsesEntireVisibleRegion()
         try verifiesApproximateZoomFrameMatching()
+        try verifiesWorkspaceInsetFollowsPinnedSidebarProgress()
         try verifiesTitlebarToolsMoveToLeadingEdgeWhenTrafficLightsAreHidden()
         try verifiesFullscreenChromeMetricsHideTrafficLightReservation()
         try verifiesHiddenSidebarSurfaceHidesTrafficLights()
         try verifiesFloatingSidebarSurfaceRevealsTrafficLightsAtSurfaceOrigin()
+        try verifiesPinnedSidebarMotionMovesTrafficLightsWithSurfaceOrigin()
         try verifiesPendingFloatingSidebarRevealHidesTrafficLightsButReservesLayout()
         try verifiesFloatingSidebarRevealAfterPendingHiddenStateUsesSurfaceOrigin()
         try verifiesTitlebarPointOutsideContentViewCanTriggerDoubleClickZoom()
@@ -79,6 +81,28 @@ private enum ShellWindowPlacementTests {
         expect(
             !ShellWindowSizing.frame(notZoomed, approximatelyMatches: visibleFrame),
             "zoom frame matching must reject clearly different frames"
+        )
+    }
+
+    private static func verifiesWorkspaceInsetFollowsPinnedSidebarProgress() throws {
+        let expandedInsets = ShellWorkspaceMetrics.terminalSurfaceInsets(
+            expandedSidebarProgress: 1
+        )
+        let midTransitionInsets = ShellWorkspaceMetrics.terminalSurfaceInsets(
+            expandedSidebarProgress: 0.5
+        )
+        let collapsedInsets = ShellWorkspaceMetrics.terminalSurfaceInsets(
+            expandedSidebarProgress: 0
+        )
+
+        expect(expandedInsets.leading == 0, "expanded sidebar must remove terminal leading inset")
+        expect(
+            midTransitionInsets.leading == ShellWorkspaceMetrics.terminalSurfaceInset / 2,
+            "workspace leading inset must move continuously with pinned sidebar progress"
+        )
+        expect(
+            collapsedInsets.leading == ShellWorkspaceMetrics.terminalSurfaceInset,
+            "collapsed pinned sidebar must restore terminal leading inset"
         )
     }
 
@@ -165,6 +189,38 @@ private enum ShellWindowPlacementTests {
                 ShellSidebarMetrics.trafficLightTopInset
             ),
             "published chrome metrics must not include the floating surface offset; actual \(metrics.trafficLightGroupFrame.minY), expected \(ShellSidebarMetrics.trafficLightTopInset)"
+        )
+    }
+
+    private static func verifiesPinnedSidebarMotionMovesTrafficLightsWithSurfaceOrigin() throws {
+        let window = makeTestWindow()
+        let surfaceOrigin = CGPoint(x: -132, y: 0)
+
+        let metrics = AlanShellWindowPlacement.synchronizeChrome(
+            for: window,
+            chromeSurface: ShellWindowChromeSurface(
+                isVisible: true,
+                origin: surfaceOrigin,
+                width: 264
+            )
+        )
+        let actualFrame = actualTrafficLightFrame(in: window)
+
+        expect(
+            standardWindowButtons(in: window).allSatisfy { !$0.isHidden },
+            "pinned sidebar motion must keep native traffic lights visible until the surface is hidden"
+        )
+        expect(
+            actualFrame.minX.isApproximately(
+                ShellSidebarMetrics.trafficLightLeadingInset + surfaceOrigin.x
+            ),
+            "pinned sidebar traffic lights must move with the surface origin"
+        )
+        expect(
+            metrics.trafficLightGroupFrame.minX.isApproximately(
+                ShellSidebarMetrics.trafficLightLeadingInset
+            ),
+            "published pinned chrome metrics must remain local to the moving sidebar surface"
         )
     }
 

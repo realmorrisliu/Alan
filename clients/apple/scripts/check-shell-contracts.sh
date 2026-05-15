@@ -239,6 +239,36 @@ require_pattern \
     "shell runtime tests must prove sidebar status prioritizes exit and renderer health"
 
 require_pattern \
+    "clients/apple/alan-macos/Services/Shell/ShellWorkspaceManifestStore.swift" \
+    "shell-workspace-" \
+    "workspace restore authority must use the ShellWorkspaceManifest store filename"
+
+require_pattern \
+    "clients/apple/alan-macos/ShellHostController.swift" \
+    "case \\.workspaceManifest:" \
+    "shell host startup must have a workspace-manifest restore path"
+
+require_pattern \
+    "clients/apple/alan-macos/ShellHostController.swift" \
+    "ShellWorkspaceMaterializer\\.materialize" \
+    "workspace-manifest startup must materialize shell state from the manifest"
+
+require_pattern \
+    "clients/apple/alan-macos/App/AlanMacPrimaryShellOwner.swift" \
+    "startupMode: \\.workspaceManifest" \
+    "primary macOS shell must start from the workspace manifest"
+
+reject_pattern \
+    "clients/apple/alan-macos/App/AlanMacPrimaryShellOwner.swift" \
+    "startupMode: \\.fresh|startupMode: \\.restorePrevious|restoreShellState|ShellStatePersistenceStore" \
+    "primary macOS shell must not restore workspace identity from ShellStateSnapshot"
+
+require_pattern \
+    "clients/apple/scripts/test-shell-workspace-manifest.swift" \
+    "verifiesMissingManifestCreatesDefaultWithoutMigratingShellState" \
+    "workspace manifest tests must prove legacy ShellStateSnapshot is not migrated"
+
+require_pattern \
     "clients/apple/scripts/test-terminal-surface-controller.sh" \
     "TerminalSurfaceController.swift" \
     "surface controller behavior tests must compile the controller boundary"
@@ -565,13 +595,23 @@ require_pattern \
 
 require_pattern \
     "clients/apple/alan-macos/MacShellRootView.swift" \
-    "ShellWorkspaceView\\(host: host, hasExpandedSidebar: !isSidebarCollapsed\\)" \
-    "mac shell root must pass expanded sidebar state into workspace spacing"
+    "pinnedSidebarPresentationProgress" \
+    "pinned sidebar collapse must be driven by continuous presentation progress"
 
 require_pattern \
     "clients/apple/alan-macos/Views/Shell/ShellWorkspaceView.swift" \
-    "hasExpandedSidebar: Bool" \
-    "workspace view must expose sidebar-aware terminal surface spacing"
+    "expandedSidebarProgress" \
+    "workspace view must expose continuous sidebar progress for terminal surface spacing"
+
+require_pattern \
+    "clients/apple/alan-macos/MacShellRootView.swift" \
+    "frame\\(width: sidebarPinnedVisibleWidth" \
+    "pinned sidebar must stay mounted while visible width animates"
+
+reject_pattern \
+    "clients/apple/alan-macos/MacShellRootView.swift" \
+    "if !isSidebarCollapsed \\{" \
+    "pinned sidebar must not be conditionally inserted or removed"
 
 require_pattern \
     "clients/apple/alan-macos/TerminalPaneView.swift" \
@@ -590,8 +630,63 @@ reject_pattern \
 
 require_pattern \
     "clients/apple/alan-macos/Support/ShellDesignTokens.swift" \
-    "terminalSurfaceInsets\\(hasExpandedSidebar" \
-    "terminal workspace surface insets must account for expanded sidebar adjacency"
+    "terminalSurfaceInsets\\(expandedSidebarProgress" \
+    "terminal workspace surface insets must support continuous sidebar progress"
+
+require_pattern \
+    "clients/apple/alan-macos/Support/ShellSidebarSwipeMonitor.swift" \
+    "struct ShellSpacePagerState" \
+    "space swipes must use a root pager state instead of a sidebar-only transition"
+
+require_pattern \
+    "clients/apple/alan-macos/Support/ShellSidebarSwipeMonitor.swift" \
+    "sourceIndex" \
+    "space pager state must track the authoritative source space index"
+
+require_pattern \
+    "clients/apple/alan-macos/Support/ShellSidebarSwipeMonitor.swift" \
+    "targetIndex" \
+    "space pager state must track the adjacent target space index"
+
+require_pattern \
+    "clients/apple/alan-macos/Support/ShellSidebarSwipeMonitor.swift" \
+    "settlementPhase" \
+    "space pager state must model drag, commit, and cancel settlement phases"
+
+require_pattern \
+    "clients/apple/alan-macos/MacShellRootView.swift" \
+    "spacePager" \
+    "mac shell root must own space pager state for sidebar and workspace motion"
+
+require_pattern \
+    "clients/apple/alan-macos/MacShellRootView.swift" \
+    "spacePage\\(index:" \
+    "mac shell root must render whole space pages from the shared pager offset"
+
+require_pattern \
+    "clients/apple/alan-macos/Views/Shell/ShellWorkspaceView.swift" \
+    "spaceID: String\\?" \
+    "workspace view must accept an explicit space for pager preview pages"
+
+require_pattern \
+    "clients/apple/alan-macos/TerminalPaneView.swift" \
+    "selectedPaneID: String\\?" \
+    "terminal pane view must render preview pages without borrowing selected-pane state"
+
+reject_pattern \
+    "clients/apple/alan-macos/Support/ShellSidebarSwipeMonitor.swift" \
+    "ShellSpaceTransition" \
+    "space swipe support must not reintroduce the sidebar-only transition model"
+
+reject_pattern \
+    "clients/apple/alan-macos/MacShellRootView.swift" \
+    "ShellSpaceTransition|spaceTransition" \
+    "mac shell root must use shared space pager state instead of sidebar-only transition state"
+
+reject_pattern \
+    "clients/apple/alan-macos/Views/Shell/ShellSidebarView.swift" \
+    "ShellSidebarSpaceHeaderPager|activeTransition|sourceOffset\\(|targetOffset\\(" \
+    "sidebar view must not own independent header/tab-list pager semantics"
 
 require_pattern \
     "clients/apple/scripts/test-shell-window-placement.swift" \
@@ -717,6 +812,31 @@ require_pattern \
     "clients/apple/alan-macos/TerminalHostView.swift" \
     "weak var activationDelegate" \
     "registry-owned terminal host views must not strongly retain activation owners"
+
+require_pattern \
+    "clients/apple/alan-macos/ShellHostController.swift" \
+    "targetPaneID\\(forSpaceID: spaceID\\)" \
+    "sidebar space selection must resolve a target pane before committing selection"
+
+require_pattern \
+    "clients/apple/alan-macos/ShellHostController.swift" \
+    "targetPaneID\\(forTabID: tabID, in: selectedSpace\\)" \
+    "sidebar tab selection must resolve a target pane before committing selection"
+
+require_pattern \
+    "clients/apple/alan-macos/ShellHostController.swift" \
+    "terminalRuntimeRegistry\\.requestFocus\\(for: paneID\\)" \
+    "committed sidebar selection must request terminal focus through the runtime registry"
+
+reject_pattern \
+    "clients/apple/alan-macos/ShellHostController.swift" \
+    "selectedSpaceID = spaceID" \
+    "sidebar space selection must not be view-local-only"
+
+reject_pattern \
+    "clients/apple/alan-macos/ShellHostController.swift" \
+    "selectedTabID = tabID" \
+    "sidebar tab selection must not be view-local-only"
 
 require_pattern \
     "clients/apple/alan-macos/TerminalHostView.swift" \

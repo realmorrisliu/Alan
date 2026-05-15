@@ -204,6 +204,53 @@ extension ShellStateSnapshot {
         )
     }
 
+    func deletingSpace(
+        _ spaceID: String,
+        defaultWorkingDirectory: String = defaultShellWorkingDirectory()
+    ) throws -> ShellStateMutationResult {
+        guard let targetSpace = space(spaceID: spaceID) else {
+            throw ShellStateMutationError.spaceNotFound
+        }
+
+        let removedPaneIDs = Set(targetSpace.tabs.flatMap(\.paneTree.paneIDs))
+        let remainingSpaces = spaces.filter { $0.spaceID != spaceID }
+        let remainingPanes = panes.filter { !removedPaneIDs.contains($0.paneID) }
+
+        guard !remainingSpaces.isEmpty else {
+            let defaultState = ShellStateSnapshot.bootstrapDefault(
+                windowID: windowID,
+                workingDirectory: defaultWorkingDirectory
+            )
+            return ShellStateMutationResult(
+                state: defaultState,
+                spaceID: defaultState.focusedSpaceID,
+                tabID: defaultState.focusedTabID,
+                paneID: defaultState.focusedPaneID
+            )
+        }
+
+        let focusedPaneID = remainingPanes.first?.paneID
+        let focusedPane = focusedPaneID.flatMap { paneID in
+            remainingPanes.first { $0.paneID == paneID }
+        }
+        let nextState = ShellStateSnapshot(
+            contractVersion: contractVersion,
+            windowID: windowID,
+            focusedSpaceID: focusedPane?.spaceID ?? remainingSpaces.first?.spaceID,
+            focusedTabID: focusedPane?.tabID,
+            focusedPaneID: focusedPaneID,
+            spaces: rebuildingAttention(in: remainingSpaces, panes: remainingPanes),
+            panes: remainingPanes
+        )
+
+        return ShellStateMutationResult(
+            state: nextState,
+            spaceID: nextState.focusedSpaceID,
+            tabID: nextState.focusedTabID,
+            paneID: nextState.focusedPaneID
+        )
+    }
+
     func openingTab(
         launchTarget: ShellLaunchTarget,
         in requestedSpaceID: String?,
@@ -762,9 +809,6 @@ extension ShellStateSnapshot {
     }
 
     func closingTab(_ tabID: String) throws -> ShellStateMutationResult {
-        guard totalTabCount > 1 else {
-            throw ShellStateMutationError.lastTab
-        }
         guard let targetSpace = spaces.first(where: { space in
             space.tabs.contains(where: { $0.tabID == tabID })
         }),
@@ -774,11 +818,8 @@ extension ShellStateSnapshot {
         }
 
         let removedPaneIDs = Set(targetTab.paneTree.paneIDs)
-        let nextSpaces = spaces.compactMap { space -> ShellSpace? in
+        let nextSpaces = spaces.map { space -> ShellSpace in
             let remainingTabs = space.tabs.filter { $0.tabID != tabID }
-            guard !remainingTabs.isEmpty else {
-                return space.spaceID == targetSpace.spaceID ? nil : space
-            }
             return ShellSpace(
                 spaceID: space.spaceID,
                 title: space.title,
@@ -787,18 +828,32 @@ extension ShellStateSnapshot {
             )
         }
         let nextPanes = panes.filter { !removedPaneIDs.contains($0.paneID) }
-        let preferredPaneID = nextPanes.first(where: { $0.spaceID == targetSpace.spaceID })?.paneID
+        let targetSpaceAfterClose = nextSpaces.first { $0.spaceID == targetSpace.spaceID }
+        let preferredPaneID =
+            targetSpaceAfterClose?.tabs
+                .flatMap(\.paneTree.paneIDs)
+                .first { paneID in nextPanes.contains { $0.paneID == paneID } }
+            ?? nextPanes.first(where: { $0.spaceID == targetSpace.spaceID })?.paneID
             ?? nextPanes.first?.paneID
-        let nextState = replacing(
+        let focusedPane = preferredPaneID.flatMap { paneID in
+            nextPanes.first { $0.paneID == paneID }
+        }
+        let focusedSpaceID = focusedPane?.spaceID ?? targetSpaceAfterClose?.spaceID ?? nextSpaces.first?.spaceID
+        let focusedTabID = focusedPane?.tabID
+        let nextState = ShellStateSnapshot(
+            contractVersion: contractVersion,
+            windowID: windowID,
+            focusedSpaceID: focusedSpaceID,
+            focusedTabID: focusedTabID,
+            focusedPaneID: preferredPaneID,
             spaces: rebuildingAttention(in: nextSpaces, panes: nextPanes),
-            panes: nextPanes,
-            focusedPaneID: preferredPaneID
+            panes: nextPanes
         )
 
         return ShellStateMutationResult(
             state: nextState,
             spaceID: nextState.focusedSpaceID,
-            tabID: tabID,
+            tabID: nextState.focusedTabID,
             paneID: nextState.focusedPaneID
         )
     }

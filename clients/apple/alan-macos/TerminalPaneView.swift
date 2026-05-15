@@ -3,7 +3,24 @@ import SwiftUI
 #if os(macOS)
 struct TerminalPaneView: View {
     @ObservedObject var host: ShellHostController
+    let tab: ShellTab?
+    let spaceID: String?
+    let selectedPaneID: String?
     let terminalSurfaceInsets: EdgeInsets
+
+    init(
+        host: ShellHostController,
+        tab: ShellTab? = nil,
+        spaceID: String? = nil,
+        selectedPaneID: String? = nil,
+        terminalSurfaceInsets: EdgeInsets
+    ) {
+        self.host = host
+        self.tab = tab
+        self.spaceID = spaceID
+        self.selectedPaneID = selectedPaneID
+        self.terminalSurfaceInsets = terminalSurfaceInsets
+    }
 
     var body: some View {
         paneCanvas
@@ -13,26 +30,55 @@ struct TerminalPaneView: View {
 
     private var paneCanvas: some View {
         Group {
-            if let paneTree = host.selectedTabPaneTree {
+            if let paneTree = displayTab?.paneTree {
                 ShellPaneTreeLayoutView(
                     node: paneTree,
-                    host: host
+                    host: host,
+                    selectedPaneID: displaySelectedPaneID
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             } else {
-                VStack(alignment: .leading, spacing: 5) {
-                    Text("No tab selected")
-                        .font(.system(size: 18, weight: .semibold))
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Empty Space")
+                        .font(.system(size: 17, weight: .semibold))
                         .foregroundStyle(ShellPalette.ink)
-                    Text("Open a tab to start a new shell here.")
-                        .font(.system(size: 14, weight: .medium))
+                    Text("Start a terminal in this space.")
+                        .font(.system(size: 13, weight: .medium))
                         .foregroundStyle(ShellPalette.mutedInk)
+                    Button {
+                        _ = host.openTerminalTab(in: displaySpaceID)
+                    } label: {
+                        Label("New Tab", systemImage: "plus")
+                            .font(.system(size: 12, weight: .semibold))
+                            .padding(.horizontal, 11)
+                            .frame(height: 28)
+                    }
+                    .buttonStyle(.plain)
+                    .background {
+                        ShellMaterialShape(
+                            role: .controlGlassHover,
+                            shape: RoundedRectangle(cornerRadius: ShellRadii.control, style: .continuous)
+                        )
+                    }
+                    .help("Create a tab in this space")
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
                 .padding(28)
             }
         }
         .modifier(ShellTerminalSurfaceFrame())
+    }
+
+    private var displayTab: ShellTab? {
+        tab ?? host.selectedTab
+    }
+
+    private var displaySpaceID: String? {
+        spaceID ?? host.selectedSpace?.spaceID
+    }
+
+    private var displaySelectedPaneID: String? {
+        selectedPaneID ?? host.selectedPane?.paneID
     }
 
     private var runtimeCard: some View {
@@ -362,6 +408,7 @@ private struct ShellTerminalSurfaceFrame: ViewModifier {
 private struct ShellPaneTreeLayoutView: View {
     let node: ShellPaneTreeNode
     @ObservedObject var host: ShellHostController
+    let selectedPaneID: String?
 
     var body: some View {
         switch node.kind {
@@ -371,7 +418,7 @@ private struct ShellPaneTreeLayoutView: View {
                 ShellTerminalLeafView(
                     pane: pane,
                     bootProfile: host.bootProfile(for: pane),
-                    isSelected: host.selectedPane?.paneID == pane.paneID,
+                    isSelected: selectedPaneID == pane.paneID,
                     runtimeRegistry: host.terminalRuntimeRegistry,
                     activationDelegate: host,
                     onWorkspaceCommand: { command in
@@ -390,7 +437,7 @@ private struct ShellPaneTreeLayoutView: View {
                 )
             }
         case .split:
-            ShellSplitLayoutView(node: node, host: host)
+            ShellSplitLayoutView(node: node, host: host, selectedPaneID: selectedPaneID)
         }
     }
 }
@@ -398,6 +445,7 @@ private struct ShellPaneTreeLayoutView: View {
 private struct ShellSplitLayoutView: View {
     let node: ShellPaneTreeNode
     @ObservedObject var host: ShellHostController
+    let selectedPaneID: String?
     @State private var dragStartRatio: Double?
     @State private var dragPreviewRatio: Double?
 
@@ -410,20 +458,36 @@ private struct ShellSplitLayoutView: View {
             GeometryReader { proxy in
                 if node.direction == .vertical {
                     HStack(spacing: 0) {
-                        ShellPaneTreeLayoutView(node: children[0], host: host)
+                        ShellPaneTreeLayoutView(
+                            node: children[0],
+                            host: host,
+                            selectedPaneID: selectedPaneID
+                        )
                             .frame(width: primaryLength(total: proxy.size.width))
                         ShellSplitDividerView(direction: .vertical)
                             .gesture(resizeGesture(totalLength: proxy.size.width))
-                        ShellPaneTreeLayoutView(node: children[1], host: host)
+                        ShellPaneTreeLayoutView(
+                            node: children[1],
+                            host: host,
+                            selectedPaneID: selectedPaneID
+                        )
                             .frame(width: secondaryLength(total: proxy.size.width))
                     }
                 } else {
                     VStack(spacing: 0) {
-                        ShellPaneTreeLayoutView(node: children[0], host: host)
+                        ShellPaneTreeLayoutView(
+                            node: children[0],
+                            host: host,
+                            selectedPaneID: selectedPaneID
+                        )
                             .frame(height: primaryLength(total: proxy.size.height))
                         ShellSplitDividerView(direction: .horizontal)
                             .gesture(resizeGesture(totalLength: proxy.size.height))
-                        ShellPaneTreeLayoutView(node: children[1], host: host)
+                        ShellPaneTreeLayoutView(
+                            node: children[1],
+                            host: host,
+                            selectedPaneID: selectedPaneID
+                        )
                             .frame(height: secondaryLength(total: proxy.size.height))
                     }
                 }
@@ -445,7 +509,11 @@ private struct ShellSplitLayoutView: View {
             if index > 0 {
                 ShellSplitDividerView(direction: node.direction ?? .vertical)
             }
-            ShellPaneTreeLayoutView(node: child, host: host)
+            ShellPaneTreeLayoutView(
+                node: child,
+                host: host,
+                selectedPaneID: selectedPaneID
+            )
         }
     }
 

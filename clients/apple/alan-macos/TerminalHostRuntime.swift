@@ -600,6 +600,27 @@ struct TerminalPaneMetadataSnapshot: Equatable {
     let processExited: Bool
     let lastCommandExitCode: Int?
     let lastUpdatedAt: Date?
+    let activeTaskState: ShellTabActiveTaskState?
+
+    init(
+        title: String?,
+        workingDirectory: String?,
+        summary: String?,
+        attention: ShellAttentionState,
+        processExited: Bool,
+        lastCommandExitCode: Int?,
+        lastUpdatedAt: Date?,
+        activeTaskState: ShellTabActiveTaskState? = nil
+    ) {
+        self.title = title
+        self.workingDirectory = workingDirectory
+        self.summary = summary
+        self.attention = attention
+        self.processExited = processExited
+        self.lastCommandExitCode = lastCommandExitCode
+        self.lastUpdatedAt = lastUpdatedAt
+        self.activeTaskState = activeTaskState
+    }
 
     static let placeholder = TerminalPaneMetadataSnapshot(
         title: nil,

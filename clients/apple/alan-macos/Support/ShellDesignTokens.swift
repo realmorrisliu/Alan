@@ -243,13 +243,18 @@ enum ShellSidebarMetrics {
 enum ShellWorkspaceMetrics {
     static let terminalSurfaceInset: CGFloat = 8
 
-    static func terminalSurfaceInsets(hasExpandedSidebar: Bool) -> EdgeInsets {
-        EdgeInsets(
+    static func terminalSurfaceInsets(expandedSidebarProgress: CGFloat) -> EdgeInsets {
+        let progress = min(max(expandedSidebarProgress, 0), 1)
+        return EdgeInsets(
             top: terminalSurfaceInset,
-            leading: hasExpandedSidebar ? 0 : terminalSurfaceInset,
+            leading: terminalSurfaceInset * (1 - progress),
             bottom: terminalSurfaceInset,
             trailing: terminalSurfaceInset
         )
+    }
+
+    static func terminalSurfaceInsets(hasExpandedSidebar: Bool) -> EdgeInsets {
+        terminalSurfaceInsets(expandedSidebarProgress: hasExpandedSidebar ? 1 : 0)
     }
 }
 

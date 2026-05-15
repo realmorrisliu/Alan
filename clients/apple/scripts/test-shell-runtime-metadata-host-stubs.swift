@@ -10,6 +10,7 @@ protocol TerminalHostActivationDelegate: AnyObject {
 @MainActor
 final class AlanTerminalHostNSView: NSView {
     private(set) var teardownCount = 0
+    private(set) var focusCount = 0
 
     func configure(
         pane: ShellPane?,
@@ -41,6 +42,8 @@ final class AlanTerminalHostNSView: NSView {
 
     func dismissFindInteraction(refocusTerminal: Bool = true) {}
 
-    func focusTerminal() {}
+    func focusTerminal() {
+        focusCount += 1
+    }
 }
 #endif

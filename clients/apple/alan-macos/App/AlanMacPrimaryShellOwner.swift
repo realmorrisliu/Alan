@@ -14,7 +14,7 @@ final class AlanMacPrimaryShellOwner: ObservableObject {
         host = ShellHostController.live(
             fileManager: fileManager,
             windowContext: windowContext,
-            startupMode: .fresh
+            startupMode: .workspaceManifest
         )
     }
 }

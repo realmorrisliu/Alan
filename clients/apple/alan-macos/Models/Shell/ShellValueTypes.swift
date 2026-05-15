@@ -105,6 +105,24 @@ enum ShellLaunchTarget: String, Codable, CaseIterable {
     case alan
 }
 
+enum ShellTabActiveTaskState: String, Codable, Equatable, CaseIterable {
+    case inactive
+    case foregroundCommand = "foreground_command"
+    case alanRunning = "alan_running"
+    case alanPendingYield = "alan_pending_yield"
+    case alanSession = "alan_session"
+    case unknown
+
+    var protectsFromPruning: Bool {
+        switch self {
+        case .inactive:
+            return false
+        case .foregroundCommand, .alanRunning, .alanPendingYield, .alanSession, .unknown:
+            return true
+        }
+    }
+}
+
 struct ShellProcessBinding: Codable, Equatable {
     let program: String
     let argvPreview: [String]?

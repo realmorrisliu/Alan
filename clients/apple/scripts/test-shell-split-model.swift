@@ -19,7 +19,7 @@ private enum ShellSplitModelTests {
         try verifiesPaneScopedCloseRemovesSelectedPane()
         try verifiesPaneScopedCloseKeepsInactivePaneTargeting()
         try verifiesPaneScopedCloseClosesSinglePaneTab()
-        try verifiesPaneScopedClosePreservesFinalPane()
+        try verifiesPaneScopedCloseLeavesFinalSpaceEmpty()
         try verifiesPaneAllocationSkipsReservedRuntimeIDs()
         try verifiesSplitDecodeRequiresPersistedRatio()
         print("Shell split model tests passed.")
@@ -215,15 +215,18 @@ private enum ShellSplitModelTests {
         expect(result.state.focusedPaneID == "pane_1", "single-pane tab close must focus a remaining pane")
     }
 
-    private static func verifiesPaneScopedClosePreservesFinalPane() throws {
+    private static func verifiesPaneScopedCloseLeavesFinalSpaceEmpty() throws {
         let state = ShellStateSnapshot.bootstrapDefault(workingDirectory: "/tmp")
 
-        do {
-            _ = try state.closingPane("pane_1")
-            expect(false, "closing the final pane in the final tab must throw")
-        } catch ShellStateMutationError.lastTab {
-            // Expected.
-        }
+        let result = try state.closingPane("pane_1")
+
+        expect(result.state.spaces.count == 1, "closing the final pane must keep the space")
+        expect(result.state.spaces.first?.spaceID == "space_main", "closing the final pane must keep space identity")
+        expect(result.state.spaces.first?.tabs.isEmpty == true, "closing the final pane must leave the space empty")
+        expect(result.state.panes.isEmpty, "closing the final pane must remove the pane")
+        expect(result.state.focusedSpaceID == "space_main", "closing the final pane must keep the empty space focused")
+        expect(result.state.focusedTabID == nil, "closing the final pane must clear tab focus")
+        expect(result.state.focusedPaneID == nil, "closing the final pane must clear pane focus")
     }
 
     private static func verifiesPaneAllocationSkipsReservedRuntimeIDs() throws {
