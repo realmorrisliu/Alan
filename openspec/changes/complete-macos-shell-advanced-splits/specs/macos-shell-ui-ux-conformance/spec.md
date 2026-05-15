@@ -5,7 +5,7 @@ Split zoom UI SHALL make the zoomed state and escape path clear without adding a
 persistent pane-management toolbar.
 
 #### Scenario: Pane zoomed
-- **WHEN** a pane is zoomed
+- **WHEN** a PaneSlot is zoomed
 - **THEN** the UI provides a compact way to unzoom while keeping the terminal content dominant
 
 #### Scenario: Toolbar remains restrained
@@ -25,7 +25,7 @@ terminal text selection reliable.
 - **THEN** the movement affordance is visually distinct from terminal text selection regions
 
 ### Requirement: Copy paste and search surfaces are native and pane scoped
-Copy, paste, and search command UI SHALL feel native, target the focused pane,
+Copy, paste, and search command UI SHALL feel native, target the focused PaneSlot,
 and avoid displacing the sidebar, toolbar, or split layout.
 
 #### Scenario: Search opens
@@ -33,5 +33,5 @@ and avoid displacing the sidebar, toolbar, or split layout.
 - **THEN** the search UI appears as a compact pane-scoped terminal tool
 
 #### Scenario: Copy paste available
-- **WHEN** the focused terminal pane can copy or paste
-- **THEN** native menu and keyboard commands target that pane without exposing debug routing details
+- **WHEN** the focused PaneSlot mounts terminal content that can copy or paste
+- **THEN** native menu and keyboard commands target that terminal content without exposing debug routing details
