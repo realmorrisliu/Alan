@@ -31,10 +31,11 @@
 - [x] 4.3 Update shell contract checks so default shell code cannot reintroduce view-local-only sidebar selection or full-window space pager semantics.
 - [x] 4.4 Run focused Apple checks: `clients/apple/scripts/test-shell-runtime-metadata.sh`, `clients/apple/scripts/test-shell-sidebar-swipe-monitor.sh`, `clients/apple/scripts/test-shell-window-placement.sh`, and `clients/apple/scripts/check-shell-contracts.sh`.
 - [ ] 4.5 Build or run the macOS app and capture manual verification notes or screenshots for pinned collapse/expand, floating reveal/hide, tab click persistence, space click persistence, and space swipe pager motion.
+  - 2026-05-15: macOS Debug build passed with project-local DerivedData and manual verification notes were added in `manual-verification.md`. Live visual interaction was not performed in this run, so this remains unchecked for human acceptance.
 
 ## 5. OpenSpec And Review Readiness
 
 - [x] 5.1 Keep `proposal.md`, `design.md`, `tasks.md`, and all delta specs aligned if implementation discoveries change the contract.
 - [x] 5.2 Run `openspec validate refine-macos-sidebar-interactions --strict` after spec edits and after implementation.
 - [x] 5.3 Run `openspec validate --all --strict` before opening or updating a PR.
-- [ ] 5.4 Prepare archive readiness notes after implementation so the delta specs can be synced into `openspec/specs/` before archiving.
+- [x] 5.4 Prepare archive readiness notes after implementation so the delta specs can be synced into `openspec/specs/` before archiving.

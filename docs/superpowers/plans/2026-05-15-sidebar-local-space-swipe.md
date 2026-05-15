@@ -65,7 +65,7 @@
   include only the sidebar's active-space header and active-space tab list. The
   command input, bottom space switcher, sidebar material surface, sidebar chrome,
   macOS traffic-light placement, and workspace terminal surface SHALL remain
-  visually fixed while the gesture is active. Alan SHALL avoid mutating durable
+  visually fixed while the gesture is active. alan SHALL avoid mutating durable
   shell selection until the gesture commits.
 
   #### Scenario: Gesture-tracked sidebar content pager

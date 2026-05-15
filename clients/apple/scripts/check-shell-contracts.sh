@@ -664,19 +664,59 @@ require_pattern \
     "space pager state must model drag, commit, and cancel settlement phases"
 
 require_pattern \
-    "clients/apple/alan-macos/MacShellRootView.swift" \
+    "clients/apple/alan-macos/Views/Shell/ShellSidebarView.swift" \
     "spacePager" \
-    "mac shell root must own space pager state for sidebar and workspace motion"
+    "sidebar view must own sidebar-local space pager state"
+
+require_pattern \
+    "clients/apple/alan-macos/Views/Shell/ShellSidebarView.swift" \
+    "ShellSidebarSwipeMonitor\\(onUpdate: handleSpaceSwipe\\)" \
+    "sidebar view must install the sidebar swipe monitor as its input adapter"
+
+require_pattern \
+    "clients/apple/alan-macos/Views/Shell/ShellSidebarView.swift" \
+    "spaceContentPager" \
+    "sidebar view must render sidebar-local space content pager pages"
+
+require_pattern \
+    "clients/apple/alan-macos/Views/Shell/ShellSidebarView.swift" \
+    "commandLauncher" \
+    "sidebar-local pager motion must keep the command launcher owned by the sidebar"
+
+require_pattern \
+    "clients/apple/alan-macos/Views/Shell/ShellSidebarView.swift" \
+    "spaceDock" \
+    "sidebar-local pager motion must keep the bottom space dock owned by the sidebar"
+
+reject_pattern \
+    "clients/apple/alan-macos/MacShellRootView.swift" \
+    "spacePager|spacePagerPages|spacePage\\(index:" \
+    "mac shell root must not reintroduce root full-window space pager semantics"
 
 require_pattern \
     "clients/apple/alan-macos/MacShellRootView.swift" \
-    "spacePage\\(index:" \
-    "mac shell root must render whole space pages from the shared pager offset"
+    "HStack\\(spacing: 0\\)" \
+    "mac shell root must keep a stable sidebar/workspace HStack layout"
+
+require_pattern \
+    "clients/apple/alan-macos/MacShellRootView.swift" \
+    "ShellWorkspaceView\\(" \
+    "mac shell root must render the committed workspace surface"
 
 require_pattern \
     "clients/apple/alan-macos/Views/Shell/ShellWorkspaceView.swift" \
-    "spaceID: String\\?" \
-    "workspace view must accept an explicit space for pager preview pages"
+    "tab: host\\.selectedTab" \
+    "workspace view must render committed host tab selection"
+
+require_pattern \
+    "clients/apple/alan-macos/Views/Shell/ShellWorkspaceView.swift" \
+    "spaceID: host\\.selectedSpace\\?\\.spaceID" \
+    "workspace view must render committed host space selection"
+
+require_pattern \
+    "clients/apple/alan-macos/Views/Shell/ShellWorkspaceView.swift" \
+    "selectedPaneID: host\\.selectedPane\\?\\.paneID" \
+    "workspace view must render committed host pane selection"
 
 require_pattern \
     "clients/apple/alan-macos/TerminalPaneView.swift" \
