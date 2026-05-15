@@ -13,7 +13,7 @@ are changed.
 
 #### Scenario: Space pager gesture tested
 - **WHEN** horizontal space swipe behavior changes
-- **THEN** focused tests cover horizontal intent lock, vertical scroll pass-through, edge resistance, commit threshold, cancel threshold, phaseful release, phase-less idle release, and fast flick velocity commit
+- **THEN** focused tests cover undecided-axis buffering, horizontal intent lock, vertical scroll pass-through, edge resistance, commit threshold, cancel threshold, phaseful release, phase-less idle release, and fast flick velocity commit
 
 #### Scenario: Pinned sidebar motion reviewed
 - **WHEN** pinned sidebar collapse or expansion behavior changes

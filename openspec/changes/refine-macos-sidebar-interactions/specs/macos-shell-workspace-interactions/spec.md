@@ -49,6 +49,11 @@ preserving terminal runtime identity.
 - **AND** movement is rendered directly from horizontal finger translation instead of being amplified, quantized, or shaped by the commit threshold
 - **AND** vertical tab-list scrolling does not move while horizontal intent is locked
 
+#### Scenario: Undecided axis buffers mixed deltas
+- **WHEN** a sidebar scroll gesture has not yet crossed the horizontal or vertical intent threshold
+- **THEN** alan buffers the initial mixed deltas instead of applying partial vertical tab-list scrolling or horizontal pager movement
+- **AND** the gesture is routed only after horizontal or vertical intent is locked
+
 #### Scenario: Pager reaches sequence edge
 - **WHEN** a user swipes past the first or last available space
 - **THEN** alan applies bounded edge resistance rather than wrapping unexpectedly or showing a nonexistent space page
