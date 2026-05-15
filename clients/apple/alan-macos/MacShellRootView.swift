@@ -13,7 +13,7 @@ struct MacShellRootView: View {
     @State private var floatingSidebarTrafficLightRevealToken = 0
     @State private var isSpaceSwipeGestureLocked = false
     @State private var pinnedSidebarPresentationProgress: CGFloat
-    @State private var spacePager: ShellSpacePagerState?
+    @State private var spacePager: ShellSidebarSpaceContentPagerState?
     @State private var spacePagerToken = 0
     @State private var spacePagerPageWidth: CGFloat = 1
     @State private var spacePagerPageSelectedPaneIDs: [Int: String] = [:]
@@ -85,7 +85,7 @@ struct MacShellRootView: View {
             spacePagerPageSelectedPaneIDs = [
                 sourceIndex: host.selectedPane?.paneID,
             ].compactMapValues { $0 }
-            spacePager = ShellSpacePagerState(
+            spacePager = ShellSidebarSpaceContentPagerState(
                 sourceIndex: sourceIndex,
                 targetIndex: nil,
                 dragOffset: 0,
@@ -111,7 +111,7 @@ struct MacShellRootView: View {
                     spacePagerPageSelectedPaneIDs[targetIndex]
                     ?? firstPaneID(forSpaceAt: targetIndex)
             }
-            spacePager = ShellSpacePagerState(
+            spacePager = ShellSidebarSpaceContentPagerState(
                 sourceIndex: sourceIndex,
                 targetIndex: targetIndex,
                 dragOffset: dragOffset,
