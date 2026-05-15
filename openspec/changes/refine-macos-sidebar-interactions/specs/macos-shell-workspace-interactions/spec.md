@@ -41,11 +41,14 @@ shell selection until the gesture commits.
 - **THEN** the current sidebar space header and tab list move with the gesture while the adjacent space content previews from the side
 - **AND** the space header and tab list use the same full sidebar content page width for horizontal offsets
 - **AND** movement is rendered directly from horizontal finger translation instead of being amplified, quantized, or shaped by the commit threshold
+- **AND** the space header pager is not narrowed by row padding or trailing creation controls
+- **AND** the sidebar pager avoids static left or right padding gaps while pages move
 - **AND** the command input remains fixed
 - **AND** the bottom space switcher remains fixed as the stable space navigation control
 - **AND** the workspace terminal surface remains visually stable on the original selected space
 - **AND** visible terminal panes keep their runtime identities instead of being restarted, duplicated, or horizontally offset as a side effect of the drag
 - **AND** vertical tab-list scrolling does not move while horizontal intent is locked
+- **AND** later vertical finger movement during the same horizontal swipe does not move the tab list vertically
 
 #### Scenario: Undecided axis buffers mixed deltas
 - **WHEN** a sidebar scroll gesture has not yet crossed the horizontal or vertical intent threshold
@@ -62,11 +65,13 @@ shell selection until the gesture commits.
 - **THEN** alan commits the target space through the shell controller selection and focus path
 - **AND** the sidebar content pager settles smoothly to the committed space without being reverted by concurrent runtime updates
 - **AND** the workspace terminal surface and terminal focus follow the committed space after shell selection commits
+- **AND** release is honored even when the macOS ended or momentum-start event carries zero scroll delta
 
 #### Scenario: Cancel preserves focus and layout
 - **WHEN** the user releases a space swipe before the commit threshold
 - **THEN** alan animates the sidebar content pager back to the original space
 - **AND** selected space, selected tab, terminal focus, split tree, and divider ratios remain unchanged
+- **AND** release is honored even when the macOS ended or momentum-start event carries zero scroll delta
 
 #### Scenario: Phaseful gesture waits for real release
 - **WHEN** a user pauses a phaseful horizontal trackpad swipe while their fingers remain on the trackpad
