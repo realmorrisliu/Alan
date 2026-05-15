@@ -23,4 +23,6 @@ are changed.
 
 #### Scenario: Floating sidebar chrome reviewed
 - **WHEN** collapsed floating-sidebar reveal or hide behavior changes
-- **THEN** focused checks or manual notes verify narrow edge hover, hover retention, stable terminal workspace geometry, native traffic-light behavior, and no visible traffic-light jump from the non-floating corner
+- **THEN** focused checks or manual notes verify narrow edge hover, window-level hover retention, stable terminal workspace geometry, native traffic-light behavior, and no visible traffic-light jump from the non-floating corner
+- **AND** verification covers a visible-frame-zoomed window where the pointer moves through the left window resize frame without causing the revealed floating sidebar to auto-hide
+- **AND** verification confirms that native window resizing still works from the left resize frame

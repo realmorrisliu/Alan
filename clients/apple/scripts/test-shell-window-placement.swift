@@ -22,6 +22,7 @@ private enum ShellWindowPlacementTests {
         try verifiesPinnedSidebarMotionMovesTrafficLightsWithSurfaceOrigin()
         try verifiesPendingFloatingSidebarRevealHidesTrafficLightsButReservesLayout()
         try verifiesFloatingSidebarRevealAfterPendingHiddenStateUsesSurfaceOrigin()
+        try verifiesCollapsedSidebarRetentionIncludesLeftResizeFrame()
         try verifiesTitlebarPointOutsideContentViewCanTriggerDoubleClickZoom()
         try verifiesTerminalSurfaceTitleBarDoesNotTriggerDoubleClickZoom()
         try verifiesTrafficLightControlsDoNotTriggerDoubleClickZoom()
@@ -285,6 +286,40 @@ private enum ShellWindowPlacementTests {
                 ShellSidebarMetrics.trafficLightTopInset + surfaceOrigin.y
             ),
             "floating sidebar traffic lights must not flash at the non-floating y position after pending reveal; actual \(actualFrame.minY), expected \(ShellSidebarMetrics.trafficLightTopInset + surfaceOrigin.y)"
+        )
+    }
+
+    private static func verifiesCollapsedSidebarRetentionIncludesLeftResizeFrame() throws {
+        let windowSize = CGSize(width: 1512, height: 889)
+        let chromeSurface = ShellWindowChromeSurface(
+            isVisible: true,
+            origin: CGPoint(x: 6, y: 6),
+            width: 264
+        )
+
+        expect(
+            ShellCollapsedSidebarPointerRetention.contains(
+                locationInWindow: CGPoint(x: -3, y: 420),
+                windowSize: windowSize,
+                chromeSurface: chromeSurface
+            ),
+            "collapsed sidebar retention must include the adjacent left resize frame"
+        )
+        expect(
+            ShellCollapsedSidebarPointerRetention.contains(
+                locationInWindow: CGPoint(x: 12, y: 420),
+                windowSize: windowSize,
+                chromeSurface: chromeSurface
+            ),
+            "collapsed sidebar retention must include the narrow edge reveal neighborhood"
+        )
+        expect(
+            !ShellCollapsedSidebarPointerRetention.contains(
+                locationInWindow: CGPoint(x: 420, y: 420),
+                windowSize: windowSize,
+                chromeSurface: chromeSurface
+            ),
+            "collapsed sidebar retention must end outside the related sidebar and resize regions"
         )
     }
 

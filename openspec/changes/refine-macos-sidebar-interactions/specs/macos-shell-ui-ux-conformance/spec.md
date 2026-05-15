@@ -13,6 +13,17 @@ hover, while keeping the terminal workspace stable.
 - **WHEN** the pointer moves from the edge hot zone onto the floating sidebar panel or collapsed titlebar controls
 - **THEN** the floating panel remains revealed until the pointer leaves those related surfaces
 
+#### Scenario: Window-edge hover retention
+- **WHEN** the sidebar is collapsed, the floating panel is revealed, and the pointer crosses from the edge hot zone or floating panel into the left window resize frame
+- **THEN** alan treats that pointer position as part of the collapsed-sidebar reveal neighborhood and keeps the floating panel revealed
+- **AND** alan does not schedule a hide merely because AppKit has switched the cursor or hit-test state to a window-resize affordance
+- **AND** native window resizing remains available if the user presses and drags in the resize frame
+
+#### Scenario: Visible-frame zoom edge retention
+- **WHEN** the shell window has been double-click zoomed to the current screen's visible work area and its left edge is flush with the usable screen boundary
+- **AND** the sidebar is collapsed and revealed from the left edge
+- **THEN** moving the pointer along the left edge or through the resize-cursor strip does not cause the floating sidebar to auto-hide while the pointer remains in the window-level reveal neighborhood
+
 #### Scenario: Floating panel owns traffic lights
 - **WHEN** the sidebar is collapsed and the floating panel is hidden
 - **THEN** the standard macOS traffic-light controls are hidden with the sidebar surface instead of remaining on the bare window corner
