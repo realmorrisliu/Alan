@@ -72,6 +72,7 @@ struct ShellPaneProjectionService {
         processExited: Bool?,
         lastCommandExitCode: Int?,
         lastMetadataAt: Date?,
+        activeTaskState: ShellTabActiveTaskState? = nil,
         existing: ShellContextSnapshot?,
         runtime: TerminalHostRuntimeSnapshot? = nil
     ) -> ShellContextSnapshot {
@@ -94,8 +95,11 @@ struct ShellPaneProjectionService {
             launchCommand: bootProfile.launchCommandString,
             launchStrategy: bootProfile.command.strategy.rawValue,
             shellIntegrationSource: "ghostty_shell_integration",
-            processState: projectedProcessExited.map { $0 ? "exited" : "running" }
-                ?? existing?.processState,
+            processState: projectedProcessState(
+                processExited: projectedProcessExited,
+                activeTaskState: activeTaskState,
+                existing: existing?.processState
+            ),
             rendererPhase: runtime?.renderer.phase.rawValue ?? existing?.rendererPhase,
             rendererHealth: runtime?.surfaceState.rendererHealth
                 ?? runtime?.renderer.phase.rawValue
@@ -179,6 +183,26 @@ struct ShellPaneProjectionService {
         case .unready(let reason):
             return reason.rawValue
         }
+    }
+
+    private func projectedProcessState(
+        processExited: Bool?,
+        activeTaskState: ShellTabActiveTaskState?,
+        existing: String?
+    ) -> String? {
+        if processExited == true {
+            return "exited"
+        }
+
+        if activeTaskState == .foregroundCommand {
+            return "foreground_command"
+        }
+
+        if processExited == false {
+            return "running"
+        }
+
+        return existing
     }
 
     private func workingDirectoryName(for path: String?) -> String? {

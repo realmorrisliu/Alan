@@ -553,7 +553,8 @@ final class AlanGhosttySurfaceHandle: AlanTerminalSurfaceHandle {
             attention: currentSnapshot.metadata.attention,
             processExited: currentSnapshot.metadata.processExited,
             lastCommandExitCode: currentSnapshot.metadata.lastCommandExitCode,
-            lastUpdatedAt: currentSnapshot.metadata.lastUpdatedAt
+            lastUpdatedAt: currentSnapshot.metadata.lastUpdatedAt,
+            activeTaskState: currentSnapshot.metadata.activeTaskState
         )
     }
 

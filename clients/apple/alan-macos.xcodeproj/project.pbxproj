@@ -63,6 +63,8 @@
 		000000000000000000000036 /* ConsoleAdaptiveColor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000136 /* ConsoleAdaptiveColor.swift */; };
 		000000000000000000000037 /* ShellHostControlCommandHandling.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000137 /* ShellHostControlCommandHandling.swift */; };
 		000000000000000000000038 /* ShellSidebarSwipeMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000138 /* ShellSidebarSwipeMonitor.swift */; };
+		000000000000000000000039 /* ShellWorkspaceManifest.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000139 /* ShellWorkspaceManifest.swift */; };
+		00000000000000000000003A /* ShellWorkspaceManifestStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000013A /* ShellWorkspaceManifestStore.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -123,6 +125,8 @@
 		000000000000000000000136 /* ConsoleAdaptiveColor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Support/ConsoleAdaptiveColor.swift; sourceTree = "<group>"; };
 		000000000000000000000137 /* ShellHostControlCommandHandling.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Controllers/Shell/ShellHostControlCommandHandling.swift; sourceTree = "<group>"; };
 		000000000000000000000138 /* ShellSidebarSwipeMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Support/ShellSidebarSwipeMonitor.swift; sourceTree = "<group>"; };
+		000000000000000000000139 /* ShellWorkspaceManifest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models/Shell/ShellWorkspaceManifest.swift; sourceTree = "<group>"; };
+		00000000000000000000013A /* ShellWorkspaceManifestStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/Shell/ShellWorkspaceManifestStore.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -270,6 +274,7 @@
 				000000000000000000000121 /* ShellValueTypes.swift */,
 				000000000000000000000122 /* ShellSnapshots.swift */,
 				000000000000000000000129 /* ShellControlPlaneDTOs.swift */,
+				000000000000000000000139 /* ShellWorkspaceManifest.swift */,
 				000000000000000000000123 /* ShellTreeMutations.swift */,
 				000000000000000000000124 /* ShellStateMutations.swift */,
 			);
@@ -288,6 +293,7 @@
 				00000000000000000000012C /* ShellPublishedStateMerger.swift */,
 				00000000000000000000012B /* ShellSocketServer.swift */,
 				000000000000000000000126 /* ShellStatePersistenceStore.swift */,
+				00000000000000000000013A /* ShellWorkspaceManifestStore.swift */,
 			);
 			name = Services/Shell;
 			sourceTree = "<group>";
@@ -457,6 +463,8 @@
 				000000000000000000000036 /* ConsoleAdaptiveColor.swift in Sources */,
 				000000000000000000000037 /* ShellHostControlCommandHandling.swift in Sources */,
 				000000000000000000000038 /* ShellSidebarSwipeMonitor.swift in Sources */,
+				000000000000000000000039 /* ShellWorkspaceManifest.swift in Sources */,
+				00000000000000000000003A /* ShellWorkspaceManifestStore.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

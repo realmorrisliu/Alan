@@ -4,8 +4,10 @@ import SwiftUI
 struct ShellSidebarView: View {
     @ObservedObject var host: ShellHostController
     let chromeMetrics: ShellWindowChromeMetrics
-    let spaceTransition: ShellSpaceTransition?
+    let displaySpaceID: String?
+    let previewedSpaceID: String?
     let isSpaceSwipeGestureLocked: Bool
+    let isSwipeEnabled: Bool
     let onSpaceSwipe: (ShellSidebarSwipeUpdate) -> Void
     let openCommandTab: () -> Void
     @State private var hoveredTabID: String?
@@ -14,11 +16,11 @@ struct ShellSidebarView: View {
     @State private var tabListScrollOffsetY: CGFloat = 0
 
     var body: some View {
-        GeometryReader { proxy in
-            sidebarContent(pageWidth: max(proxy.size.width, 1))
-        }
+        sidebarContent
         .background {
-            ShellSidebarSwipeMonitor(onUpdate: onSpaceSwipe)
+            if isSwipeEnabled {
+                ShellSidebarSwipeMonitor(onUpdate: onSpaceSwipe)
+            }
         }
         .scrollDisabled(isTabListScrollDisabled)
         .onChange(of: sourceSpaceID) { _, _ in
@@ -26,14 +28,14 @@ struct ShellSidebarView: View {
         }
     }
 
-    private func sidebarContent(pageWidth: CGFloat) -> some View {
+    private var sidebarContent: some View {
         VStack(alignment: .leading, spacing: 0) {
             commandLauncher
                 .padding(.horizontal, ShellSidebarMetrics.edgeInset)
                 .padding(.bottom, 10)
-            spaceLabelRow(pageWidth: pageWidth)
+            spaceLabelRow
                 .padding(.bottom, 2)
-            tabSection(pageWidth: pageWidth)
+            tabSection
             spaceDock
                 .padding(.horizontal, ShellSidebarMetrics.edgeInset)
                 .padding(.top, 10)
@@ -43,11 +45,10 @@ struct ShellSidebarView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
-    private func spaceLabelRow(pageWidth: CGFloat) -> some View {
-        ShellSidebarSpaceHeaderPager(
+    private var spaceLabelRow: some View {
+        ShellSidebarSpaceHeader(
             host: host,
-            transition: activeTransition,
-            pageWidth: pageWidth
+            spaceID: sourceSpaceID
         )
         .frame(maxWidth: .infinity)
         .frame(height: 28)
@@ -90,26 +91,13 @@ struct ShellSidebarView: View {
         ShellPalette.sidebarMutedInk.opacity(isCommandLauncherHovered ? 0.92 : 0.80)
     }
 
-    private func tabSection(pageWidth: CGFloat) -> some View {
+    private var tabSection: some View {
         VStack(alignment: .leading, spacing: 0) {
-            GeometryReader { proxy in
-                ZStack(alignment: .topLeading) {
-                    tabListPage(for: sourceSpaceID)
-                        .frame(width: proxy.size.width, height: proxy.size.height, alignment: .topLeading)
-                        .offset(x: sourceOffset(in: pageWidth))
-
-                    if let targetSpaceID = activeTransition?.targetSpaceID {
-                        tabListPage(for: targetSpaceID)
-                            .frame(width: proxy.size.width, height: proxy.size.height, alignment: .topLeading)
-                            .offset(x: targetOffset(in: pageWidth))
-                            .allowsHitTesting(false)
-                    }
-                }
-                .clipped()
+            tabListPage(for: sourceSpaceID)
                 .overlay(alignment: .top) {
                     ShellSidebarScrollBoundary(progress: tabListBoundaryProgress)
                 }
-            }
+                .clipped()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
@@ -131,7 +119,7 @@ struct ShellSidebarView: View {
                             title: "New Tab",
                             systemImage: "plus",
                             action: {
-                                _ = host.openTerminalTab()
+                                _ = host.openTerminalTab(in: space.spaceID)
                             }
                         )
                         .help("Create a tab in this space")
@@ -176,7 +164,7 @@ struct ShellSidebarView: View {
                                 attention: space.attention,
                                 tabCount: space.tabs.count,
                                 isSelected: host.selectedSpace?.spaceID == space.spaceID,
-                                isPreviewed: activeTransition?.targetSpaceID == space.spaceID,
+                                isPreviewed: previewedSpaceID == space.spaceID,
                                 isHovered: hoveredSpaceID == space.spaceID
                             )
                         }
@@ -216,29 +204,12 @@ struct ShellSidebarView: View {
         _ = host.createTerminalSpace()
     }
 
-    private var activeTransition: ShellSpaceTransition? {
-        guard let spaceTransition,
-              spaceTransition.sourceSpaceID == host.selectedSpace?.spaceID
-        else {
-            return nil
-        }
-        return spaceTransition
-    }
-
     private var isTabListScrollDisabled: Bool {
-        isSpaceSwipeGestureLocked || activeTransition != nil
+        isSpaceSwipeGestureLocked
     }
 
     private var sourceSpaceID: String? {
-        activeTransition?.sourceSpaceID ?? host.selectedSpace?.spaceID
-    }
-
-    private func sourceOffset(in width: CGFloat) -> CGFloat {
-        activeTransition?.sourceOffset(in: width) ?? 0
-    }
-
-    private func targetOffset(in width: CGFloat) -> CGFloat {
-        activeTransition?.targetOffset(in: width) ?? 0
+        displaySpaceID ?? host.selectedSpace?.spaceID
     }
 
     private var tabListBoundaryProgress: CGFloat {
@@ -282,6 +253,7 @@ struct ShellSidebarView: View {
             attention: strongestAttention(for: tab),
             showsAlanMarker: showsAlanMarker(for: tab),
             splitSummary: splitSummary(for: tab),
+            isPinned: host.isTabPinned(tabID: tab.tabID),
             isSelected: isSelected,
             isHovered: isHovered,
             showsCloseAffordance: isHovered,
@@ -306,6 +278,19 @@ struct ShellSidebarView: View {
             }
             Button("Open in alan") {
                 _ = host.openAlanTab()
+            }
+            Divider()
+            if host.isTabPinned(tabID: tab.tabID) {
+                Button("Update Pin") {
+                    _ = host.updatePinnedTabSnapshot(tabID: tab.tabID)
+                }
+                Button("Unpin Tab") {
+                    _ = host.unpinTab(tabID: tab.tabID)
+                }
+            } else {
+                Button("Pin Tab") {
+                    _ = host.pinTab(tabID: tab.tabID)
+                }
             }
             Divider()
             Button("Close Tab", role: .destructive) {
@@ -483,40 +468,14 @@ private struct ShellSidebarScrollBoundary: View {
     }
 }
 
-private struct ShellSidebarSpaceHeaderPager: View {
+private struct ShellSidebarSpaceHeader: View {
     @ObservedObject var host: ShellHostController
-    let transition: ShellSpaceTransition?
-    let pageWidth: CGFloat
+    let spaceID: String?
 
     var body: some View {
-        GeometryReader { proxy in
-            ZStack(alignment: .leading) {
-                headerPage(for: sourceSpaceID)
-                    .frame(width: proxy.size.width, height: proxy.size.height, alignment: .leading)
-                    .offset(x: sourceOffset(in: pageWidth))
-
-                if let targetSpaceID = activeTransition?.targetSpaceID {
-                    headerPage(for: targetSpaceID)
-                        .frame(width: proxy.size.width, height: proxy.size.height, alignment: .leading)
-                        .offset(x: targetOffset(in: pageWidth))
-                }
-            }
-            .clipped()
-        }
+        headerPage(for: spaceID)
+            .frame(maxWidth: .infinity, alignment: .leading)
         .frame(height: 26)
-    }
-
-    private var activeTransition: ShellSpaceTransition? {
-        guard let transition,
-              transition.sourceSpaceID == host.selectedSpace?.spaceID
-        else {
-            return nil
-        }
-        return transition
-    }
-
-    private var sourceSpaceID: String? {
-        activeTransition?.sourceSpaceID ?? host.selectedSpace?.spaceID
     }
 
     private func headerPage(for spaceID: String?) -> some View {
@@ -537,14 +496,6 @@ private struct ShellSidebarSpaceHeaderPager: View {
         .padding(.leading, ShellSidebarMetrics.edgeInset)
         .padding(.trailing, ShellSidebarMetrics.edgeInset)
         .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    private func sourceOffset(in width: CGFloat) -> CGFloat {
-        activeTransition?.sourceOffset(in: width) ?? 0
-    }
-
-    private func targetOffset(in width: CGFloat) -> CGFloat {
-        activeTransition?.targetOffset(in: width) ?? 0
     }
 
     private func space(for spaceID: String?) -> ShellSpace? {
@@ -731,6 +682,7 @@ private struct ShellTabSidebarRow: View {
     let attention: ShellAttentionState?
     let showsAlanMarker: Bool
     let splitSummary: ShellTabSplitSummary?
+    let isPinned: Bool
     let isSelected: Bool
     let isHovered: Bool
     let showsCloseAffordance: Bool
@@ -757,6 +709,13 @@ private struct ShellTabSidebarRow: View {
                             Image(systemName: "sparkles")
                                 .font(.system(size: 9, weight: .bold))
                                 .foregroundStyle(ShellPalette.accent)
+                        }
+
+                        if isPinned {
+                            Image(systemName: "pin.fill")
+                                .font(.system(size: 8.5, weight: .bold))
+                                .foregroundStyle(ShellPalette.accent.opacity(isSelected ? 0.84 : 0.64))
+                                .help("Pinned tab")
                         }
                     }
 
@@ -853,6 +812,9 @@ private struct ShellTabSidebarRow: View {
         }
         if let splitSummary {
             parts.append("\(splitSummary.paneCount) panes")
+        }
+        if isPinned {
+            parts.append("pinned")
         }
         return parts.joined(separator: ", ")
     }

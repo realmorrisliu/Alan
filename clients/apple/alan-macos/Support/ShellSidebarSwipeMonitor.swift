@@ -16,24 +16,53 @@ struct ShellSidebarSwipeUpdate {
     let velocityX: CGFloat
 }
 
-struct ShellSpaceTransition: Equatable {
-    let sourceSpaceID: String
-    var targetSpaceID: String?
-    var direction: Int
-    var offsetX: CGFloat
-    var progress: CGFloat
-    var isSettling: Bool
+enum ShellSpacePagerSettlementPhase: Equatable {
+    case dragging
+    case settlingToSource
+    case settlingToTarget
+}
+
+struct ShellSpacePagerState: Equatable {
+    let sourceIndex: Int
+    var targetIndex: Int?
+    var dragOffset: CGFloat
+    var pageWidth: CGFloat
+    var settlementPhase: ShellSpacePagerSettlementPhase
+
+    var isSettling: Bool {
+        settlementPhase != .dragging
+    }
 
     var isEdgeResistance: Bool {
-        targetSpaceID == nil
+        targetIndex == nil
     }
 
-    func sourceOffset(in width: CGFloat) -> CGFloat {
-        offsetX
+    var committedTargetIndex: Int? {
+        guard settlementPhase == .settlingToTarget else { return nil }
+        return targetIndex
     }
 
-    func targetOffset(in width: CGFloat) -> CGFloat {
-        offsetX + CGFloat(direction) * width
+    var direction: Int {
+        guard let targetIndex else {
+            return dragOffset < 0 ? 1 : -1
+        }
+        return targetIndex >= sourceIndex ? 1 : -1
+    }
+
+    var progress: CGFloat {
+        let width = max(pageWidth, 1)
+        return min(abs(dragOffset) / width, 0.98)
+    }
+
+    var pageIndicesForRendering: [Int] {
+        guard let targetIndex, targetIndex != sourceIndex else {
+            return [sourceIndex]
+        }
+        return [sourceIndex, targetIndex]
+    }
+
+    func offset(for index: Int) -> CGFloat {
+        CGFloat(index - sourceIndex) * max(pageWidth, 1) + dragOffset
     }
 }
 

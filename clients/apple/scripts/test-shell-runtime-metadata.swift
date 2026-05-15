@@ -21,6 +21,15 @@ private enum ShellRuntimeMetadataTests {
         verifiesPaneTitleBarFallbackOrdering()
         verifiesPaneTitleBarSuppressesInternalTitles()
         verifiesOpeningTabSkipsStaleRuntimePaneIDs()
+        verifiesClosingTabReleasesTerminalRuntime()
+        verifiesTabSelectionCommitsAuthoritativeFocus()
+        verifiesSpaceSelectionCommitsAuthoritativeFocus()
+        verifiesSplitTabSelectionUsesStablePaneWithoutChangingLayout()
+        verifiesWorkspaceManifestStartupRestoresPinnedSnapshot()
+        verifiesClosingLastTabLeavesSelectedSpaceEmptyAndPersistsManifest()
+        verifiesExplicitSpaceDeletionRemovesManifestSpace()
+        verifiesPinSnapshotIsExplicitAndDoesNotTrackTransientChanges()
+        verifiesManifestActiveTaskProjection()
         print("Shell runtime metadata tests passed.")
     }
 
@@ -408,8 +417,406 @@ private enum ShellRuntimeMetadataTests {
         )
     }
 
-    private static func makeController() -> ShellHostController {
-        let windowID = "metadata_test_\(UUID().uuidString)"
+    private static func verifiesClosingTabReleasesTerminalRuntime() {
+        let controller = makeController()
+        guard let pane = controller.selectedPane else {
+            fail("test setup must expose selected pane")
+        }
+        _ = controller.terminalRuntimeRegistry.surfaceHandle(for: pane, bootProfile: nil)
+
+        expect(
+            controller.terminalRuntimeRegistry.registeredPaneIDs.contains(pane.paneID),
+            "test setup must register selected pane runtime"
+        )
+
+        _ = controller.closeTab(tabID: pane.tabID)
+
+        expect(
+            !controller.terminalRuntimeRegistry.registeredPaneIDs.contains(pane.paneID),
+            "closing a tab must release its terminal runtime through the registry"
+        )
+    }
+
+    private static func verifiesTabSelectionCommitsAuthoritativeFocus() {
+        let controller = makeController()
+        _ = controller.openTerminalTab()
+        controller.focus(paneID: "pane_1")
+
+        guard let targetPane = controller.pane(paneID: "pane_2") else {
+            fail("test setup must create second tab pane")
+        }
+        let targetHostView = controller.terminalRuntimeRegistry.hostView(
+            for: targetPane,
+            bootProfile: controller.bootProfile(for: targetPane),
+            isSelected: false,
+            activationDelegate: nil,
+            onWorkspaceCommand: nil,
+            onCommandInput: nil,
+            onRuntimeUpdate: { _ in },
+            onMetadataUpdate: { _ in }
+        )
+
+        controller.select(tabID: "tab_2")
+        controller.updateTerminalMetadata(
+            metadata(title: "old focused pane updated"),
+            for: "pane_1"
+        )
+
+        expect(
+            controller.shellState.focusedPaneID == "pane_2",
+            "tab selection must update authoritative focused pane"
+        )
+        expect(controller.selectedTabID == "tab_2", "runtime metadata must not revert selected tab")
+        expect(controller.selectedPane?.paneID == "pane_2", "selected pane must follow selected tab focus")
+        expect(
+            targetHostView.focusCount == 1,
+            "tab selection must request focus for the target terminal runtime"
+        )
+    }
+
+    private static func verifiesSpaceSelectionCommitsAuthoritativeFocus() {
+        let controller = makeController()
+        _ = controller.createTerminalSpace(title: "Second", workingDirectory: "/tmp")
+        controller.focus(paneID: "pane_1")
+
+        guard let targetPane = controller.pane(paneID: "pane_2") else {
+            fail("test setup must create second space pane")
+        }
+        let targetHostView = controller.terminalRuntimeRegistry.hostView(
+            for: targetPane,
+            bootProfile: controller.bootProfile(for: targetPane),
+            isSelected: false,
+            activationDelegate: nil,
+            onWorkspaceCommand: nil,
+            onCommandInput: nil,
+            onRuntimeUpdate: { _ in },
+            onMetadataUpdate: { _ in }
+        )
+
+        controller.select(spaceID: "space_2")
+        controller.updateTerminalMetadata(
+            metadata(title: "old focused pane updated"),
+            for: "pane_1"
+        )
+
+        expect(
+            controller.shellState.focusedSpaceID == "space_2",
+            "space selection must update focused space"
+        )
+        expect(controller.shellState.focusedTabID == "tab_2", "space selection must update focused tab")
+        expect(
+            controller.shellState.focusedPaneID == "pane_2",
+            "space selection must update authoritative focused pane"
+        )
+        expect(controller.selectedSpaceID == "space_2", "runtime metadata must not revert selected space")
+        expect(controller.selectedTabID == "tab_2", "runtime metadata must not revert selected space tab")
+        expect(
+            targetHostView.focusCount == 1,
+            "space selection must request focus for the target terminal runtime"
+        )
+    }
+
+    private static func verifiesSplitTabSelectionUsesStablePaneWithoutChangingLayout() {
+        let controller = makeController()
+        _ = controller.splitPane(paneID: "pane_1", placement: .right)
+        let splitTreeBefore = controller.shellState.tab(tabID: "tab_main")?.paneTree
+        _ = controller.openTerminalTab()
+
+        controller.select(tabID: "tab_main")
+
+        let splitTreeAfter = controller.shellState.tab(tabID: "tab_main")?.paneTree
+        expect(
+            controller.shellState.focusedPaneID == "pane_1",
+            "split-tab selection must choose a stable pane from the tab tree"
+        )
+        expect(
+            splitTreeAfter == splitTreeBefore,
+            "split-tab selection must not rewrite split tree or divider ratios"
+        )
+    }
+
+    private static func verifiesWorkspaceManifestStartupRestoresPinnedSnapshot() {
+        let windowID = "manifest_startup_\(UUID().uuidString)"
+        let manifestURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(windowID)-workspace.json")
+        let context = ShellWindowContext.make(windowID: windowID)
+        let store = ShellWorkspaceManifestStore(manifestURL: manifestURL)
+        let manifest = ShellWorkspaceManifest(
+            schemaVersion: ShellWorkspaceManifest.currentSchemaVersion,
+            windowID: windowID,
+            selectedSpaceID: "space_main",
+            selectedTabID: "tab_main",
+            spaces: [
+                ShellWorkspaceSpaceRecord(
+                    spaceID: "space_main",
+                    title: "Main",
+                    order: 0,
+                    createdAt: Date(timeIntervalSince1970: 10),
+                    updatedAt: Date(timeIntervalSince1970: 10),
+                    tabs: [
+                        ShellWorkspaceTabRecord(
+                            tabID: "tab_main",
+                            title: "Pinned",
+                            kind: .terminal,
+                            createdAt: Date(timeIntervalSince1970: 10),
+                            lastActivatedAt: Date(timeIntervalSince1970: 10),
+                            lastActivityAt: Date(timeIntervalSince1970: 10),
+                            isPinned: true,
+                            pinSnapshot: restoreSnapshot(tabID: "tab_main", paneID: "pane_1", cwd: "/pinned"),
+                            liveSnapshot: restoreSnapshot(tabID: "tab_main", paneID: "pane_1", cwd: "/live"),
+                            activeTask: .inactive
+                        )
+                    ]
+                )
+            ]
+        )
+
+        do {
+            try store.save(manifest)
+        } catch {
+            fail("failed to write test manifest: \(error)")
+        }
+
+        let controller = ShellHostController.live(
+            windowContext: context,
+            startupMode: .workspaceManifest,
+            workspaceManifestURL: manifestURL,
+            defaultWorkingDirectory: "/fallback",
+            now: Date(timeIntervalSince1970: 20)
+        )
+
+        expect(controller.selectedPane?.cwd == "/pinned", "workspace manifest startup must use pinned cwd")
+        expect(
+            controller.shellState.focusedSpaceID == "space_main",
+            "workspace manifest startup must preserve selected space"
+        )
+        expect(
+            controller.shellState.focusedTabID == "tab_main",
+            "workspace manifest startup must preserve selected tab"
+        )
+    }
+
+    private static func verifiesClosingLastTabLeavesSelectedSpaceEmptyAndPersistsManifest() {
+        let windowID = "manifest_close_\(UUID().uuidString)"
+        let manifestURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(windowID)-workspace.json")
+        let store = ShellWorkspaceManifestStore(manifestURL: manifestURL)
+        let controller = makeController(
+            windowID: windowID,
+            workspaceManifestStore: store,
+            workspaceManifest: ShellWorkspaceManifest.defaultManifest(
+                windowID: windowID,
+                defaultWorkingDirectory: "/tmp",
+                now: Date(timeIntervalSince1970: 30)
+            )
+        )
+
+        let result = controller.closeTab(tabID: "tab_main")
+
+        expect(result == .closed, "closing the last tab in a space must succeed")
+        expect(controller.shellState.spaces.count == 1, "closing the last tab must keep its space")
+        expect(
+            controller.shellState.spaces.first?.tabs.isEmpty == true,
+            "closing the last tab must leave the selected space empty"
+        )
+        expect(controller.shellState.panes.isEmpty, "closing the last tab must remove its panes")
+        expect(controller.selectedSpaceID == "space_main", "empty selected space must stay selected")
+        expect(controller.selectedTabID == nil, "empty selected space must clear selected tab")
+
+        guard let savedManifest = decodeManifest(at: manifestURL) else {
+            fail("closing the last tab must persist workspace manifest")
+        }
+        expect(savedManifest.spaces.count == 1, "persisted manifest must keep empty space")
+        expect(savedManifest.spaces.first?.tabs.isEmpty == true, "persisted manifest must keep space tabless")
+        expect(savedManifest.selectedSpaceID == "space_main", "persisted manifest must keep selected space")
+        expect(savedManifest.selectedTabID == nil, "persisted manifest must clear selected tab")
+    }
+
+    private static func verifiesExplicitSpaceDeletionRemovesManifestSpace() {
+        let windowID = "manifest_delete_space_\(UUID().uuidString)"
+        let manifestURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(windowID)-workspace.json")
+        let store = ShellWorkspaceManifestStore(manifestURL: manifestURL)
+        let controller = makeController(
+            windowID: windowID,
+            workspaceManifestStore: store,
+            workspaceManifest: ShellWorkspaceManifest.defaultManifest(
+                windowID: windowID,
+                defaultWorkingDirectory: "/tmp",
+                now: Date(timeIntervalSince1970: 40)
+            )
+        )
+        _ = controller.createTerminalSpace(title: "Delete Me", workingDirectory: "/delete-me")
+
+        expect(controller.deleteSpace(spaceID: "space_2"), "explicit delete-space must be accepted")
+        expect(controller.shellState.space(spaceID: "space_2") == nil, "deleted space must leave shell state")
+
+        guard let savedManifest = decodeManifest(at: manifestURL) else {
+            fail("delete-space must persist workspace manifest")
+        }
+        expect(savedManifest.spaces.map(\.spaceID) == ["space_main"], "deleted space must leave manifest")
+        expect(
+            savedManifest.spaces.flatMap(\.tabs).allSatisfy { $0.tabID != "tab_2" },
+            "delete-space must remove deleted space tabs from manifest"
+        )
+    }
+
+    private static func verifiesPinSnapshotIsExplicitAndDoesNotTrackTransientChanges() {
+        let windowID = "manifest_pin_\(UUID().uuidString)"
+        let manifestURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(windowID)-workspace.json")
+        let store = ShellWorkspaceManifestStore(manifestURL: manifestURL)
+        let controller = makeController(
+            windowID: windowID,
+            workspaceManifestStore: store,
+            workspaceManifest: ShellWorkspaceManifest.defaultManifest(
+                windowID: windowID,
+                defaultWorkingDirectory: "/tmp",
+                now: Date(timeIntervalSince1970: 50)
+            )
+        )
+
+        controller.updateTerminalMetadata(metadata(title: "Pinned", cwd: "/pinned"), for: "pane_1")
+        _ = controller.splitPane(paneID: "pane_1", placement: .right)
+        expect(controller.pinTab(tabID: "tab_main"), "pin-tab must be accepted")
+
+        controller.updateTerminalMetadata(metadata(title: "Moved", cwd: "/moved"), for: "pane_1")
+        _ = controller.splitPane(paneID: "pane_1", placement: .down)
+
+        guard let savedManifest = decodeManifest(at: manifestURL),
+              let tab = savedManifest.spaces.flatMap(\.tabs).first(where: { $0.tabID == "tab_main" })
+        else {
+            fail("pin-tab must persist manifest tab")
+        }
+
+        expect(tab.isPinned, "pin-tab must mark the tab as pinned")
+        expect(tab.pinSnapshot?.paneTree.paneIDs.count == 2, "pin snapshot must preserve split layout at pin time")
+        expect(tab.liveSnapshot?.paneTree.paneIDs.count == 3, "live snapshot must track later transient split changes")
+        expect(
+            tab.pinSnapshot?.panes.first(where: { $0.paneID == "pane_1" })?.cwd == "/pinned",
+            "pin snapshot must keep cwd from pin time"
+        )
+        expect(
+            tab.liveSnapshot?.panes.first(where: { $0.paneID == "pane_1" })?.cwd == "/moved",
+            "live snapshot must track later cwd changes without mutating pin snapshot"
+        )
+
+        expect(controller.updatePinnedTabSnapshot(tabID: "tab_main"), "update-pin must be accepted")
+        let updatedManifest = decodeManifest(at: manifestURL)
+        let updatedTab = updatedManifest?.spaces.flatMap(\.tabs).first { $0.tabID == "tab_main" }
+        expect(updatedTab?.pinSnapshot?.paneTree.paneIDs.count == 3, "update-pin must replace pin split snapshot")
+        expect(
+            updatedTab?.pinSnapshot?.panes.first(where: { $0.paneID == "pane_1" })?.cwd == "/moved",
+            "update-pin must replace pin cwd snapshot"
+        )
+    }
+
+    private static func verifiesManifestActiveTaskProjection() {
+        let foregroundURL = manifestURL("active_foreground")
+        let foregroundController = makeController(
+            windowID: "active_foreground_\(UUID().uuidString)",
+            workspaceManifestStore: ShellWorkspaceManifestStore(manifestURL: foregroundURL),
+            workspaceManifest: ShellWorkspaceManifest.defaultManifest(
+                windowID: "window_main",
+                defaultWorkingDirectory: "/tmp",
+                now: Date(timeIntervalSince1970: 60)
+            )
+        )
+        foregroundController.updateTerminalMetadata(
+            metadata(title: "make test", activeTaskState: .foregroundCommand),
+            for: "pane_1"
+        )
+        expect(activeTask(in: foregroundURL) == .foregroundCommand, "foreground command must protect tab")
+        expect(
+            foregroundController.shellState.panes.first?.context?.processState == "foreground_command",
+            "foreground command metadata must project into pane process state"
+        )
+
+        let idleURL = manifestURL("active_idle")
+        let idleController = makeController(
+            windowID: "active_idle_\(UUID().uuidString)",
+            workspaceManifestStore: ShellWorkspaceManifestStore(manifestURL: idleURL),
+            workspaceManifest: ShellWorkspaceManifest.defaultManifest(
+                windowID: "window_main",
+                defaultWorkingDirectory: "/tmp",
+                now: Date(timeIntervalSince1970: 61)
+            )
+        )
+        idleController.updateTerminalMetadata(
+            metadata(title: "zsh", activeTaskState: .inactive),
+            for: "pane_1"
+        )
+        expect(activeTask(in: idleURL) == .inactive, "idle shell must be eligible for retirement")
+        expect(
+            idleController.shellState.panes.first?.context?.processState == "running",
+            "idle shell metadata must remain running but not foreground"
+        )
+
+        let exitedURL = manifestURL("active_exited")
+        let exitedController = makeController(
+            windowID: "active_exited_\(UUID().uuidString)",
+            workspaceManifestStore: ShellWorkspaceManifestStore(manifestURL: exitedURL),
+            workspaceManifest: ShellWorkspaceManifest.defaultManifest(
+                windowID: "window_main",
+                defaultWorkingDirectory: "/tmp",
+                now: Date(timeIntervalSince1970: 62)
+            )
+        )
+        exitedController.updateTerminalMetadata(
+            metadata(title: "done", processExited: true, activeTaskState: .foregroundCommand),
+            for: "pane_1"
+        )
+        expect(activeTask(in: exitedURL) == .inactive, "exited terminal must not protect tab")
+        expect(
+            exitedController.shellState.panes.first?.context?.processState == "exited",
+            "exited metadata must override foreground active-task projection"
+        )
+
+        let activeOnlyURL = manifestURL("active_only")
+        let activeOnlyController = makeController(
+            windowID: "active_only_\(UUID().uuidString)",
+            workspaceManifestStore: ShellWorkspaceManifestStore(manifestURL: activeOnlyURL),
+            workspaceManifest: ShellWorkspaceManifest.defaultManifest(
+                windowID: "window_main",
+                defaultWorkingDirectory: "/tmp",
+                now: Date(timeIntervalSince1970: 64)
+            )
+        )
+        activeOnlyController.updateTerminalMetadata(
+            activeOnlyMetadata(activeTaskState: .inactive),
+            for: "pane_1"
+        )
+        activeOnlyController.updateTerminalMetadata(
+            activeOnlyMetadata(activeTaskState: .unknown),
+            for: "pane_1"
+        )
+        expect(
+            activeTask(in: activeOnlyURL) == .unknown,
+            "active-task-only metadata changes must persist the manifest"
+        )
+
+        let alanPendingURL = manifestURL("active_alan_pending")
+        let alanPendingWindowID = "active_alan_pending_\(UUID().uuidString)"
+        let alanPendingController = makeController(
+            windowID: alanPendingWindowID,
+            shellState: stateWithAlanBinding(windowID: alanPendingWindowID, pendingYield: true),
+            workspaceManifestStore: ShellWorkspaceManifestStore(manifestURL: alanPendingURL),
+            workspaceManifest: ShellWorkspaceManifest.defaultManifest(
+                windowID: alanPendingWindowID,
+                defaultWorkingDirectory: "/tmp",
+                now: Date(timeIntervalSince1970: 63)
+            )
+        )
+        _ = alanPendingController.setAttention(.awaitingUser, for: "pane_1")
+        expect(activeTask(in: alanPendingURL) == .alanPendingYield, "alan pending yield must protect tab")
+    }
+
+    private static func makeController(
+        windowID: String = "metadata_test_\(UUID().uuidString)",
+        shellState: ShellStateSnapshot? = nil,
+        workspaceManifestStore: ShellWorkspaceManifestStore? = nil,
+        workspaceManifest: ShellWorkspaceManifest? = nil
+    ) -> ShellHostController {
         let registry = TerminalRuntimeRegistry(runtimeService: FakeAlanTerminalRuntimeService())
         let context = ShellWindowContext.make(
             windowID: windowID,
@@ -418,11 +825,49 @@ private enum ShellRuntimeMetadataTests {
         let persistenceURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("\(windowID).json")
         return ShellHostController(
-            shellState: .bootstrapDefault(windowID: windowID),
+            shellState: shellState ?? .bootstrapDefault(windowID: windowID),
             windowContext: context,
             persistenceURL: persistenceURL,
-            terminalRuntimeRegistry: registry
+            terminalRuntimeRegistry: registry,
+            workspaceManifestStore: workspaceManifestStore,
+            workspaceManifest: workspaceManifest
         )
+    }
+
+    private static func manifestURL(_ prefix: String) -> URL {
+        FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(prefix)-\(UUID().uuidString)-workspace.json")
+    }
+
+    private static func restoreSnapshot(
+        tabID: String,
+        paneID: String,
+        cwd: String
+    ) -> ShellTabRestoreSnapshot {
+        ShellTabRestoreSnapshot(
+            paneTree: ShellPaneTreeNode(
+                nodeID: "node_\(paneID)",
+                kind: .pane,
+                direction: nil,
+                paneID: paneID,
+                children: nil
+            ),
+            panes: [
+                ShellPaneRestoreRecord(
+                    paneID: paneID,
+                    launchTarget: .shell,
+                    cwd: cwd,
+                    title: tabID
+                )
+            ]
+        )
+    }
+
+    private static func decodeManifest(at url: URL) -> ShellWorkspaceManifest? {
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return try? decoder.decode(ShellWorkspaceManifest.self, from: data)
     }
 
     private static func pane(
@@ -471,6 +916,108 @@ private enum ShellRuntimeMetadataTests {
             lastMetadataAt: nil,
             lastCommandExitCode: lastCommandExitCode
         )
+    }
+
+    private static func metadata(
+        title: String,
+        cwd: String = "/Users/morris/Developer/Alan",
+        processExited: Bool = false,
+        activeTaskState: ShellTabActiveTaskState? = nil
+    ) -> TerminalPaneMetadataSnapshot {
+        TerminalPaneMetadataSnapshot(
+            title: title,
+            workingDirectory: cwd,
+            summary: nil,
+            attention: .idle,
+            processExited: processExited,
+            lastCommandExitCode: nil,
+            lastUpdatedAt: Date(timeIntervalSince1970: 3_000),
+            activeTaskState: activeTaskState
+        )
+    }
+
+    private static func activeOnlyMetadata(
+        activeTaskState: ShellTabActiveTaskState
+    ) -> TerminalPaneMetadataSnapshot {
+        TerminalPaneMetadataSnapshot(
+            title: nil,
+            workingDirectory: nil,
+            summary: nil,
+            attention: .idle,
+            processExited: false,
+            lastCommandExitCode: nil,
+            lastUpdatedAt: nil,
+            activeTaskState: activeTaskState
+        )
+    }
+
+    private static func stateWithAlanBinding(
+        windowID: String,
+        pendingYield: Bool
+    ) -> ShellStateSnapshot {
+        let pane = ShellPane(
+            paneID: "pane_1",
+            tabID: "tab_main",
+            spaceID: "space_main",
+            launchTarget: .alan,
+            cwd: "/tmp",
+            process: ShellProcessBinding(program: "alan", argvPreview: ["alan", "chat"]),
+            attention: pendingYield ? .awaitingUser : .active,
+            context: ShellContextSnapshot(
+                workingDirectoryName: "tmp",
+                repositoryRoot: nil,
+                gitBranch: nil,
+                controlPath: "/tmp/control",
+                alanBindingFile: "/tmp/binding",
+                launchStrategy: "login_shell",
+                shellIntegrationSource: "ghostty_shell_integration",
+                processState: "running",
+                lastMetadataAt: nil,
+                lastCommandExitCode: nil
+            ),
+            viewport: nil,
+            alanBinding: ShellAlanBinding(
+                sessionID: "session_1",
+                runStatus: pendingYield ? "yielded" : "running",
+                pendingYield: pendingYield,
+                source: "test",
+                lastProjectedAt: nil
+            )
+        )
+
+        return ShellStateSnapshot(
+            contractVersion: "0.1",
+            windowID: windowID,
+            focusedSpaceID: "space_main",
+            focusedTabID: "tab_main",
+            focusedPaneID: "pane_1",
+            spaces: [
+                ShellSpace(
+                    spaceID: "space_main",
+                    title: "Main",
+                    attention: pane.attention,
+                    tabs: [
+                        ShellTab(
+                            tabID: "tab_main",
+                            kind: .terminal,
+                            title: "alan",
+                            paneTree: ShellPaneTreeNode(
+                                nodeID: "node_pane_1",
+                                kind: .pane,
+                                direction: nil,
+                                paneID: "pane_1",
+                                children: nil
+                            )
+                        )
+                    ]
+                )
+            ],
+            panes: [pane]
+        )
+    }
+
+    private static func activeTask(in url: URL) -> ShellTabActiveTaskState? {
+        decodeManifest(at: url)?.spaces.first?.tabs.first?.activeTask
     }
 
     private static func expect(
