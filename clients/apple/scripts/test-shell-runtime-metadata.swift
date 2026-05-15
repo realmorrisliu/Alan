@@ -727,6 +727,10 @@ private enum ShellRuntimeMetadataTests {
             for: "pane_1"
         )
         expect(activeTask(in: foregroundURL) == .foregroundCommand, "foreground command must protect tab")
+        expect(
+            foregroundController.shellState.panes.first?.context?.processState == "foreground_command",
+            "foreground command metadata must project into pane process state"
+        )
 
         let idleURL = manifestURL("active_idle")
         let idleController = makeController(
@@ -743,6 +747,10 @@ private enum ShellRuntimeMetadataTests {
             for: "pane_1"
         )
         expect(activeTask(in: idleURL) == .inactive, "idle shell must be eligible for retirement")
+        expect(
+            idleController.shellState.panes.first?.context?.processState == "running",
+            "idle shell metadata must remain running but not foreground"
+        )
 
         let exitedURL = manifestURL("active_exited")
         let exitedController = makeController(
@@ -759,6 +767,10 @@ private enum ShellRuntimeMetadataTests {
             for: "pane_1"
         )
         expect(activeTask(in: exitedURL) == .inactive, "exited terminal must not protect tab")
+        expect(
+            exitedController.shellState.panes.first?.context?.processState == "exited",
+            "exited metadata must override foreground active-task projection"
+        )
 
         let alanPendingURL = manifestURL("active_alan_pending")
         let alanPendingWindowID = "active_alan_pending_\(UUID().uuidString)"

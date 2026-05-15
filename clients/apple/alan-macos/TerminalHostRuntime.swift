@@ -610,7 +610,7 @@ struct TerminalPaneMetadataSnapshot: Equatable {
         processExited: Bool,
         lastCommandExitCode: Int?,
         lastUpdatedAt: Date?,
-        activeTaskState: ShellTabActiveTaskState? = nil
+        activeTaskState: ShellTabActiveTaskState? = .inactive
     ) {
         self.title = title
         self.workingDirectory = workingDirectory
@@ -629,7 +629,8 @@ struct TerminalPaneMetadataSnapshot: Equatable {
         attention: .idle,
         processExited: false,
         lastCommandExitCode: nil,
-        lastUpdatedAt: nil
+        lastUpdatedAt: nil,
+        activeTaskState: .inactive
     )
 }
 

@@ -812,6 +812,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
                 processExited: runtime.paneMetadata.processExited,
                 lastCommandExitCode: runtime.paneMetadata.lastCommandExitCode,
                 lastMetadataAt: runtime.paneMetadata.lastUpdatedAt,
+                activeTaskState: runtime.paneMetadata.activeTaskState,
                 existing: pane.context,
                 runtime: runtime
             )
@@ -868,6 +869,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
             processExited: metadata.processExited,
             lastCommandExitCode: metadata.lastCommandExitCode,
             lastMetadataAt: metadata.lastUpdatedAt,
+            activeTaskState: metadata.activeTaskState,
             existing: pane.context,
             runtime: runtime
         )
@@ -927,6 +929,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
             processExited: nil,
             lastCommandExitCode: pane.context?.lastCommandExitCode,
             lastMetadataAt: nil,
+            activeTaskState: runtime.paneMetadata.activeTaskState,
             existing: pane.context,
             runtime: runtime
         )
@@ -978,6 +981,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
             processExited: nil,
             lastCommandExitCode: pane.context?.lastCommandExitCode,
             lastMetadataAt: nil,
+            activeTaskState: runtime.paneMetadata.activeTaskState,
             existing: pane.context,
             runtime: runtime
         )
@@ -1122,6 +1126,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
                 processExited: nil,
                 lastCommandExitCode: pane.context?.lastCommandExitCode,
                 lastMetadataAt: nil,
+                activeTaskState: self.runtime(for: pane.paneID).paneMetadata.activeTaskState,
                 existing: pane.context,
                 runtime: self.runtime(for: pane.paneID)
             )

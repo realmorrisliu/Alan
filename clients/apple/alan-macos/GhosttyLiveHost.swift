@@ -31,6 +31,11 @@ final class AlanGhosttyLiveHost: NSObject {
     private var metadata = TerminalPaneMetadataSnapshot.placeholder
     private let terminalModeTracker = AlanTerminalModeTracker()
 
+    private enum KeyCode {
+        static let returnKey: UInt32 = 36
+        static let keypadEnter: UInt32 = 76
+    }
+
     func attach(
         to canvasView: AlanGhosttyCanvasView,
         bootProfile: AlanShellBootProfile?,
@@ -103,6 +108,9 @@ final class AlanGhosttyLiveHost: NSObject {
         guard let surface else { return false }
         let handled = ghostty_surface_key(surface, keyEvent)
         ghostty_surface_refresh(surface)
+        if handled, isCommandSubmissionKey(keyEvent) {
+            markForegroundCommandStarted()
+        }
         return handled
     }
 
@@ -117,7 +125,11 @@ final class AlanGhosttyLiveHost: NSObject {
             ghostty_surface_text(surface, cString, UInt(strlen(cString)))
         }
         ghostty_surface_refresh(surface)
-        updateMetadata(summary: "input committed", attention: .active)
+        updateMetadata(
+            summary: "input committed",
+            attention: .active,
+            activeTaskState: text.contains("\n") || text.contains("\r") ? .foregroundCommand : nil
+        )
     }
 
     func sendPreedit(_ text: String?) {
@@ -356,7 +368,8 @@ final class AlanGhosttyLiveHost: NSObject {
             summary: "booting \(bootProfile.command.summary.lowercased())",
             attention: .active,
             processExited: false,
-            lastCommandExitCode: nil
+            lastCommandExitCode: nil,
+            activeTaskState: bootProfile.surfaceCommand == nil ? .inactive : .foregroundCommand
         )
 
         var surfaceConfig = ghostty_surface_config_new()
@@ -649,7 +662,8 @@ final class AlanGhosttyLiveHost: NSObject {
                     summary: "process exited with status \(exitCode)",
                     attention: .awaitingUser,
                     processExited: true,
-                    lastCommandExitCode: Int(exitCode)
+                    lastCommandExitCode: Int(exitCode),
+                    activeTaskState: .inactive
                 )
             }
             return true
@@ -669,7 +683,8 @@ final class AlanGhosttyLiveHost: NSObject {
                     summary: summary,
                     attention: exitCode == 0 ? .active : .notable,
                     processExited: false,
-                    lastCommandExitCode: Int(exitCode)
+                    lastCommandExitCode: Int(exitCode),
+                    activeTaskState: .inactive
                 )
             }
             return true
@@ -763,7 +778,8 @@ final class AlanGhosttyLiveHost: NSObject {
         summary: String? = nil,
         attention: ShellAttentionState? = nil,
         processExited: Bool? = nil,
-        lastCommandExitCode: Int? = nil
+        lastCommandExitCode: Int? = nil,
+        activeTaskState: ShellTabActiveTaskState? = nil
     ) {
         let nextTitle = title ?? metadata.title
         let nextWorkingDirectory = workingDirectory ?? metadata.workingDirectory
@@ -771,6 +787,7 @@ final class AlanGhosttyLiveHost: NSObject {
         let nextAttention = attention ?? metadata.attention
         let nextProcessExited = processExited ?? metadata.processExited
         let nextLastCommandExitCode = lastCommandExitCode ?? metadata.lastCommandExitCode
+        let nextActiveTaskState = activeTaskState ?? metadata.activeTaskState
 
         guard
             nextTitle != metadata.title
@@ -779,6 +796,7 @@ final class AlanGhosttyLiveHost: NSObject {
                 || nextAttention != metadata.attention
                 || nextProcessExited != metadata.processExited
                 || nextLastCommandExitCode != metadata.lastCommandExitCode
+                || nextActiveTaskState != metadata.activeTaskState
         else {
             return
         }
@@ -790,10 +808,20 @@ final class AlanGhosttyLiveHost: NSObject {
             attention: nextAttention,
             processExited: nextProcessExited,
             lastCommandExitCode: nextLastCommandExitCode,
-            lastUpdatedAt: .now
+            lastUpdatedAt: .now,
+            activeTaskState: nextActiveTaskState
         )
         metadata = snapshot
         onMetadataChange?(snapshot)
+    }
+
+    private func isCommandSubmissionKey(_ keyEvent: ghostty_input_key_s) -> Bool {
+        keyEvent.action == GHOSTTY_ACTION_PRESS
+            && (keyEvent.keycode == KeyCode.returnKey || keyEvent.keycode == KeyCode.keypadEnter)
+    }
+
+    private func markForegroundCommandStarted() {
+        updateMetadata(attention: .active, activeTaskState: .foregroundCommand)
     }
 
     private func resetMetadata() {
