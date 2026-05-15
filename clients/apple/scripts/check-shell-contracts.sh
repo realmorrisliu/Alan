@@ -635,21 +635,31 @@ require_pattern \
 
 require_pattern \
     "clients/apple/alan-macos/Support/ShellSidebarSwipeMonitor.swift" \
-    "struct ShellSpacePagerState" \
-    "space swipes must use a root pager state instead of a sidebar-only transition"
+    "struct ShellSidebarSwipeMonitor" \
+    "sidebar swipe monitor must remain the input adapter"
 
 require_pattern \
     "clients/apple/alan-macos/Support/ShellSidebarSwipeMonitor.swift" \
+    "struct ShellSidebarSwipeUpdate" \
+    "sidebar swipe monitor must emit swipe input updates"
+
+require_pattern \
+    "clients/apple/alan-macos/Support/ShellSidebarSpaceContentPager.swift" \
+    "struct ShellSidebarSpaceContentPagerState" \
+    "space swipes must use sidebar content pager state"
+
+require_pattern \
+    "clients/apple/alan-macos/Support/ShellSidebarSpaceContentPager.swift" \
     "sourceIndex" \
     "space pager state must track the authoritative source space index"
 
 require_pattern \
-    "clients/apple/alan-macos/Support/ShellSidebarSwipeMonitor.swift" \
+    "clients/apple/alan-macos/Support/ShellSidebarSpaceContentPager.swift" \
     "targetIndex" \
     "space pager state must track the adjacent target space index"
 
 require_pattern \
-    "clients/apple/alan-macos/Support/ShellSidebarSwipeMonitor.swift" \
+    "clients/apple/alan-macos/Support/ShellSidebarSpaceContentPager.swift" \
     "settlementPhase" \
     "space pager state must model drag, commit, and cancel settlement phases"
 
