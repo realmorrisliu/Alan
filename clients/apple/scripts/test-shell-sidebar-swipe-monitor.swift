@@ -141,30 +141,30 @@ private enum ShellSidebarSwipeMonitorTests {
     }
 
     private static func verifiesPagerOffsetsPagesFromSharedDragOffset() {
-        let pager = ShellSpacePagerState(
+        let pager = ShellSidebarSpaceContentPagerState(
             sourceIndex: 1,
             targetIndex: 2,
-            dragOffset: -120,
-            pageWidth: 500,
+            dragOffset: -72,
+            pageWidth: 240,
             settlementPhase: .dragging
         )
 
         expect(
-            pager.offset(for: 1).isApproximately(-120),
-            "source page must move directly with finger translation"
+            pager.offset(for: 1).isApproximately(-72),
+            "source sidebar content page must move directly with finger translation"
         )
         expect(
-            pager.offset(for: 2).isApproximately(380),
-            "target page must share the same drag offset from the adjacent page position"
+            pager.offset(for: 2).isApproximately(168),
+            "target sidebar content page must share the same drag offset from the adjacent page position"
         )
         expect(
             pager.pageIndicesForRendering == [1, 2],
-            "pager must render source and adjacent target pages together"
+            "sidebar content pager must render source and adjacent target pages together"
         )
     }
 
     private static func verifiesPagerEdgeResistanceDoesNotRenderWrappedTarget() {
-        let pager = ShellSpacePagerState(
+        let pager = ShellSidebarSpaceContentPagerState(
             sourceIndex: 0,
             targetIndex: nil,
             dragOffset: 42,
@@ -184,14 +184,14 @@ private enum ShellSidebarSwipeMonitorTests {
     }
 
     private static func verifiesPagerSettlementPhaseExposesCommitAndCancelState() {
-        let committing = ShellSpacePagerState(
+        let committing = ShellSidebarSpaceContentPagerState(
             sourceIndex: 1,
             targetIndex: 2,
             dragOffset: -500,
             pageWidth: 500,
             settlementPhase: .settlingToTarget
         )
-        let cancelling = ShellSpacePagerState(
+        let cancelling = ShellSidebarSpaceContentPagerState(
             sourceIndex: 1,
             targetIndex: 2,
             dragOffset: 0,
