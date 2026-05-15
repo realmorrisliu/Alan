@@ -772,6 +772,29 @@ private enum ShellRuntimeMetadataTests {
             "exited metadata must override foreground active-task projection"
         )
 
+        let activeOnlyURL = manifestURL("active_only")
+        let activeOnlyController = makeController(
+            windowID: "active_only_\(UUID().uuidString)",
+            workspaceManifestStore: ShellWorkspaceManifestStore(manifestURL: activeOnlyURL),
+            workspaceManifest: ShellWorkspaceManifest.defaultManifest(
+                windowID: "window_main",
+                defaultWorkingDirectory: "/tmp",
+                now: Date(timeIntervalSince1970: 64)
+            )
+        )
+        activeOnlyController.updateTerminalMetadata(
+            activeOnlyMetadata(activeTaskState: .inactive),
+            for: "pane_1"
+        )
+        activeOnlyController.updateTerminalMetadata(
+            activeOnlyMetadata(activeTaskState: .unknown),
+            for: "pane_1"
+        )
+        expect(
+            activeTask(in: activeOnlyURL) == .unknown,
+            "active-task-only metadata changes must persist the manifest"
+        )
+
         let alanPendingURL = manifestURL("active_alan_pending")
         let alanPendingWindowID = "active_alan_pending_\(UUID().uuidString)"
         let alanPendingController = makeController(
@@ -909,6 +932,21 @@ private enum ShellRuntimeMetadataTests {
             processExited: processExited,
             lastCommandExitCode: nil,
             lastUpdatedAt: Date(timeIntervalSince1970: 3_000),
+            activeTaskState: activeTaskState
+        )
+    }
+
+    private static func activeOnlyMetadata(
+        activeTaskState: ShellTabActiveTaskState
+    ) -> TerminalPaneMetadataSnapshot {
+        TerminalPaneMetadataSnapshot(
+            title: nil,
+            workingDirectory: nil,
+            summary: nil,
+            attention: .idle,
+            processExited: false,
+            lastCommandExitCode: nil,
+            lastUpdatedAt: nil,
             activeTaskState: activeTaskState
         )
     }

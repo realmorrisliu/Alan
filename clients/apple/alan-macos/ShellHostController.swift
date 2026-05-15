@@ -800,7 +800,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
                 metadataProcessExited: runtime.paneMetadata.processExited,
                 surfaceState: runtime.surfaceState
             ) ?? runtime.paneMetadata.processExited
-            recordTerminalActiveTask(
+            let activeTaskChanged = recordTerminalActiveTask(
                 runtime.paneMetadata.activeTaskState,
                 processExited: runtimeProcessExited,
                 for: paneID
@@ -817,7 +817,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
                 runtime: runtime
             )
 
-            updatePaneState(paneID: paneID) { current in
+            let didPublishPaneUpdate = updatePaneState(paneID: paneID) { current in
                 let projectedBinding = paneProjection.projectedAlanBinding(
                     for: current,
                     binding: current.alanBinding,
@@ -846,6 +846,9 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
                     alanBinding: projectedBinding
                 )
             }
+            if activeTaskChanged && !didPublishPaneUpdate {
+                syncWorkspaceManifestFromShellState()
+            }
         }
     }
 
@@ -857,7 +860,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
             metadataProcessExited: metadata.processExited,
             surfaceState: runtime.surfaceState
         ) ?? metadata.processExited
-        recordTerminalActiveTask(
+        let activeTaskChanged = recordTerminalActiveTask(
             metadata.activeTaskState,
             processExited: metadataProcessExited,
             for: paneID
@@ -874,7 +877,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
             runtime: runtime
         )
 
-        updatePaneState(
+        let didPublishPaneUpdate = updatePaneState(
             paneID: pane.paneID,
             tabTitleOverride: metadata.title
         ) { current in
@@ -906,6 +909,9 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
                 viewport: viewport,
                 alanBinding: projectedBinding
             )
+        }
+        if activeTaskChanged && !didPublishPaneUpdate {
+            syncWorkspaceManifestFromShellState()
         }
     }
 
@@ -1007,18 +1013,21 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         }
     }
 
+    @discardableResult
     private func updatePaneState(
         paneID: String,
         tabTitleOverride: String? = nil,
         transform: (ShellPane) -> ShellPane
-    ) {
-        guard let existingPane = shellState.panes.first(where: { $0.paneID == paneID }) else { return }
+    ) -> Bool {
+        guard let existingPane = shellState.panes.first(where: { $0.paneID == paneID }) else {
+            return false
+        }
         let transformedPane = transform(existingPane)
         let currentTabTitle = shellState.tab(tabID: existingPane.tabID)?.title
         let requestedTabTitle = tabTitleOverride ?? currentTabTitle
 
         guard transformedPane != existingPane || requestedTabTitle != currentTabTitle else {
-            return
+            return false
         }
 
         let updatedPanes = shellState.panes.map { pane in
@@ -1041,6 +1050,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         )
         synchronizeSelection()
         publishControlPlaneState()
+        return true
     }
 
     private func rebuildSpaces(
@@ -1369,18 +1379,23 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         return .inactive
     }
 
+    @discardableResult
     private func recordTerminalActiveTask(
         _ activeTaskState: ShellTabActiveTaskState?,
         processExited: Bool,
         for paneID: String
-    ) {
+    ) -> Bool {
+        let nextState: ShellTabActiveTaskState?
         if processExited {
-            terminalActiveTasksByPaneID[paneID] = .inactive
-            return
+            nextState = .inactive
+        } else {
+            nextState = activeTaskState
         }
 
-        guard let activeTaskState else { return }
-        terminalActiveTasksByPaneID[paneID] = activeTaskState
+        guard let nextState else { return false }
+        guard terminalActiveTasksByPaneID[paneID] != nextState else { return false }
+        terminalActiveTasksByPaneID[paneID] = nextState
+        return true
     }
 
     private func strongestTerminalActiveTask(in panes: [ShellPane]) -> ShellTabActiveTaskState? {
