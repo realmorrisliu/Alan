@@ -4,6 +4,9 @@
 The macOS shell host SHALL keep terminal process, renderer surface, runtime metadata,
 and buffered control state owned by terminal ContentInstances through the terminal
 runtime service rather than by the transient SwiftUI/AppKit view that happens to be visible.
+Runtime continuity applies while the Tab remains part of current shell state; explicit
+close operations and workspace lifecycle retirement of inactive unpinned Tabs SHALL
+finalize affected terminal ContentInstances through the runtime service boundary.
 
 #### Scenario: Switching away from a tab
 - **WHEN** a user switches from one tab to another and the first tab is no longer rendered
@@ -16,6 +19,17 @@ runtime service rather than by the transient SwiftUI/AppKit view that happens to
 #### Scenario: Closing a tab
 - **WHEN** a tab is explicitly closed
 - **THEN** all terminal ContentInstances owned by that tab are finalized exactly once through the runtime service and their final state is reflected in shell state
+
+#### Scenario: Retiring an inactive unpinned Tab
+- **WHEN** workspace lifecycle pruning retires an inactive unpinned Tab
+- **THEN** all terminal ContentInstances owned by that Tab are finalized through the same runtime service ownership boundary used by explicit close operations
+- **AND** non-terminal ContentInstances in that Tab follow their content-specific finalization path without invoking terminal runtime finalizers
+- **AND** retired PaneSlots and terminal ContentInstances are no longer valid terminal delivery targets
+
+#### Scenario: Restoring a Tab after app restart
+- **WHEN** alan restores a Pinned Tab or retained Unpinned Tab from the workspace manifest after app restart
+- **THEN** alan materializes terminal ContentInstances from the restore snapshot
+- **AND** alan creates new terminal runtimes for those ContentInstances instead of claiming continuity with processes from the prior app instance
 
 ### Requirement: Pane text delivery is truthful
 The macOS shell host SHALL only acknowledge terminal text delivery as applied when the

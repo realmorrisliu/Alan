@@ -28,6 +28,11 @@ command validation 和 content-keyed terminal runtime continuity 提供 focused 
 - **WHEN** 测试将 terminal ContentInstance 所在 PaneSlot 移动到另一个 tab 或重新 attach 视图
 - **THEN** terminal runtime handle、scrollback、metadata 和 pending delivery 仍绑定到同一个 `content_id`
 
+#### Scenario: Retired unpinned tab finalizes terminal content
+- **WHEN** workspace lifecycle pruning retires an inactive unpinned Tab that contains terminal ContentInstances
+- **THEN** focused tests verify those terminal runtimes are finalized through the runtime service
+- **AND** retired PaneSlots and terminal ContentInstances cannot receive later `terminal.send_text` delivery
+
 #### Scenario: Content rendering registry verified
 - **WHEN** renderer registry 收到 terminal、markdown 和 settings content descriptor
 - **THEN** 测试或 review checklist 确认每个 kind 路由到对应 renderer 或 bounded unavailable surface
