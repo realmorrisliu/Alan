@@ -1,6 +1,6 @@
 ## Why
 
-The macOS sidebar currently feels unreliable and physically inconsistent: tab and space selection can flash back to the previously focused terminal, pinned-sidebar collapse is not a coordinated motion, and horizontal space swipes are modeled as a sidebar-only preview instead of a continuous space sequence.
+The macOS sidebar currently feels unreliable and physically inconsistent: tab and space selection can flash back to the previously focused terminal, pinned-sidebar collapse is not a coordinated motion, and horizontal space swipes need a continuous sidebar-local content pager instead of discontinuous source/target preview behavior.
 
 This change formalizes a focused interaction pass so sidebar navigation, window chrome, and space switching share one authoritative focus and motion contract.
 
@@ -9,7 +9,7 @@ This change formalizes a focused interaction pass so sidebar navigation, window 
 - Make sidebar tab and space selection authoritative focus transitions: selecting a tab or space updates the shell focused pane through the same shell-state path used by terminal activation.
 - Replace pinned-sidebar insertion/removal with a continuous collapse and expand motion so the sidebar, terminal content inset, titlebar controls, and macOS traffic-light controls move together.
 - Refine collapsed/floating sidebar chrome timing so traffic lights do not jump, appear ahead of the panel, or linger on the bare window corner.
-- Replace the sidebar-only space swipe preview with a continuous pager model over the ordered space sequence, including edge preview, commit/cancel animation, and terminal focus handoff.
+- Replace discontinuous sidebar space swipe behavior with a continuous, sidebar-local content pager over the ordered `ShellSpace` sequence, including edge preview, commit/cancel animation, and terminal focus handoff only after commit.
 - Add focused tests and shell contract checks for selection persistence, sidebar/chrome animation invariants, and pager gesture behavior.
 
 ## Capabilities
@@ -21,8 +21,8 @@ This change formalizes a focused interaction pass so sidebar navigation, window 
 ### Modified Capabilities
 
 - `macos-shell-ui-ux-conformance`: clarify continuous sidebar chrome motion, pinned-sidebar collapse/expand behavior, and coordinated traffic-light/titlebar control movement.
-- `macos-shell-workspace-interactions`: replace sidebar-only space swipe preview semantics with authoritative focus selection and continuous space pager switching.
-- `macos-shell-build-test-contract`: require focused verification for selection/focus stability, space pager gestures, and coordinated sidebar/window-chrome behavior.
+- `macos-shell-workspace-interactions`: refine sidebar space swipe semantics with authoritative focus selection and a continuous sidebar-local content pager.
+- `macos-shell-build-test-contract`: require focused verification for selection/focus stability, sidebar-local space pager gestures, and coordinated sidebar/window-chrome behavior.
 
 ## Impact
 

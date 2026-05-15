@@ -65,7 +65,8 @@ while IFS= read -r line; do
     printf 'error: non-canonical alan brand occurrence: %s\n' "$rel" >&2
     violations=$((violations + 1))
 done < <(
-    rg -n --pcre2 "$PATTERN" "$REPO_ROOT" \
+    cd "$REPO_ROOT"
+    rg -n --pcre2 "$PATTERN" \
         --glob '!target/**' \
         --glob '!.git/**' \
         --glob '!plans/**' \

@@ -1,10 +1,3 @@
-## REMOVED Requirements
-
-### Requirement: Sidebar swipe previews spaces without moving the workspace
-**Reason**: Sidebar-only previews make spaces feel like a local list animation rather than a continuous workspace sequence, and delaying shell selection until after settlement leaves room for runtime focus updates to snap the UI back to the previous tab or space.
-
-**Migration**: Use the new continuous space pager and authoritative sidebar selection requirements in this change.
-
 ## ADDED Requirements
 
 ### Requirement: Sidebar selection commits authoritative shell focus
@@ -32,47 +25,57 @@ runtime focus converge.
 - **WHEN** terminal runtime metadata or control-plane state publication occurs immediately after sidebar selection
 - **THEN** the committed sidebar selection remains on the selected tab and space because the shell focused pane already matches the selection
 
-### Requirement: Space switching uses a continuous pager
-Horizontal space switching SHALL model spaces as an ordered, continuous sequence
-with a current page index, adjacent page preview, drag offset, and commit/cancel
-settlement, so swiping behaves like a native carousel or virtual desktop. The
-space page SHALL include the sidebar navigation content and the terminal
-workspace surface for each visible source or adjacent target space while
-preserving terminal runtime identity.
+## MODIFIED Requirements
 
-#### Scenario: Gesture-tracked pager preview
+### Requirement: Sidebar swipe previews spaces without moving the workspace
+Horizontal swipe gestures that originate inside the macOS sidebar SHALL drive
+a sidebar-local, finger-tracked space content pager. The moving page SHALL
+include only the sidebar's active-space header and active-space tab list. The
+command input, bottom space switcher, sidebar material surface, sidebar chrome,
+macOS traffic-light placement, and workspace terminal surface SHALL remain
+visually fixed while the gesture is active. alan SHALL avoid mutating durable
+shell selection until the gesture commits.
+
+#### Scenario: Gesture-tracked sidebar content pager
 - **WHEN** a user horizontally swipes inside the sidebar and an adjacent space exists
-- **THEN** alan renders the current and adjacent space pages from the same horizontal drag offset
-- **AND** the user can see the edge of the adjacent space while dragging toward it
-- **AND** the sidebar active-space header, sidebar tab list, and terminal workspace surface move as parts of the same space page
-- **AND** visible terminal panes keep their runtime identities instead of being restarted or recreated as a side effect of the drag
+- **THEN** the current sidebar space header and tab list move with the gesture while the adjacent space content previews from the side
+- **AND** the space header and tab list use the same full sidebar content page width for horizontal offsets
 - **AND** movement is rendered directly from horizontal finger translation instead of being amplified, quantized, or shaped by the commit threshold
+- **AND** the space header pager is not narrowed by row padding or trailing creation controls
+- **AND** the sidebar pager avoids static left or right padding gaps while pages move
+- **AND** the command input remains fixed
+- **AND** the bottom space switcher remains fixed as the stable space navigation control
+- **AND** the workspace terminal surface remains visually stable on the original selected space
+- **AND** visible terminal panes keep their runtime identities instead of being restarted, duplicated, or horizontally offset as a side effect of the drag
 - **AND** vertical tab-list scrolling does not move while horizontal intent is locked
+- **AND** later vertical finger movement during the same horizontal swipe does not move the tab list vertically
 
 #### Scenario: Undecided axis buffers mixed deltas
 - **WHEN** a sidebar scroll gesture has not yet crossed the horizontal or vertical intent threshold
 - **THEN** alan buffers the initial mixed deltas instead of applying partial vertical tab-list scrolling or horizontal pager movement
 - **AND** the gesture is routed only after horizontal or vertical intent is locked
 
-#### Scenario: Pager reaches sequence edge
+#### Scenario: Content pager reaches sequence edge
 - **WHEN** a user swipes past the first or last available space
-- **THEN** alan applies bounded edge resistance rather than wrapping unexpectedly or showing a nonexistent space page
-- **AND** releasing before a valid target is selected returns the pager to the current space
+- **THEN** alan applies bounded edge resistance to the moving sidebar content rather than wrapping unexpectedly or showing a nonexistent space page
+- **AND** releasing before a valid target is selected returns the content pager to the current space
 
 #### Scenario: Commit updates focus at the authoritative transition point
 - **WHEN** the user releases a space swipe past the commit threshold or with sufficient release velocity toward an adjacent space
 - **THEN** alan commits the target space through the shell controller selection and focus path
-- **AND** the visual pager settles smoothly to the committed space without being reverted by concurrent runtime updates
-- **AND** terminal focus follows the selected pane when the pane runtime is available
+- **AND** the sidebar content pager settles smoothly to the committed space without being reverted by concurrent runtime updates
+- **AND** the workspace terminal surface and terminal focus follow the committed space after shell selection commits
+- **AND** release is honored even when the macOS ended or momentum-start event carries zero scroll delta
 
 #### Scenario: Cancel preserves focus and layout
 - **WHEN** the user releases a space swipe before the commit threshold
-- **THEN** alan animates the pager back to the original space
+- **THEN** alan animates the sidebar content pager back to the original space
 - **AND** selected space, selected tab, terminal focus, split tree, and divider ratios remain unchanged
+- **AND** release is honored even when the macOS ended or momentum-start event carries zero scroll delta
 
 #### Scenario: Phaseful gesture waits for real release
 - **WHEN** a user pauses a phaseful horizontal trackpad swipe while their fingers remain on the trackpad
-- **THEN** alan keeps the pager at the current drag offset
+- **THEN** alan keeps the sidebar content pager at the current drag offset
 - **AND** alan does not commit or cancel until the gesture ends, is cancelled, or enters momentum
 
 #### Scenario: Release uses last effective velocity
@@ -87,10 +90,10 @@ preserving terminal runtime identity.
 
 #### Scenario: Phase-less gesture settles
 - **WHEN** a horizontal sidebar swipe comes from a scroll device that does not provide gesture phases
-- **THEN** alan may treat a short idle gap as release to avoid leaving the pager stuck
+- **THEN** alan may treat a short idle gap as release to avoid leaving the content pager stuck
 - **AND** shell selection follows the same commit threshold as other sidebar swipes
 
 #### Scenario: Vertical scroll is not captured
 - **WHEN** a user's gesture is primarily vertical in the sidebar tab list
 - **THEN** the native vertical tab-list scroll receives the gesture and the workspace space transition does not begin
-- **AND** horizontal pager movement is not applied while vertical intent is locked
+- **AND** horizontal sidebar content pager movement is not applied while vertical intent is locked

@@ -65,6 +65,7 @@
 		000000000000000000000038 /* ShellSidebarSwipeMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000138 /* ShellSidebarSwipeMonitor.swift */; };
 		000000000000000000000039 /* ShellWorkspaceManifest.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000139 /* ShellWorkspaceManifest.swift */; };
 		00000000000000000000003A /* ShellWorkspaceManifestStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000013A /* ShellWorkspaceManifestStore.swift */; };
+		00000000000000000000003B /* ShellSidebarSpaceContentPager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000013B /* ShellSidebarSpaceContentPager.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -127,6 +128,7 @@
 		000000000000000000000138 /* ShellSidebarSwipeMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Support/ShellSidebarSwipeMonitor.swift; sourceTree = "<group>"; };
 		000000000000000000000139 /* ShellWorkspaceManifest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models/Shell/ShellWorkspaceManifest.swift; sourceTree = "<group>"; };
 		00000000000000000000013A /* ShellWorkspaceManifestStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/Shell/ShellWorkspaceManifestStore.swift; sourceTree = "<group>"; };
+		00000000000000000000013B /* ShellSidebarSpaceContentPager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Support/ShellSidebarSpaceContentPager.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -202,6 +204,7 @@
 				000000000000000000000118 /* ShellDesignTokens.swift */,
 				000000000000000000000136 /* ConsoleAdaptiveColor.swift */,
 				000000000000000000000138 /* ShellSidebarSwipeMonitor.swift */,
+				00000000000000000000013B /* ShellSidebarSpaceContentPager.swift */,
 				000000000000000000000119 /* ShellWindowPlacement.swift */,
 				00000000000000000000011D /* ShellVoiceCommandController.swift */,
 			);
@@ -463,6 +466,7 @@
 				000000000000000000000036 /* ConsoleAdaptiveColor.swift in Sources */,
 				000000000000000000000037 /* ShellHostControlCommandHandling.swift in Sources */,
 				000000000000000000000038 /* ShellSidebarSwipeMonitor.swift in Sources */,
+				00000000000000000000003B /* ShellSidebarSpaceContentPager.swift in Sources */,
 				000000000000000000000039 /* ShellWorkspaceManifest.swift in Sources */,
 				00000000000000000000003A /* ShellWorkspaceManifestStore.swift in Sources */,
 			);
