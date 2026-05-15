@@ -1,3 +1,91 @@
+## MODIFIED Requirements
+
+### Requirement: Split layout stores durable ratios
+alan's macOS shell SHALL store split branch direction, child PaneSlot identity, and
+divider ratio in the shell model so split layouts survive rendering changes and
+app state persistence.
+
+#### Scenario: Existing equal split loads
+- **WHEN** a tab with an older equal split tree is loaded
+- **THEN** the shell model interprets each branch as equal ratios and preserves stable structural identity
+
+#### Scenario: Divider is resized
+- **WHEN** the user drags a split divider
+- **THEN** the branch ratio updates within usable minimum bounds and terminal ContentInstances keep their runtime identities
+
+#### Scenario: Window resizes
+- **WHEN** the window size changes after ratios were set
+- **THEN** pane frames are recalculated from stored ratios without resetting the split tree
+
+### Requirement: Split operations are native and reversible
+The macOS shell SHALL provide native split operations for creating directional
+PaneSlots, closing PaneSlots, resizing panes, and equalizing panes.
+
+#### Scenario: Create directional split
+- **WHEN** the user invokes split right, left, up, or down from a menu, shortcut, command UI, or control command
+- **THEN** alan inserts a new PaneSlot in the requested direction and focuses the intended PaneSlot according to the command semantics
+
+#### Scenario: Equalize splits
+- **WHEN** the user invokes equalize for a tab
+- **THEN** all split branches in that tab return to equal usable ratios without restarting terminal runtimes
+
+#### Scenario: Close focused pane
+- **WHEN** the user invokes close pane while a tab has multiple panes
+- **THEN** alan removes the focused PaneSlot, repairs the split tree, and keeps remaining terminal ContentInstance runtimes alive
+
+### Requirement: Spatial focus is first class
+The macOS shell SHALL allow users to move focus spatially between visible PaneSlots
+using left, right, up, and down directions.
+
+#### Scenario: Focus adjacent pane
+- **WHEN** the user invokes focus right from a focused PaneSlot with a visible neighbor to the right
+- **THEN** shell focus moves to that neighboring PaneSlot
+- **AND** terminal focus follows only when the neighboring PaneSlot mounts terminal content
+
+#### Scenario: Preserve perpendicular position
+- **WHEN** a tab contains a two-by-two split layout and the lower-left PaneSlot is focused
+- **THEN** invoking focus right selects the lower-right PaneSlot rather than the upper-right PaneSlot
+
+#### Scenario: No adjacent pane
+- **WHEN** a spatial focus command has no valid target in the requested direction
+- **THEN** focus remains unchanged and the command reports a no-target result where a response is required
+
+### Requirement: Pane lift and cross-tab moves preserve runtime identity
+alan's macOS shell SHALL support PaneSlot lift and cross-tab PaneSlot move operations
+that preserve PaneSlot identity, mounted ContentInstance identity, and any terminal
+runtime handle, scrollback, metadata, and pending delivery state owned by terminal content.
+
+#### Scenario: Lift pane to a new tab
+- **WHEN** the user lifts a PaneSlot out of a split tab
+- **THEN** alan creates a new tab for that PaneSlot and the mounted ContentInstance keeps the same identity
+- **AND** terminal runtime identity remains continuous when the mounted content is terminal
+
+#### Scenario: Move pane to another tab in the same window
+- **WHEN** the user moves a PaneSlot to another tab in the same shell window
+- **THEN** the PaneSlot and mounted ContentInstance keep their identities and the source and target tab split trees remain valid
+
+#### Scenario: Move would empty a tab
+- **WHEN** a PaneSlot move would leave a tab without panes
+- **THEN** alan either closes the empty tab through normal tab-close semantics or rejects the move with a stable reason
+
+### Requirement: Sidebar split indicators can focus panes
+Split topology indicators in the macOS sidebar SHALL route PaneSlot focus through
+the same shell controller focus model used by split interactions.
+
+#### Scenario: Two-pane segment clicked
+- **WHEN** a user clicks a segment in a two-pane tab row split indicator
+- **THEN** alan selects that PaneSlot
+- **AND** terminal focus follows only if the selected PaneSlot mounts terminal content
+- **AND** the action does not change the split tree or divider ratios
+
+#### Scenario: Complex split indicator clicked
+- **WHEN** a user clicks a compact indicator for a tab with three or more panes
+- **THEN** alan performs a predictable PaneSlot-focus action or opens a compact pane picker, and the action does not mutate the split tree
+
+#### Scenario: Split indicator keyboard access
+- **WHEN** a split tab row or its split indicator has keyboard focus
+- **THEN** keyboard or accessibility activation can focus PaneSlots without relying on pointer-only interaction
+
 ## ADDED Requirements
 
 ### Requirement: Pane layout operations are content-agnostic
