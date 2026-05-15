@@ -14,12 +14,12 @@
 - [x] 2.4 Preserve collapsed floating-sidebar reveal behavior: narrow edge hover, toolbar-hover retention, stable terminal workspace geometry, and no traffic-light appearance ahead of panel reveal.
 - [x] 2.5 Add or update focused window-placement tests for hidden traffic lights, floating surface origin, pinned motion final frames, and native traffic-light behavior.
 
-## 3. Continuous Space Pager
+## 3. Sidebar-local Space Content Pager
 
-- [x] 3.1 Replace the sidebar-only `ShellSpaceTransition` model with a pager state that tracks source index, target index, drag offset, page width, commit/cancel state, and settlement phase.
+- [x] 3.1 Replace the root-level `ShellSpacePagerState` usage with a sidebar-local pager state that tracks source index, target index, drag offset, sidebar content page width, commit/cancel state, and settlement phase.
 - [x] 3.2 Preserve gesture axis arbitration in `ShellSidebarSwipeMonitor`, including undecided buffering, vertical scroll pass-through, phaseful release, phase-less idle release, momentum handoff, and fast flick velocity.
-- [x] 3.3 Render current and adjacent space pages from the same pager offset so users can see the target space edge while dragging.
-- [x] 3.4 Include sidebar header, sidebar tab list, and terminal workspace surface in the pager page motion while preserving terminal runtime identities.
+- [x] 3.3 Render current and adjacent sidebar active-space content pages from the same pager offset so users can see the target space edge while dragging, without moving command input, the bottom space switcher, sidebar chrome, or the terminal workspace surface.
+- [x] 3.4 Keep command input, the bottom space switcher, sidebar chrome, traffic lights, and the terminal workspace surface visually fixed during sidebar-local pager motion while preserving terminal runtime identities.
 - [x] 3.5 Apply bounded edge resistance at the first and last spaces and prevent accidental wraparound.
 - [x] 3.6 Commit the target space through the authoritative selection/focus path at the transition point so concurrent runtime updates cannot snap the UI back during settlement.
 - [x] 3.7 Cancel below-threshold gestures back to the source page without changing selected space, selected tab, focused pane, split tree, or divider ratios.
@@ -28,7 +28,7 @@
 
 - [x] 4.1 Extend focused shell tests for sidebar selection/focus convergence and runtime-update race coverage.
 - [x] 4.2 Extend sidebar swipe monitor or pager tests for horizontal, vertical, undecided, edge, cancel, commit, phaseful, phase-less, and fast-flick cases.
-- [x] 4.3 Update shell contract checks so default shell code cannot reintroduce view-local-only sidebar selection or sidebar-only space swipe semantics.
+- [x] 4.3 Update shell contract checks so default shell code cannot reintroduce view-local-only sidebar selection or full-window space pager semantics.
 - [x] 4.4 Run focused Apple checks: `clients/apple/scripts/test-shell-runtime-metadata.sh`, `clients/apple/scripts/test-shell-sidebar-swipe-monitor.sh`, `clients/apple/scripts/test-shell-window-placement.sh`, and `clients/apple/scripts/check-shell-contracts.sh`.
 - [ ] 4.5 Build or run the macOS app and capture manual verification notes or screenshots for pinned collapse/expand, floating reveal/hide, tab click persistence, space click persistence, and space swipe pager motion.
 
