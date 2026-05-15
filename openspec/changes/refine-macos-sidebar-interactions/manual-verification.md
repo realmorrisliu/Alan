@@ -4,6 +4,7 @@ Date: 2026-05-15
 
 ## Automated Verification
 
+- `clients/apple/scripts/test-shell-window-placement.sh` passed with focused coverage for collapsed-sidebar pointer retention across the adjacent left resize frame.
 - `clients/apple/scripts/test-shell-sidebar-swipe-monitor.sh` passed.
 - `bash clients/apple/scripts/check-brand-identity.sh` passed after the brand scan was run from the repository root so the existing relative exclusions apply.
 - `bash clients/apple/scripts/check-shell-contracts.sh` passed.
@@ -20,6 +21,7 @@ Date: 2026-05-15
 - Tab click persistence: not performed in this run.
 - Space click persistence: not performed in this run.
 - Sidebar-local space swipe pager motion: not performed in this run.
+- Visible-frame-zoomed collapsed-sidebar left-edge retention: covered by focused AppKit geometry tests; live visual verification not performed in this run.
 
 The remaining human acceptance work is to launch the built app and visually verify those five interactions in the macOS shell. In particular, confirm that sidebar-local swipe motion moves only the active-space header and tab list while the command launcher, bottom space dock, sidebar chrome, traffic lights, and terminal workspace remain fixed.
 
