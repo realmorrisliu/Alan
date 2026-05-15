@@ -11,12 +11,7 @@ struct MacShellRootView: View {
     @State private var areFloatingSidebarTrafficLightsVisible = false
     @State private var sidebarRevealToken = 0
     @State private var floatingSidebarTrafficLightRevealToken = 0
-    @State private var isSpaceSwipeGestureLocked = false
     @State private var pinnedSidebarPresentationProgress: CGFloat
-    @State private var spacePager: ShellSidebarSpaceContentPagerState?
-    @State private var spacePagerToken = 0
-    @State private var spacePagerPageWidth: CGFloat = 1
-    @State private var spacePagerPageSelectedPaneIDs: [Int: String] = [:]
     @State private var windowChromeMetrics = ShellWindowChromeMetrics()
     @State private var systemColorScheme = ShellAppearanceMode.currentSystemColorScheme
     private let sidebarWidth: CGFloat = 264
@@ -58,191 +53,6 @@ struct MacShellRootView: View {
         DispatchQueue.main.async {
             host.refocusSelectedTerminalPane()
         }
-    }
-
-    private func handleSpaceSwipe(_ update: ShellSidebarSwipeUpdate) {
-        switch update.phase {
-        case .began:
-            guard spacePager?.isSettling != true else { return }
-            isSpaceSwipeGestureLocked = true
-            beginSpacePager()
-        case .changed:
-            guard spacePager?.isSettling != true else { return }
-            isSpaceSwipeGestureLocked = true
-            updateSpacePager(translationX: update.translationX)
-        case .ended:
-            finishSpacePager(velocityX: update.velocityX)
-        case .cancelled:
-            settleSpacePager(committing: false)
-        }
-    }
-
-    private func beginSpacePager() {
-        guard let sourceIndex = selectedSpaceIndex else { return }
-        var transaction = Transaction()
-        transaction.disablesAnimations = true
-        withTransaction(transaction) {
-            spacePagerPageSelectedPaneIDs = [
-                sourceIndex: host.selectedPane?.paneID,
-            ].compactMapValues { $0 }
-            spacePager = ShellSidebarSpaceContentPagerState(
-                sourceIndex: sourceIndex,
-                targetIndex: nil,
-                dragOffset: 0,
-                pageWidth: sidebarSwipePageWidth,
-                settlementPhase: .dragging
-            )
-        }
-    }
-
-    private func updateSpacePager(translationX: CGFloat) {
-        guard abs(translationX) > 0.5 else { return }
-        guard let sourceIndex = spacePager?.sourceIndex ?? selectedSpaceIndex else { return }
-
-        let direction = translationX < 0 ? 1 : -1
-        let targetIndex = adjacentSpaceIndex(from: sourceIndex, direction: direction)
-        let dragOffset = targetIndex == nil ? resistedEdgeOffset(for: translationX) : translationX
-
-        var transaction = Transaction()
-        transaction.disablesAnimations = true
-        withTransaction(transaction) {
-            if let targetIndex {
-                spacePagerPageSelectedPaneIDs[targetIndex] =
-                    spacePagerPageSelectedPaneIDs[targetIndex]
-                    ?? firstPaneID(forSpaceAt: targetIndex)
-            }
-            spacePager = ShellSidebarSpaceContentPagerState(
-                sourceIndex: sourceIndex,
-                targetIndex: targetIndex,
-                dragOffset: dragOffset,
-                pageWidth: sidebarSwipePageWidth,
-                settlementPhase: .dragging
-            )
-        }
-    }
-
-    private func finishSpacePager(velocityX: CGFloat) {
-        guard let pager = spacePager else {
-            isSpaceSwipeGestureLocked = false
-            return
-        }
-        guard pager.targetIndex != nil else {
-            settleSpacePager(committing: false)
-            return
-        }
-
-        let velocityDirection = velocityX < 0 ? 1 : -1
-        let fastEnough = abs(velocityX) >= 120 && velocityDirection == pager.direction
-        let farEnough = pager.progress >= 0.28
-        settleSpacePager(committing: farEnough || fastEnough)
-    }
-
-    private func settleSpacePager(committing: Bool) {
-        guard var pager = spacePager else {
-            isSpaceSwipeGestureLocked = false
-            return
-        }
-        let targetIndex = pager.targetIndex
-        if committing,
-           let targetIndex,
-           host.spaces.indices.contains(targetIndex)
-        {
-            host.select(spaceID: host.spaces[targetIndex].spaceID)
-        }
-
-        pager.settlementPhase = committing ? .settlingToTarget : .settlingToSource
-        pager.pageWidth = sidebarSwipePageWidth
-        pager.dragOffset = committing ? -CGFloat(pager.direction) * sidebarSwipePageWidth : 0
-        spacePagerToken += 1
-        let token = spacePagerToken
-        let duration = reduceMotion ? 0.12 : 0.28
-
-        withAnimation(settleAnimation) {
-            spacePager = pager
-        }
-
-        DispatchQueue.main.asyncAfter(deadline: .now() + duration) {
-            guard spacePagerToken == token else { return }
-            var transaction = Transaction()
-            transaction.disablesAnimations = true
-            withTransaction(transaction) {
-                spacePager = nil
-                spacePagerPageSelectedPaneIDs = [:]
-                isSpaceSwipeGestureLocked = false
-            }
-        }
-    }
-
-    private var settleAnimation: Animation {
-        if reduceMotion {
-            return .easeOut(duration: 0.12)
-        }
-        return .interactiveSpring(response: 0.28, dampingFraction: 0.86, blendDuration: 0.04)
-    }
-
-    private var sidebarSwipePageWidth: CGFloat {
-        max(spacePagerPageWidth, 1)
-    }
-
-    private func resistedEdgeOffset(for translationX: CGFloat) -> CGFloat {
-        let edgeLimit = sidebarSwipePageWidth * 0.18
-        let distance = abs(translationX)
-        let resistedDistance = edgeLimit * distance / (distance + edgeLimit)
-        return translationX < 0 ? -resistedDistance : resistedDistance
-    }
-
-    private func adjacentSpaceIndex(from sourceIndex: Int, direction: Int) -> Int? {
-        let targetIndex = sourceIndex + direction
-        guard host.spaces.indices.contains(targetIndex) else { return nil }
-        return targetIndex
-    }
-
-    private var selectedSpaceIndex: Int? {
-        guard let selectedSpaceID = host.selectedSpace?.spaceID else { return nil }
-        return host.spaces.firstIndex { $0.spaceID == selectedSpaceID }
-    }
-
-    private var previewedSpaceID: String? {
-        guard let targetIndex = spacePager?.targetIndex else { return nil }
-        return spaceID(forSpaceAt: targetIndex)
-    }
-
-    private var swipeEnabledSpaceIndex: Int? {
-        spacePager?.sourceIndex ?? selectedSpaceIndex
-    }
-
-    private var floatingSidebarDisplaySpaceID: String? {
-        if let sourceIndex = spacePager?.sourceIndex {
-            return spaceID(forSpaceAt: sourceIndex)
-        }
-        return host.selectedSpace?.spaceID
-    }
-
-    private func spaceID(forSpaceAt index: Int) -> String? {
-        guard host.spaces.indices.contains(index) else { return nil }
-        return host.spaces[index].spaceID
-    }
-
-    private func firstPaneID(forSpaceAt index: Int) -> String? {
-        guard host.spaces.indices.contains(index) else { return nil }
-        let space = host.spaces[index]
-        return space.tabs
-            .flatMap(\.paneTree.paneIDs)
-            .first { paneID in
-                host.shellState.panes.contains { $0.paneID == paneID }
-            }
-    }
-
-    private func selectedPaneID(forSpaceAt index: Int) -> String? {
-        if let paneID = spacePagerPageSelectedPaneIDs[index] {
-            return paneID
-        }
-        if index == selectedSpaceIndex,
-           let paneID = host.selectedPane?.paneID
-        {
-            return paneID
-        }
-        return firstPaneID(forSpaceAt: index)
     }
 
     private var isSidebarSurfaceVisible: Bool {
@@ -399,11 +209,20 @@ struct MacShellRootView: View {
             ShellMaterialBackgroundView(.windowBackdrop)
                 .ignoresSafeArea()
 
-            spacePagerPages
-                .frame(
-                    minWidth: ShellWindowSizing.minimumSize.width,
-                    minHeight: ShellWindowSizing.minimumSize.height
+            HStack(spacing: 0) {
+                pinnedSidebarSurface()
+
+                ShellWorkspaceView(
+                    host: host,
+                    expandedSidebarProgress: clampedPinnedSidebarPresentationProgress
                 )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .ignoresSafeArea(edges: .top)
+            }
+            .frame(
+                minWidth: ShellWindowSizing.minimumSize.width,
+                minHeight: ShellWindowSizing.minimumSize.height
+            )
 
             if isSidebarCollapsed && isPinnedSidebarFullyCollapsed {
                 collapsedSidebarRevealZone
@@ -464,82 +283,8 @@ struct MacShellRootView: View {
         )
     }
 
-    private var spacePagerPages: some View {
-        GeometryReader { proxy in
-            let pageWidth = max(proxy.size.width, 1)
-            ZStack(alignment: .leading) {
-                ForEach(spacePageIndices, id: \.self) { index in
-                    spacePage(index: index, pageWidth: pageWidth)
-                        .frame(width: pageWidth, height: proxy.size.height, alignment: .topLeading)
-                        .offset(x: spacePageOffset(for: index, pageWidth: pageWidth))
-                        .allowsHitTesting(spacePager == nil && index == selectedSpaceIndex)
-                }
-            }
-            .clipped()
-            .onAppear {
-                updateSpacePagerPageWidth(pageWidth)
-            }
-            .onChange(of: proxy.size.width) { _, width in
-                updateSpacePagerPageWidth(max(width, 1))
-            }
-        }
-    }
-
-    private var spacePageIndices: [Int] {
-        guard let spacePager else {
-            return selectedSpaceIndex.map { [$0] } ?? []
-        }
-        return spacePager.pageIndicesForRendering.filter { host.spaces.indices.contains($0) }
-    }
-
-    private func spacePage(index: Int, pageWidth: CGFloat) -> some View {
-        HStack(spacing: 0) {
-            pinnedSidebarSurface(
-                displaySpaceID: spaceID(forSpaceAt: index),
-                previewedSpaceID: previewedSpaceID,
-                isSwipeEnabled: index == swipeEnabledSpaceIndex
-            )
-
-            ShellWorkspaceView(
-                host: host,
-                expandedSidebarProgress: clampedPinnedSidebarPresentationProgress,
-                spaceID: spaceID(forSpaceAt: index),
-                selectedPaneID: selectedPaneID(forSpaceAt: index)
-            )
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .ignoresSafeArea(edges: .top)
-        }
-        .frame(width: pageWidth, alignment: .leading)
-    }
-
-    private func spacePageOffset(for index: Int, pageWidth: CGFloat) -> CGFloat {
-        guard var spacePager else { return 0 }
-        spacePager.pageWidth = pageWidth
-        return spacePager.offset(for: index)
-    }
-
-    private func updateSpacePagerPageWidth(_ pageWidth: CGFloat) {
-        let clampedPageWidth = max(pageWidth, 1)
-        spacePagerPageWidth = clampedPageWidth
-        guard var spacePager,
-              spacePager.pageWidth != clampedPageWidth
-        else {
-            return
-        }
-        spacePager.pageWidth = clampedPageWidth
-        self.spacePager = spacePager
-    }
-
-    private func pinnedSidebarSurface(
-        displaySpaceID: String?,
-        previewedSpaceID: String?,
-        isSwipeEnabled: Bool
-    ) -> some View {
-        sidebarContent(
-            displaySpaceID: displaySpaceID,
-            previewedSpaceID: previewedSpaceID,
-            isSwipeEnabled: isSwipeEnabled
-        )
+    private func pinnedSidebarSurface() -> some View {
+        sidebarContent(isSwipeEnabled: true)
             .frame(width: sidebarWidth)
             .offset(x: sidebarPinnedChromeOffsetX)
             .opacity(sidebarPinnedContentOpacity)
@@ -562,19 +307,12 @@ struct MacShellRootView: View {
         }
     }
 
-    private func sidebarContent(
-        displaySpaceID: String? = nil,
-        previewedSpaceID: String? = nil,
-        isSwipeEnabled: Bool = true
-    ) -> some View {
+    private func sidebarContent(isSwipeEnabled: Bool = true) -> some View {
         ShellSidebarView(
             host: host,
             chromeMetrics: windowChromeMetrics,
-            displaySpaceID: displaySpaceID,
-            previewedSpaceID: previewedSpaceID,
-            isSpaceSwipeGestureLocked: isSpaceSwipeGestureLocked,
-            isSwipeEnabled: isSwipeEnabled,
-            onSpaceSwipe: handleSpaceSwipe
+            displaySpaceID: nil,
+            isSwipeEnabled: isSwipeEnabled
         ) {
             presentCommandInput()
         }
@@ -609,11 +347,7 @@ struct MacShellRootView: View {
                         .stroke(ShellPalette.line.opacity(0.22), lineWidth: 0.8)
                 }
 
-            sidebarContent(
-                displaySpaceID: floatingSidebarDisplaySpaceID,
-                previewedSpaceID: previewedSpaceID,
-                isSwipeEnabled: true
-            )
+            sidebarContent(isSwipeEnabled: true)
                 .clipShape(
                     RoundedRectangle(
                         cornerRadius: ShellRadii.floatingSidebarPanel,

@@ -4,68 +4,18 @@ import SwiftUI
 struct ShellWorkspaceView: View {
     @ObservedObject var host: ShellHostController
     let expandedSidebarProgress: CGFloat
-    let spaceID: String?
-    let selectedPaneID: String?
-
-    init(
-        host: ShellHostController,
-        expandedSidebarProgress: CGFloat,
-        spaceID: String? = nil,
-        selectedPaneID: String? = nil
-    ) {
-        self.host = host
-        self.expandedSidebarProgress = expandedSidebarProgress
-        self.spaceID = spaceID
-        self.selectedPaneID = selectedPaneID
-    }
 
     var body: some View {
         TerminalPaneView(
             host: host,
-            tab: displayTab,
-            spaceID: displaySpace?.spaceID,
-            selectedPaneID: displaySelectedPaneID,
+            tab: host.selectedTab,
+            spaceID: host.selectedSpace?.spaceID,
+            selectedPaneID: host.selectedPane?.paneID,
             terminalSurfaceInsets: ShellWorkspaceMetrics.terminalSurfaceInsets(
                 expandedSidebarProgress: expandedSidebarProgress
             )
         )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-
-    private var displaySpace: ShellSpace? {
-        guard let spaceID else { return host.selectedSpace }
-        return host.spaces.first { $0.spaceID == spaceID }
-    }
-
-    private var displayTab: ShellTab? {
-        guard let displaySpace else { return host.selectedTab }
-        if displaySpace.spaceID == host.selectedSpace?.spaceID,
-           let selectedTab = host.selectedTab,
-           displaySpace.tabs.contains(where: { $0.tabID == selectedTab.tabID })
-        {
-            return selectedTab
-        }
-        if let selectedPaneID,
-           let tab = displaySpace.tabs.first(where: { $0.contains(paneID: selectedPaneID) })
-        {
-            return tab
-        }
-        return displaySpace.tabs.first
-    }
-
-    private var displaySelectedPaneID: String? {
-        if let selectedPaneID,
-           displayTab?.contains(paneID: selectedPaneID) == true
-        {
-            return selectedPaneID
-        }
-        if displayTab?.tabID == host.selectedTab?.tabID,
-           let selectedPaneID = host.selectedPane?.paneID,
-           displayTab?.contains(paneID: selectedPaneID) == true
-        {
-            return selectedPaneID
-        }
-        return displayTab?.paneTree.paneIDs.first
     }
 }
 
