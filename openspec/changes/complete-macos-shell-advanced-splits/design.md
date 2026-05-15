@@ -8,7 +8,10 @@ ownership can lose terminal continuity or steal terminal input.
 
 The main constraints are:
 
-- Terminal runtime identity must remain pane-keyed and service-owned.
+- Terminal runtime identity must remain service-owned and, after
+  `generalize-macos-shell-content-containers`, terminal ContentInstance-keyed;
+  pane or PaneSlot identity is the layout/focus placement boundary, not the
+  terminal runtime owner.
 - Terminal text selection and terminal app input must not be compromised by
   drag/drop or shortcut handling.
 - Native menu, keyboard, command UI, context menu, and control-plane commands
@@ -49,8 +52,9 @@ The main constraints are:
 2. Implement explicit move commands before enabling drag/drop by default.
 
    Controller-owned move commands can validate source/target tabs and preserve
-   runtime identity before gesture complexity is introduced. Drag/drop can then
-   call the same command path once terminal selection behavior is proven.
+   PaneSlot placement and mounted terminal content runtime identity before
+   gesture complexity is introduced. Drag/drop can then call the same command
+   path once terminal selection behavior is proven.
 
    Alternative considered: start with direct drag/drop. That would make it
    harder to separate model bugs from hit-testing and terminal-selection bugs.
@@ -58,8 +62,9 @@ The main constraints are:
 3. Route native commands through a command target resolver.
 
    Copy, paste, search, zoom, focus, and movement need a consistent target:
-   selected terminal host, focused pane, selected tab, or command UI row. A
-   resolver keeps menu, keyboard, and command UI behavior aligned.
+   selected terminal host, focused PaneSlot, mounted terminal ContentInstance,
+   selected tab, or command UI row. A resolver keeps menu, keyboard, and command
+   UI behavior aligned.
 
    Alternative considered: let each surface decide locally. That repeats the
    old hidden-button problem and makes terminal-host ownership ambiguous.

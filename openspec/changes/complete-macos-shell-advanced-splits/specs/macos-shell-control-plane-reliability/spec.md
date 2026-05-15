@@ -6,7 +6,7 @@ resize, equalize, zoom, unzoom, and spatial focus commands.
 
 #### Scenario: Resize command succeeds
 - **WHEN** a control client requests a valid split ratio change
-- **THEN** the response reports `applied: true` and includes the resulting ratio and affected split or pane IDs
+- **THEN** the response reports `applied: true` and includes the resulting ratio and affected split or PaneSlot IDs
 
 #### Scenario: Equalize command succeeds
 - **WHEN** a control client requests equalize for a tab with split branches
@@ -14,7 +14,7 @@ resize, equalize, zoom, unzoom, and spatial focus commands.
 
 #### Scenario: Zoom command succeeds
 - **WHEN** a control client zooms or unzooms a valid pane
-- **THEN** the response reports `applied: true`, the pane ID, and the tab zoom state
+- **THEN** the response reports `applied: true`, the `pane_slot_id`, and the tab zoom state
 
 #### Scenario: Spatial focus has no target
 - **WHEN** a control client requests spatial focus and no adjacent pane exists
@@ -25,8 +25,8 @@ Pane move commands SHALL report enough source and destination detail for agents
 to observe layout changes without inferring them from raw shell snapshots.
 
 #### Scenario: In-tab move succeeds
-- **WHEN** a control client moves a pane within a tab
-- **THEN** the response reports the pane ID, source tab, destination tab, direction or position, and preserved runtime identity
+- **WHEN** a control client moves a PaneSlot within a tab
+- **THEN** the response reports the `pane_slot_id`, source tab, destination tab, direction or position, and preserved mounted ContentInstance identity
 
 #### Scenario: Drag-backed move succeeds
 - **WHEN** a drag/drop affordance completes through the control-plane movement path

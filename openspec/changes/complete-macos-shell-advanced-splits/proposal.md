@@ -8,9 +8,10 @@ does not disappear inside an archived change.
 ## What Changes
 
 - Add split zoom and unzoom as a tab-scoped view state that preserves sibling
-  pane runtimes and restores the previous split layout.
+  terminal ContentInstance runtimes and restores the previous split layout.
 - Add explicit in-tab pane movement and optional drag/drop movement once it can
-  preserve runtime identity without compromising terminal text selection.
+  preserve PaneSlot placement and terminal ContentInstance runtime identity without
+  compromising terminal text selection.
 - Extend control-plane commands for split resize, equalize, zoom/unzoom, and
   spatial focus with authoritative result semantics.
 - Complete command ownership for copy, paste, and terminal search so native
@@ -32,9 +33,9 @@ None.
 - `macos-shell-control-plane-reliability`: Adds authoritative control-plane
   result semantics for resize, equalize, zoom/unzoom, spatial focus, and
   movement commands.
-- `macos-shell-terminal-lifecycle`: Clarifies runtime identity preservation for
-  zoom/unzoom, in-tab movement, drag/drop movement, and search/copy/paste target
-  routing.
+- `macos-shell-terminal-lifecycle`: Clarifies terminal ContentInstance runtime
+  identity preservation for zoom/unzoom, in-tab movement, drag/drop movement,
+  and search/copy/paste target routing.
 - `macos-shell-ui-ux-conformance`: Adds UI requirements for zoom affordances,
   movement affordances, drag/drop quality gates, and search/copy/paste command
   surfaces without toolbar bloat.
