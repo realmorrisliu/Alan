@@ -1,3 +1,43 @@
+## MODIFIED Requirements
+
+### Requirement: Terminal host boundary is testable
+The terminal host SHALL expose a testable boundary for runtime attachment,
+teardown, and text delivery without requiring the real Ghostty library in every
+test.
+
+#### Scenario: Mock runtime accepts text
+- **WHEN** a test runtime is registered for terminal content and `terminal.send_text` is issued
+- **THEN** the test verifies the text reaches the runtime and the control response reports accepted bytes with the terminal `content_id`
+
+#### Scenario: Mock runtime unavailable
+- **WHEN** no runtime is registered for terminal content and `terminal.send_text` is issued
+- **THEN** the test verifies the response reports failure or durable queueing according to the delivery contract
+
+### Requirement: Runtime service ownership has focused tests
+The Apple client SHALL include focused tests for process bootstrap, window
+runtime service ownership, terminal ContentInstance handle creation, reattachment,
+text delivery, and teardown using fake Ghostty adapters where possible.
+
+#### Scenario: Fake runtime reattaches view
+- **WHEN** a test creates a terminal ContentInstance handle, detaches the host view, and attaches a replacement host view
+- **THEN** the test verifies that the `content_id` handle identity and runtime metadata remain unchanged
+
+#### Scenario: Fake runtime tears down once
+- **WHEN** a test closes a terminal ContentInstance, PaneSlot, tab, or window through shell actions
+- **THEN** the fake runtime observes exactly one teardown call per affected terminal ContentInstance
+
+### Requirement: Control-plane runtime tests use the service boundary
+Control-plane tests SHALL exercise runtime-dependent mutations through the same
+terminal runtime service boundary used by production code.
+
+#### Scenario: Service accepts text
+- **WHEN** a control-plane test sends text to fake live terminal content with `terminal.send_text`
+- **THEN** the command response reports accepted bytes from the fake service and shell diagnostics remain clean
+
+#### Scenario: Service reports runtime missing
+- **WHEN** a control-plane test sends text to terminal content whose service handle is absent
+- **THEN** the command response reports a stable runtime-missing error
+
 ## ADDED Requirements
 
 ### Requirement: Content container model has focused tests

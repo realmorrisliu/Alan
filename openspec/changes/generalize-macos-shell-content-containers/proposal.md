@@ -53,6 +53,8 @@ workspace restore authority 先由 `ShellWorkspaceManifest` 接管；随后本 c
   在默认 shell 中的视觉层级和 progressive disclosure。
 - `macos-shell-workspace-persistence`: 将 workspace manifest 的 pin/live restore snapshot
   从 terminal-only pane shape 升级为 content-aware PaneSlot / ContentInstance restore shape。
+- `macos-terminal-runtime-foundation`: 将 terminal runtime service、surface handle、metadata
+  projection 和 text delivery 从 pane-keyed 迁移为 terminal ContentInstance keyed。
 - `macos-shell-build-test-contract`: 增加通用 content-container 模型、渲染注册和混合 split
   场景的验证要求。
 
@@ -65,5 +67,6 @@ workspace restore authority 先由 `ShellWorkspaceManifest` 接管；随后本 c
   terminal host attachment, and markdown/settings host views.
 - Affected runtime/control plane code: shell DTOs, local/socket command handling, event projection,
   command result codes, terminal-only command validation, and legacy v0.1 state migration.
-- Affected tests/scripts: shell model mutation tests, terminal runtime continuity checks,
-  control-plane contract tests, and screenshot/manual verification for mixed content tabs.
+- Affected tests/scripts: shell model mutation tests, fake terminal runtime service tests,
+  terminal runtime continuity checks, control-plane contract tests, and screenshot/manual
+  verification for mixed content tabs.
