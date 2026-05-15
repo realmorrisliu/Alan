@@ -14,6 +14,7 @@ struct MacShellRootView: View {
     @State private var pinnedSidebarPresentationProgress: CGFloat
     @State private var windowChromeMetrics = ShellWindowChromeMetrics()
     @State private var systemColorScheme = ShellAppearanceMode.currentSystemColorScheme
+    @State private var isCollapsedSidebarPointerRetained = false
     private let sidebarWidth: CGFloat = 264
     private let floatingSidebarInset: CGFloat = 6
     private let floatingSidebarTrafficLightRevealDelay: TimeInterval = 0.08
@@ -118,6 +119,10 @@ struct MacShellRootView: View {
         return isSidebarPanelRevealed && areFloatingSidebarTrafficLightsVisible
     }
 
+    private var isCollapsedSidebarPointerRetentionActive: Bool {
+        isSidebarCollapsed && isPinnedSidebarFullyCollapsed && isSidebarPanelRevealed
+    }
+
     private func revealCollapsedSidebarPanel() {
         guard isSidebarCollapsed, isPinnedSidebarFullyCollapsed else { return }
         sidebarRevealToken += 1
@@ -138,6 +143,7 @@ struct MacShellRootView: View {
         let token = sidebarRevealToken
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.16) {
             guard sidebarRevealToken == token, isSidebarCollapsed else { return }
+            guard !isCollapsedSidebarPointerRetained else { return }
             areFloatingSidebarTrafficLightsVisible = false
             floatingSidebarTrafficLightRevealToken += 1
             withAnimation(sidebarPanelHideAnimation) {
@@ -172,6 +178,15 @@ struct MacShellRootView: View {
     private func handleCollapsedSidebarToolbarHover(_ hovering: Bool) {
         guard isSidebarCollapsed, isPinnedSidebarFullyCollapsed else { return }
         handleCollapsedSidebarHover(hovering)
+    }
+
+    private func handleCollapsedSidebarPointerRetention(_ retained: Bool) {
+        guard isCollapsedSidebarPointerRetentionActive else { return }
+        if retained {
+            sidebarRevealToken += 1
+        } else {
+            scheduleCollapsedSidebarHide()
+        }
     }
 
     private var sidebarPanelRevealAnimation: Animation? {
@@ -273,12 +288,17 @@ struct MacShellRootView: View {
         .onChange(of: host.commandInputRequestID) { _, _ in
             toggleCommandInput()
         }
+        .onChange(of: isCollapsedSidebarPointerRetained) { _, retained in
+            handleCollapsedSidebarPointerRetention(retained)
+        }
         .background(
             ShellWindowPlacementView(
                 metrics: $windowChromeMetrics,
                 appearanceMode: appearanceMode,
                 chromeSurface: windowChromeSurface,
-                systemColorScheme: $systemColorScheme
+                systemColorScheme: $systemColorScheme,
+                collapsedSidebarPointerRetentionEnabled: isCollapsedSidebarPointerRetentionActive,
+                collapsedSidebarPointerRetained: $isCollapsedSidebarPointerRetained
             )
         )
     }

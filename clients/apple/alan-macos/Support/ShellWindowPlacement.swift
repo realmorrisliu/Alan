@@ -4,29 +4,57 @@ import SwiftUI
 import AppKit
 
 struct ShellWindowPlacementView: NSViewRepresentable {
-    @Binding var metrics: ShellWindowChromeMetrics
+    @Binding private var metrics: ShellWindowChromeMetrics
     let appearanceMode: ShellAppearanceMode
     var chromeSurface: ShellWindowChromeSurface = .visible
-    @Binding var systemColorScheme: ColorScheme
+    @Binding private var systemColorScheme: ColorScheme
+    var collapsedSidebarPointerRetentionEnabled = false
+    @Binding private var collapsedSidebarPointerRetained: Bool
+
+    init(
+        metrics: Binding<ShellWindowChromeMetrics>,
+        appearanceMode: ShellAppearanceMode,
+        chromeSurface: ShellWindowChromeSurface = .visible,
+        systemColorScheme: Binding<ColorScheme>,
+        collapsedSidebarPointerRetentionEnabled: Bool = false,
+        collapsedSidebarPointerRetained: Binding<Bool> = .constant(false)
+    ) {
+        _metrics = metrics
+        self.appearanceMode = appearanceMode
+        self.chromeSurface = chromeSurface
+        _systemColorScheme = systemColorScheme
+        self.collapsedSidebarPointerRetentionEnabled = collapsedSidebarPointerRetentionEnabled
+        _collapsedSidebarPointerRetained = collapsedSidebarPointerRetained
+    }
 
     func makeNSView(context: Context) -> ShellWindowPlacementNSView {
         let metricsBinding = _metrics
         let systemColorSchemeBinding = _systemColorScheme
+        let pointerRetentionBinding = _collapsedSidebarPointerRetained
         return ShellWindowPlacementNSView(
             appearanceMode: appearanceMode,
             chromeSurface: chromeSurface,
             metricsHandler: metricsHandler(metricsBinding),
-            systemAppearanceHandler: systemAppearanceHandler(systemColorSchemeBinding)
+            systemAppearanceHandler: systemAppearanceHandler(systemColorSchemeBinding),
+            collapsedSidebarPointerRetentionEnabled: collapsedSidebarPointerRetentionEnabled,
+            collapsedSidebarPointerRetentionHandler: pointerRetentionHandler(pointerRetentionBinding)
         )
     }
 
     func updateNSView(_ nsView: ShellWindowPlacementNSView, context: Context) {
         let metricsBinding = _metrics
         let systemColorSchemeBinding = _systemColorScheme
+        let pointerRetentionBinding = _collapsedSidebarPointerRetained
         nsView.updateAppearanceMode(appearanceMode)
         nsView.updateMetricsHandler(metricsHandler(metricsBinding))
         nsView.updateSystemAppearanceHandler(systemAppearanceHandler(systemColorSchemeBinding))
+        nsView.updateCollapsedSidebarPointerRetentionHandler(
+            pointerRetentionHandler(pointerRetentionBinding)
+        )
         nsView.updateChromeSurface(chromeSurface)
+        nsView.updateCollapsedSidebarPointerRetention(
+            enabled: collapsedSidebarPointerRetentionEnabled
+        )
         nsView.resolveWindowIfNeeded()
     }
 
@@ -48,6 +76,17 @@ struct ShellWindowPlacementView: NSViewRepresentable {
             DispatchQueue.main.async {
                 guard systemColorSchemeBinding.wrappedValue != colorScheme else { return }
                 systemColorSchemeBinding.wrappedValue = colorScheme
+            }
+        }
+    }
+
+    private func pointerRetentionHandler(
+        _ pointerRetentionBinding: Binding<Bool>
+    ) -> (Bool) -> Void {
+        { retained in
+            DispatchQueue.main.async {
+                guard pointerRetentionBinding.wrappedValue != retained else { return }
+                pointerRetentionBinding.wrappedValue = retained
             }
         }
     }
@@ -92,6 +131,63 @@ struct ShellWindowChromeMetrics: Equatable {
 
     var collapsedRevealHeaderHeight: CGFloat {
         commandLauncherTopInset + ShellSidebarMetrics.commandLauncherHeight + 8
+    }
+}
+
+enum ShellCollapsedSidebarPointerRetention {
+    static let leftResizeFrameWidth: CGFloat = 16
+
+    static func contains(
+        locationInWindow point: CGPoint,
+        windowSize: CGSize,
+        chromeSurface: ShellWindowChromeSurface
+    ) -> Bool {
+        contains(
+            locationInWindow: point,
+            windowSize: windowSize,
+            chromeSurface: chromeSurface,
+            edgeWidth: ShellSidebarMetrics.collapsedRevealEdgeWidth,
+            leftResizeFrameWidth: leftResizeFrameWidth
+        )
+    }
+
+    static func contains(
+        locationInWindow point: CGPoint,
+        windowSize: CGSize,
+        chromeSurface: ShellWindowChromeSurface,
+        edgeWidth: CGFloat,
+        leftResizeFrameWidth: CGFloat
+    ) -> Bool {
+        guard windowSize.width > 0, windowSize.height > 0 else { return false }
+
+        let verticalBounds = ClosedRange(
+            uncheckedBounds: (
+                lower: -leftResizeFrameWidth,
+                upper: windowSize.height + leftResizeFrameWidth
+            )
+        )
+        guard verticalBounds.contains(point.y) else { return false }
+
+        if point.x >= -leftResizeFrameWidth
+            && point.x <= max(edgeWidth, leftResizeFrameWidth) {
+            return true
+        }
+
+        guard chromeSurface.isVisible, let surfaceWidth = chromeSurface.width else {
+            return false
+        }
+
+        let surfaceMinX = chromeSurface.origin.x
+        let surfaceMaxX = surfaceMinX + surfaceWidth
+        if point.x >= surfaceMinX && point.x <= surfaceMaxX {
+            return true
+        }
+
+        return ShellWindowDoubleClickZoomHitTesting.isPointInSidebarChromeControls(
+            point,
+            windowSize: windowSize,
+            chromeSurface: chromeSurface
+        )
     }
 }
 
@@ -286,17 +382,25 @@ final class ShellWindowPlacementNSView: NSView {
     private var isSynchronizingChrome = false
     private var liveResizeChromeSyncTimer: Timer?
     private var nativeFullScreenOverride: Bool?
+    private var collapsedSidebarPointerRetentionEnabled = false
+    private var collapsedSidebarPointerRetained = false
+    private var collapsedSidebarPointerRetentionHandler: (Bool) -> Void
+    private var pointerRetentionEventMonitor: Any?
 
     init(
         appearanceMode: ShellAppearanceMode,
         chromeSurface: ShellWindowChromeSurface = .visible,
         metricsHandler: @escaping (ShellWindowChromeMetrics) -> Void,
-        systemAppearanceHandler: @escaping (ColorScheme) -> Void = { _ in }
+        systemAppearanceHandler: @escaping (ColorScheme) -> Void = { _ in },
+        collapsedSidebarPointerRetentionEnabled: Bool = false,
+        collapsedSidebarPointerRetentionHandler: @escaping (Bool) -> Void = { _ in }
     ) {
         self.appearanceMode = appearanceMode
         self.chromeSurface = chromeSurface
         self.metricsHandler = metricsHandler
         self.systemAppearanceHandler = systemAppearanceHandler
+        self.collapsedSidebarPointerRetentionEnabled = collapsedSidebarPointerRetentionEnabled
+        self.collapsedSidebarPointerRetentionHandler = collapsedSidebarPointerRetentionHandler
         super.init(frame: .zero)
     }
 
@@ -307,6 +411,7 @@ final class ShellWindowPlacementNSView: NSView {
 
     deinit {
         stopLiveResizeChromeSync()
+        removePointerRetentionEventMonitor()
         removeWindowObservers()
         removeTitlebarObservers()
     }
@@ -352,8 +457,30 @@ final class ShellWindowPlacementNSView: NSView {
     func updateChromeSurface(_ surface: ShellWindowChromeSurface) {
         let didChange = chromeSurface != surface
         chromeSurface = surface
+        updateCollapsedSidebarPointerRetentionState()
         guard didChange else { return }
         synchronizeChromeIfAttached()
+    }
+
+    func updateCollapsedSidebarPointerRetentionHandler(_ handler: @escaping (Bool) -> Void) {
+        collapsedSidebarPointerRetentionHandler = handler
+        collapsedSidebarPointerRetentionHandler(collapsedSidebarPointerRetained)
+    }
+
+    func updateCollapsedSidebarPointerRetention(enabled: Bool) {
+        let didChange = collapsedSidebarPointerRetentionEnabled != enabled
+        collapsedSidebarPointerRetentionEnabled = enabled
+
+        if enabled {
+            installPointerRetentionEventMonitorIfNeeded()
+            updateCollapsedSidebarPointerRetentionState()
+        } else {
+            removePointerRetentionEventMonitor()
+            publishCollapsedSidebarPointerRetained(false)
+        }
+
+        guard didChange else { return }
+        updateCollapsedSidebarPointerRetentionState()
     }
 
     func resolveWindowIfNeeded() {
@@ -384,6 +511,10 @@ final class ShellWindowPlacementNSView: NSView {
 
         removeWindowObservers()
         observedWindow = window
+        if collapsedSidebarPointerRetentionEnabled {
+            installPointerRetentionEventMonitorIfNeeded()
+            updateCollapsedSidebarPointerRetentionState()
+        }
 
         let center = NotificationCenter.default
         windowObservers = [
@@ -455,6 +586,7 @@ final class ShellWindowPlacementNSView: NSView {
 
     private func removeWindowObservers() {
         stopLiveResizeChromeSync()
+        removePointerRetentionEventMonitor()
         windowObservers.forEach(NotificationCenter.default.removeObserver)
         windowObservers.removeAll()
         observedWindow = nil
@@ -554,6 +686,62 @@ final class ShellWindowPlacementNSView: NSView {
         synchronizeChrome(for: window)
     }
 
+    private func installPointerRetentionEventMonitorIfNeeded() {
+        guard pointerRetentionEventMonitor == nil else { return }
+        let mask: NSEvent.EventTypeMask = [
+            .mouseMoved,
+            .leftMouseDragged,
+            .rightMouseDragged,
+            .otherMouseDragged,
+        ]
+        pointerRetentionEventMonitor = NSEvent.addLocalMonitorForEvents(matching: mask) {
+            [weak self] event in
+            self?.handlePointerRetentionEvent(event)
+            return event
+        }
+    }
+
+    private func removePointerRetentionEventMonitor() {
+        guard let pointerRetentionEventMonitor else { return }
+        NSEvent.removeMonitor(pointerRetentionEventMonitor)
+        self.pointerRetentionEventMonitor = nil
+    }
+
+    private func handlePointerRetentionEvent(_ event: NSEvent) {
+        guard collapsedSidebarPointerRetentionEnabled else { return }
+        guard let window else {
+            publishCollapsedSidebarPointerRetained(false)
+            return
+        }
+
+        if let eventWindow = event.window, eventWindow !== window {
+            publishCollapsedSidebarPointerRetained(false)
+            return
+        }
+
+        updateCollapsedSidebarPointerRetentionState()
+    }
+
+    private func updateCollapsedSidebarPointerRetentionState() {
+        guard collapsedSidebarPointerRetentionEnabled, let window else {
+            publishCollapsedSidebarPointerRetained(false)
+            return
+        }
+
+        let retained = ShellCollapsedSidebarPointerRetention.contains(
+            locationInWindow: window.mouseLocationOutsideOfEventStream,
+            windowSize: window.frame.size,
+            chromeSurface: chromeSurface
+        )
+        publishCollapsedSidebarPointerRetained(retained)
+    }
+
+    private func publishCollapsedSidebarPointerRetained(_ retained: Bool) {
+        guard collapsedSidebarPointerRetained != retained else { return }
+        collapsedSidebarPointerRetained = retained
+        collapsedSidebarPointerRetentionHandler(retained)
+    }
+
     private func synchronizeChrome(for window: NSWindow) {
         guard !isSynchronizingChrome else { return }
         isSynchronizingChrome = true
@@ -570,6 +758,7 @@ final class ShellWindowPlacementNSView: NSView {
         )
         installDoubleClickZoomOverlayIfNeeded(in: titlebarView)
         publishEffectiveSystemColorScheme()
+        updateCollapsedSidebarPointerRetentionState()
         guard lastPublishedMetrics != metrics else { return }
         lastPublishedMetrics = metrics
         metricsHandler(metrics)
