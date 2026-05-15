@@ -78,8 +78,16 @@ pub(crate) fn build_turn_recall_bundle(
             fallback_recent_session_paths.extend(session_paths.iter().cloned());
             fallback_recent_daily_paths.extend(daily_paths.iter().cloned());
         }
-        scored_candidates.extend(score_candidate_files(session_paths, &query_tokens));
-        scored_candidates.extend(score_candidate_files(daily_paths, &query_tokens));
+        scored_candidates.extend(score_candidate_files(
+            session_paths,
+            memory_dir,
+            &query_tokens,
+        ));
+        scored_candidates.extend(score_candidate_files(
+            daily_paths,
+            memory_dir,
+            &query_tokens,
+        ));
     }
     let should_score_topics = workspace_query
         || (!identity_query && !continuity_query && !recent_query && !query_tokens.is_empty());
@@ -90,6 +98,7 @@ pub(crate) fn build_turn_recall_bundle(
                 &canonical_memory_root,
                 MAX_CANDIDATE_SCAN_FILES,
             ),
+            memory_dir,
             &query_tokens,
         ));
     }
@@ -342,22 +351,32 @@ fn collect_markdown_files_recursive_inner(
     }
 }
 
-fn score_candidate_files(paths: Vec<PathBuf>, query_tokens: &[String]) -> Vec<RecallCandidate> {
+fn score_candidate_files(
+    paths: Vec<PathBuf>,
+    memory_dir: &Path,
+    query_tokens: &[String],
+) -> Vec<RecallCandidate> {
     paths
         .into_iter()
         .filter_map(|path| {
             let content = fs::read_to_string(&path).ok()?;
-            let score = lexical_overlap_score(&path, &content, query_tokens);
+            let score = lexical_overlap_score(&path, memory_dir, &content, query_tokens);
             Some(RecallCandidate { path, score })
         })
         .collect()
 }
 
-fn lexical_overlap_score(path: &Path, content: &str, query_tokens: &[String]) -> usize {
+fn lexical_overlap_score(
+    path: &Path,
+    memory_dir: &Path,
+    content: &str,
+    query_tokens: &[String],
+) -> usize {
     if query_tokens.is_empty() {
         return 0;
     }
-    let path_text = path.to_string_lossy().to_lowercase();
+    let relative_path = path.strip_prefix(memory_dir).unwrap_or(path);
+    let path_text = relative_path.to_string_lossy().to_lowercase();
     let content_text = content.to_lowercase();
     query_tokens
         .iter()
@@ -457,9 +476,9 @@ mod tests {
     }
 
     #[test]
-    fn recent_query_falls_back_to_latest_recent_files_without_token_overlap() {
+    fn recent_query_fallback_ignores_memory_root_token_overlap() {
         let temp = TempDir::new().unwrap();
-        let memory_dir = temp.path().join(".alan/memory");
+        let memory_dir = temp.path().join("yesterday-root/.alan/memory");
         crate::prompts::ensure_workspace_memory_layout_at(&memory_dir).unwrap();
         fs::create_dir_all(memory_dir.join("sessions/2026/04/16")).unwrap();
         for index in 1..=4 {
