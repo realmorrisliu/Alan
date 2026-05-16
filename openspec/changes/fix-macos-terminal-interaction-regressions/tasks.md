@@ -1,8 +1,10 @@
 ## 1. Reproduction And Baseline
 
 - [ ] 1.1 在当前 macOS app 中复现 Vim 快捷键问题，记录被截获的具体按键、focused pane、command input 可见状态和相关日志。
-- [ ] 1.2 复现新建 split pane 会继承 cwd、New Terminal Tab 不继承 cwd 的差异，记录 runtime metadata cwd 和 `ShellPane.cwd`。
-- [ ] 1.3 复现输入 `exit` 后 pane/tab 未关闭且表现为刷新或 clear 的路径，确认收到的 Ghostty child-exit metadata。
+- [x] 1.2 复现新建 split pane 会继承 cwd、New Terminal Tab 不继承 cwd 的差异，记录 runtime metadata cwd 和 `ShellPane.cwd`。
+  - 2026-05-17: User confirmed cwd behavior is now OK; this is no longer a live blocker.
+- [x] 1.3 复现输入 `exit` 后 pane/tab 未关闭且表现为刷新或 clear 的路径，确认收到的 Ghostty child-exit metadata。
+  - 2026-05-17: User confirmed exit behavior is now OK; this is no longer a live blocker.
 
 ## 2. Terminal Keyboard Routing
 
@@ -32,7 +34,9 @@
 
 - [x] 5.1 运行并更新相关 Swift focused scripts 与 `clients/apple/scripts/check-shell-contracts.sh`。
 - [ ] 5.2 构建并运行 macOS app，手工验证 Vim/nvim 的插入、退出、移动、保存/退出等快捷键路径。
-- [ ] 5.3 手工验证同一 cwd 下 split pane 与 New Terminal Tab 的 cwd 一致性。
-- [ ] 5.4 手工验证 split pane、single-pane tab 和 final-pane/fallback 的 `exit` 行为。
+- [x] 5.3 手工验证同一 cwd 下 split pane 与 New Terminal Tab 的 cwd 一致性。
+  - 2026-05-17: User confirmed cwd behavior is OK.
+- [x] 5.4 手工验证 split pane、single-pane tab 和 final-pane/fallback 的 `exit` 行为。
+  - 2026-05-17: User confirmed exit behavior is OK.
 - [x] 5.5 更新实现说明或 verification notes，列出覆盖的按键、cwd 路径、exit 场景和任何剩余限制。
 - [ ] 5.6 实现合入后，将 delta specs 同步到 `openspec/specs/` 并准备 archive。

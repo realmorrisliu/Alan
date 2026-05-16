@@ -244,18 +244,19 @@ architecture checks, and script path references.
 - **WHEN** a developer reads or runs the documented macOS app build command
 - **THEN** the command references `clients/apple/alan-macos.xcodeproj`
 - **AND** the selected scheme is `alan-macos`
-- **AND** the generated app product is `alan.app`
+- **AND** the generated app product is `Alan.app`
 
 #### Scenario: Swift app entry is inspected
 - **WHEN** a developer inspects the Swift app entry point
 - **THEN** the type and file names do not contain `AlanNative`
-- **AND** any Swift identifiers that include `alan` use Swift naming
-  conventions rather than user-facing brand casing
+- **AND** any Swift identifiers that include `Alan` use Swift naming
+  conventions rather than command-facing lowercase casing
 
 #### Scenario: Architecture validation runs
-- **WHEN** Apple architecture maintainability validation checks source paths,
-  README path references, or Xcode project membership
-- **THEN** it treats `clients/apple/alan-macos` and the renamed project/scheme
-  as the canonical layout
-- **AND** it reports active `AlanNative` project or source-root references as
-  migration debt or validation failures
+- **WHEN** Apple-client architecture validation scans source layout,
+  README/build commands, scripts, project metadata, and active OpenSpec work
+- **THEN** it recognizes `alan-macos` as the engineering identity and `Alan` as
+  the user-visible product brand
+- **AND** it rejects reintroduced `AlanNative` project, path, scheme, or target
+  identity unless the occurrence is an explicit compatibility or migration
+  fixture
