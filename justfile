@@ -52,18 +52,21 @@ serve:
 build:
     cargo build --release
 
-# Build and launch the native macOS app
-app:
-    clients/apple/scripts/run-alan-debug-app.sh
-
-# Install alan to ~/.alan/bin
+# Install release alan.app plus CLI/TUI locally
 install:
     ./scripts/install.sh
 
-# Uninstall alan from ~/.alan/bin
+# Check release signing and notarization configuration without building
+release-check:
+    ALAN_NOTARIZE=1 ./scripts/release-check.sh
+
+# Build, sign, notarize, staple, and archive the public macOS release app
+release:
+    ALAN_NOTARIZE=1 ALAN_CREATE_RELEASE_ARCHIVE=1 ./scripts/assemble-release-app.sh
+
+# Uninstall alan app and user-level CLI/TUI without removing ~/.alan data
 uninstall:
-    rm -rf "$HOME/.alan/bin/alan" "$HOME/.alan/bin/alan-tui" "$HOME/.alan/bin/alan-tui.js"
-    echo "alan uninstalled from ~/.alan/bin/"
+    ./scripts/uninstall.sh
 
 # Clean artifacts
 clean:

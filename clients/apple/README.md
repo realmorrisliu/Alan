@@ -105,8 +105,14 @@ Without that override, the macOS terminal workspace resolves alan in this order:
 1. `ALAN_SHELL_ALAN_PATH`
 2. worktree-local `target/debug/alan`
 3. worktree-local `target/release/alan`
-4. installed `~/.alan/bin/alan`
+4. app-bundled `Contents/Resources/bin/alan`
 5. `alan` from the current `PATH`
+
+The app bundle is also the command-line distribution unit. Homebrew cask
+installs link `Contents/Resources/bin/alan` and `Contents/Resources/bin/alan-tui`
+into the Homebrew prefix. For a direct app install, use **Tools > Install
+Command Line Tools...** in the app to create PATH-visible symlinks. The app does
+not silently modify shell startup files or use `~/.alan/bin`.
 
 The macOS app owns one primary shell context for the process. The default shell
 surface uses the stable `window_main` identity, so reopen, activation, and New

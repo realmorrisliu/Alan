@@ -1,6 +1,8 @@
 import SwiftUI
 
 #if os(macOS)
+import AppKit
+
 struct AlanMacShellCommands: Commands {
     @ObservedObject var host: ShellHostController
     @Environment(\.openWindow) private var openWindow
@@ -12,6 +14,12 @@ struct AlanMacShellCommands: Commands {
                 AlanMacPrimaryWindowPresenter.focusExistingWindowSoon()
             }
             .keyboardShortcut("n", modifiers: .command)
+        }
+
+        CommandMenu("Tools") {
+            Button("Install Command Line Tools...") {
+                installCommandLineTools()
+            }
         }
 
         CommandMenu("Shell") {
@@ -90,6 +98,45 @@ struct AlanMacShellCommands: Commands {
                 host.performShellWorkspaceCommand(.closeTab)
             }
             .keyboardShortcut("w", modifiers: .command)
+        }
+    }
+
+    private func installCommandLineTools() {
+        do {
+            let records = try AlanCommandLineToolInstaller.install()
+            let installed = records.filter { $0.status == .installed }
+            let skipped = records.compactMap { record -> String? in
+                guard case .skipped(let reason) = record.status else {
+                    return nil
+                }
+                return "\(record.tool): \(reason)\n\(record.targetPath)"
+            }
+
+            let alert = NSAlert()
+            alert.messageText = skipped.isEmpty
+                ? "Command line tools installed"
+                : "Command line tools partially installed"
+            alert.informativeText = (
+                installed.map { "\($0.tool) -> \($0.targetPath)" } +
+                skipped.map { "Skipped \($0)" }
+            ).joined(separator: "\n\n")
+            alert.alertStyle = skipped.isEmpty ? .informational : .warning
+            alert.addButton(withTitle: "OK")
+            alert.runModal()
+        } catch {
+            let targetDirectory = AlanCommandLineToolInstaller.defaultInstallDirectory.path
+            let alert = NSAlert()
+            alert.messageText = "Command line tools were not installed"
+            alert.informativeText = """
+            alan tried to create command links in \(targetDirectory).
+
+            \(error.localizedDescription)
+
+            Choose a writable PATH directory or install with Homebrew cask.
+            """
+            alert.alertStyle = .warning
+            alert.addButton(withTitle: "OK")
+            alert.runModal()
         }
     }
 }

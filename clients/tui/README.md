@@ -18,13 +18,17 @@ executable. By default it auto-manages the backend via `alan daemon`.
 ## Install
 
 ```bash
-# From repository root
+# Normal user install
+brew install --cask alan
+
+# Local developer install from repository root
 just install
 ```
 
-After install, this is generated:
-
-- `~/.alan/bin/alan-tui` (standalone executable, does not require Bun runtime)
+The TUI is distributed as a standalone executable embedded in `alan.app` at
+`Contents/Resources/bin/alan-tui`. Homebrew cask installs link that embedded
+tool automatically. For a direct app install, use **Tools > Install Command
+Line Tools...** in the macOS app.
 
 ## Run
 
@@ -135,6 +139,7 @@ Host-facing daemon/client settings live in `~/.alan/host.toml`.
 
 ## Troubleshooting
 
-- `alan` not found: run `just install` again
+- `alan` or `alan-tui` not found: run `brew install --cask alan`, or open the
+  direct app install and use **Tools > Install Command Line Tools...**
 - Session creation failed: check `~/.alan/agents/default/agent.toml` (or `ALAN_CONFIG_PATH`) and API key setup
 - Enable verbose logs: `ALAN_VERBOSE=1 alan`
