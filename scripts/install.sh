@@ -6,6 +6,8 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # shellcheck source=scripts/release-env.sh
 source "$SCRIPT_DIR/release-env.sh"
+# shellcheck source=scripts/app-bundle-paths.sh
+source "$SCRIPT_DIR/app-bundle-paths.sh"
 
 DERIVED_DATA="${ALAN_XCODE_DERIVED_DATA:-$PROJECT_ROOT/target/xcode-derived}"
 APP_SOURCE="$DERIVED_DATA/Build/Products/Release/Alan.app"
@@ -141,7 +143,7 @@ printf 'Installing Alan.app to %s...\n' "$APP_TARGET"
 mkdir -p "$APP_INSTALL_DIR"
 rm -rf "$APP_TARGET"
 ditto "$APP_SOURCE" "$APP_TARGET"
-if [[ "$LEGACY_APP_TARGET" != "$APP_TARGET" && -d "$LEGACY_APP_TARGET" ]]; then
+if alan_is_distinct_existing_path "$LEGACY_APP_TARGET" "$APP_TARGET"; then
     printf 'Removing legacy lowercase app bundle at %s...\n' "$LEGACY_APP_TARGET"
     rm -rf "$LEGACY_APP_TARGET"
 fi

@@ -52,6 +52,9 @@ is_allowed_occurrence() {
         *"scripts/uninstall.sh:"*"LEGACY_APP_TARGET"*|*"scripts/uninstall.sh:"*"/alan.app/Contents/Resources/bin/"*)
             return 0
             ;;
+        *"scripts/test-app-bundle-paths.sh:"*"alan.app"*)
+            return 0
+            ;;
         *"AlanCommandLineToolInstaller.swift:"*"/alan.app/Contents/Resources/bin/"*)
             return 0
             ;;

@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/app-bundle-paths.sh
+source "$SCRIPT_DIR/app-bundle-paths.sh"
+
 APP_INSTALL_DIR="${ALAN_APP_INSTALL_DIR:-$HOME/Applications}"
 APP_TARGET="$APP_INSTALL_DIR/Alan.app"
 LEGACY_APP_TARGET="$APP_INSTALL_DIR/alan.app"
@@ -26,7 +30,7 @@ remove_alan_link() {
 remove_alan_link "alan"
 remove_alan_link "alan-tui"
 rm -rf "$APP_TARGET"
-if [[ "$LEGACY_APP_TARGET" != "$APP_TARGET" ]]; then
+if alan_is_distinct_existing_path "$LEGACY_APP_TARGET" "$APP_TARGET"; then
     rm -rf "$LEGACY_APP_TARGET"
 fi
 
