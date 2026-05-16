@@ -91,7 +91,7 @@
 
 ## 8. macOS Packaging And Shell Integration
 
-- [ ] 8.1 Update release app assembly so `alan.app` embeds only the `alan`
+- [ ] 8.1 Update release app assembly so `Alan.app` embeds only the `alan`
   command-line executable under the supported Resources/bin layout.
 - [ ] 8.2 Update signing/notarization validation so it verifies the embedded
   `alan` binary and fails if `alan-tui` is present.

@@ -1,8 +1,8 @@
-# alan for macOS
+# Alan for macOS
 
 `clients/apple` is alan's native Apple client project, supporting macOS and iOS.
 
-The macOS path is alan for macOS: a real terminal workspace whose terminal
+The macOS path is Alan for macOS: a real terminal workspace whose terminal
 state is readable and operable by both humans and agents.
 
 ## System Requirements
@@ -119,7 +119,7 @@ surface uses the stable `window_main` identity, so reopen, activation, and New
 Window commands focus the existing alan window instead of creating another
 control plane. Older fixed `shell-state-v0.1.json` files are not loaded; the
 current persisted state file is scoped as `shell-state-window_main.json`.
-During the rename, alan for macOS reads existing shell state from the historical
+During the rename, Alan for macOS reads existing shell state from the historical
 `Application Support/AlanNative` directory when the new
 `Application Support/alan-macos` file is missing, then writes future state only
 to `Application Support/alan-macos`. No destructive migration is performed.
@@ -146,7 +146,7 @@ for your terminal on first use.
 
 ### Desktop (macOS)
 
-- alan for macOS root with Arc-like sidebar/workspace chrome
+- Alan for macOS root with Arc-like sidebar/workspace chrome
 - Local typed shell snapshot preview
 - Native AppKit terminal-host scaffold sized and focused by the shell host
 - Plain-shell-first boot profile projection for the selected pane, with alan as

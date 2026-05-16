@@ -1,13 +1,13 @@
 ## ADDED Requirements
 
-### Requirement: alan.app is the primary macOS distribution artifact
-alan SHALL distribute macOS releases as an app-first package where `alan.app`
+### Requirement: Alan.app is the primary macOS distribution artifact
+Alan SHALL distribute macOS releases as an app-first package where `Alan.app`
 contains the GUI app executable plus release CLI/TUI executables embedded under
 `Contents/Resources/bin`.
 
 #### Scenario: Release app is assembled
 - **WHEN** a macOS release package is assembled
-- **THEN** the package contains `alan.app`
+- **THEN** the package contains `Alan.app`
 - **AND** the bundle contains the app executable at `Contents/MacOS/alan`
 - **AND** the bundle contains the CLI at `Contents/Resources/bin/alan`
 - **AND** the bundle contains the TUI at `Contents/Resources/bin/alan-tui`
@@ -54,7 +54,7 @@ notarized and stapled before publication.
 - **AND** the local install output states whether notarization was skipped or completed
 
 ### Requirement: Direct app installs can explicitly install CLI and TUI
-alan for macOS SHALL provide an explicit direct-install action that creates
+Alan for macOS SHALL provide an explicit direct-install action that creates
 PATH-visible `alan` and `alan-tui` entries from the embedded app resources when
 Homebrew has not already provided authoritative binary links.
 
@@ -77,19 +77,19 @@ Homebrew has not already provided authoritative binary links.
 - **AND** the app does not create duplicate direct-install links in another PATH directory
 
 #### Scenario: App launches directly
-- **WHEN** a user launches `alan.app` directly
+- **WHEN** a user launches `Alan.app` directly
 - **THEN** the app does not silently install CLI/TUI entries
 - **AND** the app remains usable even when command-line tools have not been installed
 
 ### Requirement: Homebrew cask installs app and binaries from one artifact
-The Homebrew distribution SHALL use a cask that installs `alan.app` and exposes
+The Homebrew distribution SHALL use a cask that installs `Alan.app` and exposes
 the embedded CLI/TUI binaries from inside the installed app bundle.
 
 #### Scenario: Cask installs alan
 - **WHEN** a user installs the Homebrew cask for alan
-- **THEN** Homebrew installs `alan.app`
-- **AND** Homebrew links `alan.app/Contents/Resources/bin/alan` as `alan`
-- **AND** Homebrew links `alan.app/Contents/Resources/bin/alan-tui` as `alan-tui`
+- **THEN** Homebrew installs `Alan.app`
+- **AND** Homebrew links `Alan.app/Contents/Resources/bin/alan` as `alan`
+- **AND** Homebrew links `Alan.app/Contents/Resources/bin/alan-tui` as `alan-tui`
 - **AND** the cask does not require a separate formula to provide the CLI or TUI
 
 #### Scenario: Cask documentation is shown
@@ -105,19 +105,19 @@ locally without killing, launching, or restarting the macOS app.
 - **WHEN** a developer runs `just install`
 - **THEN** the command builds the release CLI
 - **AND** the command builds the release standalone TUI
-- **AND** the command builds and assembles release `alan.app`
+- **AND** the command builds and assembles release `Alan.app`
 - **AND** the command installs the app into a user-level app directory
 - **AND** the command installs or refreshes CLI/TUI symlinks in a configurable PATH directory
 - **AND** the command does not install CLI/TUI entries under `~/.alan/bin`
 
 #### Scenario: App is already running
-- **WHEN** `just install` runs while `alan.app` is already running
+- **WHEN** `just install` runs while `Alan.app` is already running
 - **THEN** the install process does not kill the app
 - **AND** the install process does not launch or relaunch the app
 - **AND** the install process reports that the user should restart the app manually to use the newly installed version
 
 ### Requirement: ~/.alan/bin is not a distribution path
-alan SHALL NOT install, refresh, document, or resolve `alan` or `alan-tui`
+Alan SHALL NOT install, refresh, document, or resolve `alan` or `alan-tui`
 through `~/.alan/bin` as part of macOS app distribution, Homebrew cask
 distribution, direct app command-line tool installation, or `just install`.
 

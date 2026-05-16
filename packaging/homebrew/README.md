@@ -1,7 +1,7 @@
 # Homebrew Cask Packaging
 
-alan's Homebrew distribution is app-first. The cask installs the signed and
-notarized `alan.app` artifact, then exposes the CLI and TUI from inside the app
+Alan's Homebrew distribution is app-first. The cask installs the signed and
+notarized `Alan.app` artifact, then exposes the CLI and TUI from inside the app
 bundle through Homebrew's `bin` directory.
 
 Canonical install command:
@@ -13,9 +13,9 @@ brew install --cask alan
 The cask must link these embedded tools:
 
 ```ruby
-app "alan.app"
-binary "#{appdir}/alan.app/Contents/Resources/bin/alan", target: "alan"
-binary "#{appdir}/alan.app/Contents/Resources/bin/alan-tui", target: "alan-tui"
+app "Alan.app"
+binary "#{appdir}/Alan.app/Contents/Resources/bin/alan", target: "alan"
+binary "#{appdir}/Alan.app/Contents/Resources/bin/alan-tui", target: "alan-tui"
 ```
 
 Update flow:

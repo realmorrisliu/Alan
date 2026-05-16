@@ -298,7 +298,7 @@ just fmt         # Format code
 just lint        # Clippy lints
 just serve       # Run the daemon
 just build       # Release build
-just install     # Install signed release alan.app and PATH-visible CLI/TUI links
+just install     # Install signed release Alan.app and PATH-visible CLI/TUI links
 just release-check # Check release signing/notarization setup without building
 just release     # Build, sign, notarize, staple, and archive the public macOS release app
 just uninstall   # Remove the local app install and alan-owned CLI/TUI links
@@ -887,7 +887,7 @@ alan
 alan-tui
 ```
 
-The signed `alan.app` bundle embeds both command-line tools under
+The signed `Alan.app` bundle embeds both command-line tools under
 `Contents/Resources/bin`. Homebrew links those embedded tools into its prefix.
 For a direct app install, use **Tools > Install Command Line Tools...** in the
 app to create PATH-visible symlinks. `~/.alan/bin` is not a supported

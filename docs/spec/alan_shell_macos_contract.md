@@ -1,6 +1,6 @@
-# alan for macOS Terminal Workspace Contract
+# Alan for macOS Terminal Workspace Contract
 
-> Status: VNext product contract for the alan for macOS terminal workspace host.
+> Status: VNext product contract for the Alan for macOS terminal workspace host.
 
 ## Goal
 

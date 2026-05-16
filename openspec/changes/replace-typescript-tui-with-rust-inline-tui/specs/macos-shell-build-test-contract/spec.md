@@ -8,9 +8,9 @@ binary.
 
 #### Scenario: Release app layout is checked
 - **WHEN** release packaging implementation is ready for review
-- **THEN** focused checks verify `alan.app` contains the app executable and the
+- **THEN** focused checks verify `Alan.app` contains the app executable and the
   embedded command-line `alan` executable required by the distribution contract
-- **AND** focused checks fail if `alan.app` contains an embedded
+- **AND** focused checks fail if `Alan.app` contains an embedded
   `Contents/Resources/bin/alan-tui` executable
 
 #### Scenario: Signatures are checked

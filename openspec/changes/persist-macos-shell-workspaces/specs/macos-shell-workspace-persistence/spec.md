@@ -4,12 +4,12 @@
 The macOS shell SHALL use a versioned workspace manifest as the authoritative source for restoring Spaces, Tabs, pin snapshots, Tab lifecycle metadata, and the last selected Space/Tab across app restarts.
 
 #### Scenario: Manifest is present
-- **WHEN** alan for macOS starts and a valid workspace manifest exists for `window_main`
+- **WHEN** Alan for macOS starts and a valid workspace manifest exists for `window_main`
 - **THEN** alan loads Spaces, Tabs, pin snapshots, lifecycle metadata, and the last selected Space/Tab from that manifest
 - **AND** alan materializes the current shell state from the manifest rather than bootstrapping a fresh default state
 
 #### Scenario: Manifest is missing
-- **WHEN** alan for macOS starts and no workspace manifest exists for `window_main`
+- **WHEN** Alan for macOS starts and no workspace manifest exists for `window_main`
 - **THEN** alan creates a default manifest with one default Space and one default unpinned terminal Tab
 - **AND** alan uses that manifest as the restore authority for the launched shell state
 
@@ -22,7 +22,7 @@ The macOS shell SHALL use a versioned workspace manifest as the authoritative so
 The macOS shell SHALL preserve evidence of a malformed workspace manifest and start with a default workspace rather than failing to launch or silently overwriting the only copy.
 
 #### Scenario: Manifest cannot be decoded
-- **WHEN** alan for macOS starts and the workspace manifest cannot be decoded
+- **WHEN** Alan for macOS starts and the workspace manifest cannot be decoded
 - **THEN** alan preserves the bad manifest as a timestamped corrupt file
 - **AND** alan creates a fresh default manifest
 - **AND** alan starts with the default workspace
@@ -118,6 +118,6 @@ The macOS shell SHALL keep `ShellStateSnapshot` as the current UI/control-plane/
 - **AND** alan writes only restorable workspace intent and lifecycle metadata back to the manifest
 
 #### Scenario: App restarts
-- **WHEN** alan for macOS restarts after publishing a shell state file in the previous process
+- **WHEN** Alan for macOS restarts after publishing a shell state file in the previous process
 - **THEN** alan restores Spaces and Tabs from the workspace manifest
 - **AND** terminal runtimes are newly created rather than restored from the old shell state process snapshot

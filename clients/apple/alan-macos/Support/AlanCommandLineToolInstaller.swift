@@ -79,7 +79,7 @@ enum AlanCommandLineToolInstaller {
                         tool: tool,
                         sourcePath: source.path,
                         targetPath: target.path,
-                        status: .skipped("Existing file is not an alan.app command-line link.")
+                        status: .skipped("Existing file is not an Alan.app command-line link.")
                     )
                 }
                 try fileManager.removeItem(at: target)
@@ -119,7 +119,8 @@ enum AlanCommandLineToolInstaller {
             return false
         }
 
-        return destination.hasSuffix("/alan.app/Contents/Resources/bin/\(tool)")
+        return destination.hasSuffix("/Alan.app/Contents/Resources/bin/\(tool)")
+            || destination.hasSuffix("/alan.app/Contents/Resources/bin/\(tool)")
     }
 
     private static func isHomebrewPrefixTarget(

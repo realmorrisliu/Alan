@@ -4,7 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 DERIVED_DATA="${ALAN_XCODE_DERIVED_DATA:-$REPO_ROOT/target/xcode-derived}"
-APP_BUNDLE="${1:-$DERIVED_DATA/Build/Products/Release/alan.app}"
+APP_BUNDLE="${1:-$DERIVED_DATA/Build/Products/Release/Alan.app}"
 MANIFEST="$APP_BUNDLE/Contents/Resources/alan-package-manifest.json"
 ALAN_BIN="$APP_BUNDLE/Contents/Resources/bin/alan"
 TUI_BIN="$APP_BUNDLE/Contents/Resources/bin/alan-tui"
@@ -86,11 +86,13 @@ require_manifest_checksum() {
 }
 
 [[ -d "$APP_BUNDLE" ]] || fail "app bundle not found: $APP_BUNDLE"
-require_executable "$APP_BUNDLE/Contents/MacOS/alan"
+require_executable "$APP_BUNDLE/Contents/MacOS/Alan"
 require_executable "$ALAN_BIN"
 require_executable "$TUI_BIN"
 [[ -f "$MANIFEST" ]] || fail "package manifest not found: $MANIFEST"
 
+grep -q '"package": "Alan.app"' "$MANIFEST" ||
+    fail "manifest does not record Alan.app package name"
 grep -q '"path": "Contents/Resources/bin/alan"' "$MANIFEST" ||
     fail "manifest does not record embedded alan path"
 grep -q '"path": "Contents/Resources/bin/alan-tui"' "$MANIFEST" ||

@@ -5,12 +5,12 @@ The current repository has two separate local workflows:
 - `just install` builds the release Rust CLI and standalone TUI, then installs
   them under `~/.alan/bin`.
 - `just app` runs `clients/apple/scripts/run-alan-debug-app.sh`, which builds a
-  Debug `alan.app`, kills any running app process, waits for singleton release,
+  Debug `Alan.app`, kills any running app process, waits for singleton release,
   and launches the new build.
 
 That split is useful for early UI iteration, but it is the wrong shape for
 distribution. The desired long-term model is app-first: users install
-`alan.app`, and the CLI/TUI come from that same signed release package. Homebrew
+`Alan.app`, and the CLI/TUI come from that same signed release package. Homebrew
 cask can install the app and expose binaries from inside the app bundle, so the
 release artifact does not need a separate formula or a runtime download step.
 
@@ -21,9 +21,9 @@ should not preserve ad-hoc signing as a supported local install fallback.
 
 **Goals:**
 
-- Make `alan.app` the primary macOS distribution artifact.
+- Make `Alan.app` the primary macOS distribution artifact.
 - Embed release `alan` and `alan-tui` executables in
-  `alan.app/Contents/Resources/bin/`.
+  `Alan.app/Contents/Resources/bin/`.
 - Sign nested CLI/TUI binaries and the app bundle with Developer ID signing.
 - Require notarization and stapling for published Homebrew/download artifacts.
 - Make `just install` install the same release-shaped app/CLI/TUI package
@@ -34,7 +34,7 @@ should not preserve ad-hoc signing as a supported local install fallback.
 - Define the future Homebrew cask contract that installs the app and links the
   embedded CLI/TUI binaries.
 - Provide an explicit direct-app command-line tools install action for users who
-  download or drag-install `alan.app` without Homebrew.
+  download or drag-install `Alan.app` without Homebrew.
 
 **Non-Goals:**
 
@@ -53,8 +53,8 @@ should not preserve ad-hoc signing as a supported local install fallback.
 1. **Use app-first packaging with embedded CLI/TUI.**
 
    The release assembly will build `target/release/alan`, the standalone
-   `alan-tui`, and Release `alan.app`, then copy the CLI/TUI into
-   `alan.app/Contents/Resources/bin/`.
+   `alan-tui`, and Release `Alan.app`, then copy the CLI/TUI into
+   `Alan.app/Contents/Resources/bin/`.
 
    Alternative considered: publish separate app and CLI artifacts. That would
    force Homebrew users through a cask+formula coordination problem and create
@@ -104,12 +104,12 @@ should not preserve ad-hoc signing as a supported local install fallback.
 
 4. **Use Homebrew cask binary links from the app bundle.**
 
-   The cask should install `alan.app` and expose:
+   The cask should install `Alan.app` and expose:
 
    ```ruby
-   app "alan.app"
-   binary "#{appdir}/alan.app/Contents/Resources/bin/alan", target: "alan"
-   binary "#{appdir}/alan.app/Contents/Resources/bin/alan-tui", target: "alan-tui"
+   app "Alan.app"
+   binary "#{appdir}/Alan.app/Contents/Resources/bin/alan", target: "alan"
+   binary "#{appdir}/Alan.app/Contents/Resources/bin/alan-tui", target: "alan-tui"
    ```
 
    Documentation should use `brew install --cask alan` as the canonical command.
@@ -134,7 +134,7 @@ should not preserve ad-hoc signing as a supported local install fallback.
 6. **Turn `just install` into the local release install path.**
 
    `just install` should call the release assembly/install script, install the
-   signed app into a user-level app directory such as `~/Applications/alan.app`,
+   signed app into a user-level app directory such as `~/Applications/Alan.app`,
    and install or refresh CLI/TUI symlinks in a configurable PATH directory. It
    must not write to `~/.alan/bin`, kill, restart, or open the running app. If
    the app is running, it may warn that the new version takes effect after the
@@ -174,12 +174,12 @@ should not preserve ad-hoc signing as a supported local install fallback.
 1. Add a release assembly script that builds CLI/TUI/app, embeds CLI/TUI, signs
    nested binaries and app, and can optionally notarize/staple for publication.
 2. Update `scripts/install.sh` and `just install` to use the release assembly
-   path and install without killing or launching `alan.app`.
+   path and install without killing or launching `Alan.app`.
 3. Remove the `just app` recipe and the debug-runner script from the supported
    workflow. Update contract checks and docs so it is not reintroduced.
 4. Add app-side explicit CLI/TUI command-line tools install behavior for direct
    app installs.
-5. Add Homebrew cask metadata or a template that installs `alan.app` and links
+5. Add Homebrew cask metadata or a template that installs `Alan.app` and links
    the embedded binaries.
 6. Validate signing, nested binary layout, local install behavior, Homebrew cask
    structure, and docs/contract checks before implementation is considered
