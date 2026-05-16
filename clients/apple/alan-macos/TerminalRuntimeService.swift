@@ -870,6 +870,15 @@ final class FakeAlanTerminalSurfaceHandle: AlanTerminalSurfaceHandle {
     func updateHostRuntimeSnapshot(_ snapshot: TerminalHostRuntimeSnapshot) {}
 
     func sendControlText(_ text: String) -> TerminalRuntimeDeliveryResult {
+        guard !currentSnapshot.metadata.processExited else {
+            let result = TerminalRuntimeDeliveryResult.rejected(
+                errorCode: "terminal_child_exited",
+                errorMessage: "The terminal process has exited.",
+                runtimePhase: currentSnapshot.runtimePhase
+            )
+            updateSnapshot(lastDelivery: result)
+            return result
+        }
         deliveredText.append(text)
         let result = deliveryResult
             ?? .accepted(
@@ -878,6 +887,20 @@ final class FakeAlanTerminalSurfaceHandle: AlanTerminalSurfaceHandle {
             )
         updateSnapshot(lastDelivery: result)
         return result
+    }
+
+    func markProcessExited(exitCode: Int) {
+        let metadata = TerminalPaneMetadataSnapshot(
+            title: currentSnapshot.metadata.title,
+            workingDirectory: currentSnapshot.metadata.workingDirectory,
+            summary: "process exited",
+            attention: .awaitingUser,
+            processExited: true,
+            lastCommandExitCode: exitCode,
+            lastUpdatedAt: .now,
+            activeTaskState: .inactive
+        )
+        updateSnapshot(metadata: metadata)
     }
 
     @discardableResult
@@ -894,6 +917,7 @@ final class FakeAlanTerminalSurfaceHandle: AlanTerminalSurfaceHandle {
 
     private func updateSnapshot(
         lifecyclePhase: AlanTerminalSurfaceLifecyclePhase? = nil,
+        metadata: TerminalPaneMetadataSnapshot? = nil,
         lastDelivery: TerminalRuntimeDeliveryResult? = nil,
         teardownStatus: AlanTerminalSurfaceTeardownStatus? = nil,
         attachedViewCount: Int? = nil
@@ -902,7 +926,7 @@ final class FakeAlanTerminalSurfaceHandle: AlanTerminalSurfaceHandle {
             paneID: paneID,
             lifecyclePhase: lifecyclePhase ?? currentSnapshot.lifecyclePhase,
             renderer: currentSnapshot.renderer,
-            metadata: currentSnapshot.metadata,
+            metadata: metadata ?? currentSnapshot.metadata,
             lastDelivery: lastDelivery ?? currentSnapshot.lastDelivery,
             teardownStatus: teardownStatus ?? currentSnapshot.teardownStatus,
             attachedViewCount: attachedViewCount ?? currentSnapshot.attachedViewCount,

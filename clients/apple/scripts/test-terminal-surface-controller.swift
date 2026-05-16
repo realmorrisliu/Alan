@@ -20,6 +20,7 @@ private enum TerminalSurfaceControllerTests {
         verifiesNativeScrollViewForwardsWheelEvents()
         verifiesNativeScrollViewForwardsMouseEvents()
         verifiesInputCommandRouting()
+        verifiesTUIKeyboardRoutingKeepsTerminalOwnedKeysInTerminal()
         verifiesPointerRoutingFollowsTerminalMouseModes()
         verifiesPointerButtonMappingMatchesGhostty()
         verifiesPaneScopedSearchState()
@@ -204,6 +205,76 @@ private enum TerminalSurfaceControllerTests {
             )
         )
         expect(focusRight == .focusRight, "command-control-right must route to shell focus right")
+    }
+
+    private static func verifiesTUIKeyboardRoutingKeepsTerminalOwnedKeysInTerminal() {
+        let adapter = AlanTerminalInputAdapter()
+
+        let controlWWorkspaceCommand = adapter.routeWorkspaceCommand(
+            AlanTerminalKeyInput(
+                characters: "w",
+                keyCode: 13,
+                modifiers: [.control],
+                phase: .down,
+                isRepeat: false
+            )
+        )
+        expect(controlWWorkspaceCommand == nil, "control-w must not be consumed as a workspace command")
+
+        let controlW = adapter.routeKey(
+            AlanTerminalKeyInput(
+                characters: "\u{17}",
+                keyCode: 13,
+                modifiers: [.control],
+                phase: .down,
+                isRepeat: false
+            )
+        )
+        expect(controlW == .terminalKey, "control-w must stay a terminal key for Vim split navigation")
+
+        let escape = adapter.routeKey(
+            AlanTerminalKeyInput(
+                characters: "\u{1B}",
+                keyCode: 53,
+                modifiers: [],
+                phase: .down,
+                isRepeat: false
+            )
+        )
+        expect(escape == .terminalKey, "escape must stay a terminal key for TUI command mode")
+
+        let tab = adapter.routeKey(
+            AlanTerminalKeyInput(
+                characters: "\t",
+                keyCode: 48,
+                modifiers: [],
+                phase: .down,
+                isRepeat: false
+            )
+        )
+        expect(tab == .terminalKey, "tab must stay a terminal key for TUI focus and completion")
+
+        let optionF = adapter.routeKey(
+            AlanTerminalKeyInput(
+                characters: "f",
+                keyCode: 3,
+                modifiers: [.option],
+                phase: .down,
+                isRepeat: false
+            )
+        )
+        expect(optionF == .terminalKey, "option-modified keys must preserve modifier-aware terminal delivery")
+
+        let commandT = adapter.routeWorkspaceCommand(
+            AlanTerminalKeyInput(
+                characters: "t",
+                keyCode: 17,
+                modifiers: [.command],
+                phase: .down,
+                isRepeat: false
+            )
+        )
+        expect(commandT == .newTerminalTab, "command-t must remain a native workspace shortcut")
     }
 
     private static func verifiesPointerRoutingFollowsTerminalMouseModes() {

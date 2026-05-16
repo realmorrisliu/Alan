@@ -791,6 +791,13 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
         }
 
         requestTerminalFocus()
+        let inputRoutingDecision = surfaceController.inputAdapter.routeKey(terminalKeyInput(for: event))
+        let shouldInterpretText: Bool
+        if case .terminalText = inputRoutingDecision {
+            shouldInterpretText = true
+        } else {
+            shouldInterpretText = false
+        }
 
         let translationModsGhostty =
             surfaceController.keyTranslationMods(for: modsFromEvent(event))
@@ -839,10 +846,15 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
         defer { keyTextAccumulator = nil }
 
         let markedTextBefore = markedText.length > 0
-        interpretKeyEvents([translationEvent])
-        syncPreedit(clearIfNeeded: markedTextBefore)
+        if shouldInterpretText {
+            interpretKeyEvents([translationEvent])
+            syncPreedit(clearIfNeeded: markedTextBefore)
+        }
 
-        if let keyTextAccumulator, !keyTextAccumulator.isEmpty {
+        if shouldInterpretText,
+           let keyTextAccumulator,
+           !keyTextAccumulator.isEmpty
+        {
             keyTextAccumulator.forEach { surfaceController.sendText($0) }
             return
         }

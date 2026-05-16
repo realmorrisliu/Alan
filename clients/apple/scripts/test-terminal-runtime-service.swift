@@ -19,6 +19,7 @@ private enum TerminalRuntimeServiceTests {
         verifiesBootstrapReuseAndPaneHandleIdentity()
         verifiesPaneScopedHandleIsolation()
         verifiesDeliveryAndMissingRuntimeResults()
+        verifiesDeliveryRejectsExitedRuntime()
         verifiesQueuedAndTimeoutDeliveryStates()
         verifiesControlResponseCarriesDeliveryDiagnostics()
         verifiesTeardownOnce()
@@ -131,6 +132,18 @@ private enum TerminalRuntimeServiceTests {
         let missing = service.sendText(to: "pane_missing", text: "hello")
         expect(missing.code == .missingTarget, "missing pane must report runtime-missing")
         expect(missing.applied == false, "missing pane must not report applied")
+    }
+
+    private static func verifiesDeliveryRejectsExitedRuntime() {
+        let service = FakeAlanTerminalRuntimeService()
+        let handle = service.surfaceHandle(for: "pane_1", bootProfile: nil) as! FakeAlanTerminalSurfaceHandle
+        handle.markProcessExited(exitCode: 0)
+
+        let rejected = service.sendText(to: "pane_1", text: "after exit")
+
+        expect(rejected.applied == false, "exited runtime delivery must not report applied")
+        expect(rejected.errorCode == "terminal_child_exited", "exited runtime delivery must use stable error code")
+        expect(handle.deliveredText.isEmpty, "exited runtime delivery must not reach the surface")
     }
 
     private static func verifiesQueuedAndTimeoutDeliveryStates() {
