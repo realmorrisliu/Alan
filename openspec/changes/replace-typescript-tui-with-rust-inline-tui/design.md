@@ -100,7 +100,7 @@ Alternatives considered:
 alan should mirror the Codex TUI architecture at the interaction level:
 
 - crossterm/ratatui terminal backend;
-- explicit raw-mode, alternate-screen, paste, and stdin ownership;
+- explicit raw-mode, paste, and stdin ownership for the primary scrollback mode;
 - an internal `AppEvent` bus;
 - a main event loop selecting over terminal input, daemon events, app events, and
   background completions;
@@ -130,10 +130,10 @@ daemon payloads.
 ### Decision: Packaging removes `alan-tui`
 
 Release app assembly, signing, validation, direct app installs, and future cask
-metadata must embed/link only `alan`. The active `package-alan-app-distribution`
-change currently describes embedded CLI/TUI binaries; implementation of this
-change must update or supersede those requirements before archiving either
-change.
+metadata must embed/link only `alan`. If another active app-distribution
+OpenSpec change or release-script implementation still describes embedded
+CLI/TUI binaries, implementation of this change must update or supersede those
+requirements before archiving.
 
 ## Risks / Trade-offs
 
@@ -149,9 +149,11 @@ change.
 - [Risk] Terminal behavior regressions are hard to catch with unit tests alone.
   -> Mitigation: add vt100/snapshot-style terminal tests for scrollback, resize,
   streaming deltas, composer behavior, and pending yield surfaces.
-- [Risk] Active OpenSpec changes can conflict over `alan-tui` packaging.
-  -> Mitigation: update `package-alan-app-distribution` during implementation so
-  its app distribution contract is single-binary before it is archived.
+- [Risk] Active or future app-distribution work can conflict over `alan-tui`
+  packaging.
+  -> Mitigation: audit release OpenSpec artifacts, release scripts, and install
+  docs during implementation so the app distribution contract is single-binary
+  before related changes are archived.
 
 ## Migration Plan
 
@@ -165,8 +167,8 @@ change.
    packaging, and `alan chat`/`alan ask`.
 5. Update macOS shell launch paths, app release scripts, install validation, and
    documentation to the single-binary contract.
-6. Update the active `package-alan-app-distribution` OpenSpec artifacts to remove
-   `alan-tui` assumptions before archiving.
+6. Update any active app-distribution OpenSpec artifacts, release scripts, and
+   install docs to remove `alan-tui` assumptions before archiving.
 
 Rollback is intentionally source-level only: before release, revert this change
 or restore the deleted TypeScript TUI from version control. After release, there

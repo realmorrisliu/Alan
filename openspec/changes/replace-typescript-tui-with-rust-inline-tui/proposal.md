@@ -35,10 +35,10 @@ only shipped `alan` binary.
 - Update release packaging, app install, Homebrew cask expectations, and Apple
   shell launch paths so the only embedded and linked command-line executable is
   `alan`.
-- Fold the active `package-alan-app-distribution` TUI-binary assumptions into
-  this change during implementation: any requirement that embeds, signs,
-  validates, links, or installs `alan-tui` is superseded by the single-binary
-  contract here.
+- Fold any active or future app-distribution OpenSpec artifacts and release
+  scripts into the single-binary contract during implementation: any requirement
+  that embeds, signs, validates, links, or installs `alan-tui` is superseded by
+  this change.
 
 ## Capabilities
 
@@ -87,4 +87,4 @@ only shipped `alan` binary.
   - `README.md`
   - `AGENTS.md`
   - `clients/apple/README.md`
-  - related OpenSpec changes, especially `package-alan-app-distribution`
+  - related OpenSpec changes or release docs that still describe `alan-tui`

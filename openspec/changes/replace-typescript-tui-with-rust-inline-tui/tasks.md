@@ -1,8 +1,8 @@
 ## 1. OpenSpec And Contract Alignment
 
-- [ ] 1.1 Update the active `package-alan-app-distribution` change so its
-  proposal, design, specs, and tasks no longer require embedding, signing,
-  linking, installing, or validating `alan-tui`.
+- [ ] 1.1 Audit active app-distribution OpenSpec artifacts, release scripts,
+  install scripts, cask metadata, and docs, then remove or supersede any
+  requirement to embed, sign, link, install, launch, or validate `alan-tui`.
 - [ ] 1.2 Confirm long-lived specs affected by this change will archive cleanly:
   `rust-inline-tui`, `daemon-api-contract`, and
   `macos-shell-build-test-contract`.
