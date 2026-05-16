@@ -178,6 +178,56 @@ cargo build --release
 just build
 ```
 
+### Installation
+
+The supported macOS distribution is app-first. The signed `alan.app` bundle
+contains the `alan` CLI and `alan-tui` executable under
+`Contents/Resources/bin`.
+
+```bash
+# Normal user install
+brew install --cask alan
+
+# Local developer install from this checkout
+ALAN_DEVELOPER_ID_APPLICATION="Developer ID Application: Example (TEAMID)" just install
+
+# Public release artifact
+just release
+```
+
+Local release/install scripts load allowlisted signing and notarization settings
+from `ALAN_RELEASE_ENV_FILE` when set. Without that override they look for
+repo-local env files such as `.env.release.local`, `.env.local`, and `.env`,
+then fall back to `~/.alan/release.env`. This supports local variables such as
+`ALAN_DEVELOPER_ID_APPLICATION`, `ALAN_NOTARY_KEYCHAIN_PROFILE`,
+`APPLE_ID`, `APPLE_TEAM_ID`, and `APPLE_APP_SPECIFIC_PASSWORD` without
+committing machine-specific secrets.
+
+Start from the checked-in example:
+
+```bash
+cp .env.example .env
+```
+
+For fully automated notarization, keep `ALAN_NOTARY_KEYCHAIN_PROFILE` in `.env`
+and add Apple ID app-specific password credentials:
+
+```bash
+ALAN_NOTARY_KEYCHAIN_PROFILE=alan-notary
+APPLE_ID=your-apple-id@example.com
+APPLE_TEAM_ID=TEAMID
+APPLE_APP_SPECIFIC_PASSWORD=xxxx-xxxx-xxxx-xxxx
+```
+
+`just release-check` verifies the setup without building. `just release`
+creates or refreshes the notary keychain profile automatically before
+submitting the release artifact.
+
+Homebrew links the embedded `alan` and `alan-tui` binaries into its prefix.
+When installing `alan.app` directly, use **Tools > Install Command Line
+Tools...** in the app to create PATH-visible symlinks. `~/.alan/bin` is not a
+supported install location.
+
 ### Configuration
 
 Create `~/.alan/agents/default/agent.toml`:

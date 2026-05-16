@@ -34,7 +34,7 @@ enum AlanLaunchStrategy: String, Equatable {
     case envOverride = "env_override"
     case repoDebugBinary = "repo_debug_binary"
     case repoReleaseBinary = "repo_release_binary"
-    case installedBinary = "installed_binary"
+    case bundledResourceBinary = "bundled_resource_binary"
     case pathBinary = "path_binary"
     case shellLookup = "shell_lookup"
 }
@@ -163,7 +163,6 @@ struct AlanCommandResolution: Equatable {
         fileManager: FileManager,
         environment: [String: String]
     ) -> AlanCommandResolution {
-        let home = fileManager.homeDirectoryForCurrentUser.path
         let repoRoot = inferredAlanRepoRoot()
 
         let envOverride = normalizedExecutablePath(
@@ -176,10 +175,7 @@ struct AlanCommandResolution: Equatable {
         let repoRelease = repoRoot.flatMap {
             normalizedExecutablePath("\($0)/target/release/alan", fileManager: fileManager)
         }
-        let installed = normalizedExecutablePath(
-            "\(home)/.alan/bin/alan",
-            fileManager: fileManager
-        )
+        let bundled = bundledAlanExecutablePath(environment: environment, fileManager: fileManager)
         let pathBinary = searchPath(
             executable: "alan",
             environment: environment,
@@ -203,9 +199,9 @@ struct AlanCommandResolution: Equatable {
                 isPresent: repoRelease != nil
             ),
             AlanCommandCandidate(
-                label: "Installed",
-                path: "\(home)/.alan/bin/alan",
-                isPresent: installed != nil
+                label: "App bundle",
+                path: bundled?.path ?? "(not bundled)",
+                isPresent: bundled != nil
             ),
             AlanCommandCandidate(
                 label: "PATH lookup",
@@ -247,12 +243,12 @@ struct AlanCommandResolution: Equatable {
             )
         }
 
-        if let installed {
+        if let bundled {
             return directBinary(
-                strategy: .installedBinary,
-                executablePath: installed,
-                summary: "Launching alan from the installed CLI",
-                detail: installed,
+                strategy: .bundledResourceBinary,
+                executablePath: bundled.path,
+                summary: "Launching alan from the app bundle",
+                detail: bundled.path,
                 repoRoot: repoRoot,
                 candidates: candidates
             )
@@ -281,6 +277,23 @@ struct AlanCommandResolution: Equatable {
             repoRoot: repoRoot,
             candidates: candidates
         )
+    }
+
+    private static func bundledAlanExecutablePath(
+        environment: [String: String],
+        fileManager: FileManager
+    ) -> URL? {
+        let resourceRoot = environment["ALAN_APP_RESOURCE_DIR"].map {
+            URL(fileURLWithPath: $0, isDirectory: true)
+        } ?? Bundle.main.resourceURL
+        guard let candidate = resourceRoot?
+            .appendingPathComponent("bin", isDirectory: true)
+            .appendingPathComponent("alan")
+        else {
+            return nil
+        }
+
+        return fileManager.isExecutableFile(atPath: candidate.path) ? candidate : nil
     }
 
     private static func directShell(

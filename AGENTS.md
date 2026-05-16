@@ -298,8 +298,10 @@ just fmt         # Format code
 just lint        # Clippy lints
 just serve       # Run the daemon
 just build       # Release build
-just install     # Install to ~/.alan/bin
-just uninstall   # Remove from ~/.alan/bin
+just install     # Install signed release alan.app and PATH-visible CLI/TUI links
+just release-check # Check release signing/notarization setup without building
+just release     # Build, sign, notarize, staple, and archive the public macOS release app
+just uninstall   # Remove the local app install and alan-owned CLI/TUI links
 just clean       # Clean build artifacts
 just coverage    # Show coverage summary
 just coverage-detail    # Detailed coverage
@@ -872,20 +874,41 @@ Resolved skill execution may be `inline` or
 ## Installation
 
 ```bash
-# Clone and build
+# Homebrew cask distribution
+brew install --cask alan
+
+# Local developer install from this checkout
 git clone <repo-url>
 cd Alan
-./scripts/install.sh
-
-# Add to PATH (fish)
-set -gx PATH $HOME/.alan/bin $PATH
-
-# Add to PATH (bash/zsh)
-export PATH="$HOME/.alan/bin:$PATH"
+ALAN_DEVELOPER_ID_APPLICATION="Developer ID Application: Example (TEAMID)" just install
 
 # Run
-alan  # or: alan chat
+alan
+alan-tui
 ```
+
+The signed `alan.app` bundle embeds both command-line tools under
+`Contents/Resources/bin`. Homebrew links those embedded tools into its prefix.
+For a direct app install, use **Tools > Install Command Line Tools...** in the
+app to create PATH-visible symlinks. `~/.alan/bin` is not a supported
+distribution path.
+
+Local release/install scripts load only allowlisted assignments from
+`ALAN_RELEASE_ENV_FILE` when set. Without that override they look for repo-local
+env files such as `.env.release.local`, `.env.local`, and `.env`, then fall
+back to `~/.alan/release.env` when present.
+Use `.env.example` as the tracked template and keep real machine credentials in
+ignored `.env`.
+Supported private signing/notarization keys include
+`ALAN_DEVELOPER_ID_APPLICATION`, `ALAN_SIGNING_IDENTITY`,
+`ALAN_NOTARY_KEYCHAIN_PROFILE`, `APPLE_ID`, `APPLE_TEAM_ID`, and
+`APPLE_APP_SPECIFIC_PASSWORD`.
+
+For one-command public release automation, set `ALAN_NOTARY_KEYCHAIN_PROFILE`
+plus `APPLE_ID` / `APPLE_TEAM_ID` / `APPLE_APP_SPECIFIC_PASSWORD`.
+`just release-check` validates the setup and creates or refreshes the notary
+keychain profile when those credentials are present; `just release` runs the
+full signed, notarized, stapled release assembly.
 
 ---
 

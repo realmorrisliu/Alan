@@ -27,6 +27,15 @@ target
 # Coverage artifacts
 lcov.info
 
+# Local release signing/notarization secrets.
+.env
+.env.local
+.env.legacy-*
+.env.release
+.env.release.local
+.release.env
+.release.env.local
+
 # Python local caches and coverage artifacts
 **/__pycache__/
 *.py[cod]

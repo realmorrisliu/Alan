@@ -1,0 +1,19 @@
+cask "alan" do
+  version "0.1.0"
+  sha256 "<sha256>"
+
+  url "https://github.com/realmorrisliu/Alan/releases/download/v#{version}/alan-#{version}-macos.zip",
+      verified: "github.com/realmorrisliu/Alan/"
+  name "alan"
+  desc "Native agent terminal workspace"
+  homepage "https://github.com/realmorrisliu/Alan"
+
+  app "alan.app"
+  binary "#{appdir}/alan.app/Contents/Resources/bin/alan", target: "alan"
+  binary "#{appdir}/alan.app/Contents/Resources/bin/alan-tui", target: "alan-tui"
+
+  zap trash: [
+    "~/Library/Application Support/alan-macos",
+    "~/Library/Preferences/app.alanworks.macos.plist",
+  ]
+end

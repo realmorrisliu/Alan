@@ -1133,20 +1133,110 @@ require_pattern \
     "flock\\(descriptor, LOCK_EX \\| LOCK_NB\\)" \
     "macOS app singleton guard must use an OS-backed exclusive lock"
 
-require_pattern \
-    "clients/apple/scripts/run-alan-debug-app.sh" \
-    "pkill -x alan" \
-    "just app must stop the previous alan process before launching a fresh debug build"
+reject_pattern \
+    "justfile" \
+    "^app:" \
+    "just app must not be reintroduced as the local macOS app workflow"
 
-require_pattern \
-    "clients/apple/scripts/run-alan-debug-app.sh" \
-    "wait_for_alan_to_exit" \
-    "just app must wait for the previous alan process to release singleton ownership before relaunching"
+reject_pattern \
+    "justfile" \
+    "app-debug-run" \
+    "debug app runner recipes must not replace the removed just app workflow"
 
 require_pattern \
     "justfile" \
-    "clients/apple/scripts/run-alan-debug-app\\.sh" \
-    "just app must use the guarded native app runner"
+    "^install:" \
+    "just install must remain the local release install workflow"
+
+reject_pattern \
+    "scripts/install.sh" \
+    "\\.alan/bin" \
+    "local install must not write CLI/TUI entries under ~/.alan/bin"
+
+require_pattern \
+    "clients/apple/alan-macos/App/AlanMacShellCommands.swift" \
+    "Install Command Line Tools" \
+    "direct app installs must expose an explicit command-line tools install action"
+
+require_pattern \
+    "clients/apple/alan-macos/Support/AlanCommandLineToolInstaller.swift" \
+    "defaultInstallDirectory = URL\\(fileURLWithPath: \"/usr/local/bin\"" \
+    "direct app command-line tool installer must use a conventional PATH directory instead of ~/.alan/bin"
+
+require_pattern \
+    "clients/apple/alan-macos/TerminalHostRuntime.swift" \
+    "bundled_resource_binary" \
+    "alan launch resolution must support the app-bundled CLI"
+
+reject_pattern \
+    "clients/apple/alan-macos/TerminalHostRuntime.swift" \
+    "\\.alan/bin" \
+    "alan launch resolution must not use ~/.alan/bin"
+
+require_pattern \
+    "clients/apple/scripts/test-command-line-tool-installer.sh" \
+    "AlanCommandLineToolInstaller.swift" \
+    "command-line tool installer behavior must have a focused test"
+
+require_pattern \
+    "scripts/validate-release-app.sh" \
+    "Developer ID Application" \
+    "release app validation must require Developer ID signatures"
+
+require_pattern \
+    "scripts/entitlements/alan-tui.entitlements" \
+    "com\\.apple\\.security\\.cs\\.allow-jit" \
+    "standalone alan-tui must declare the hardened-runtime JIT entitlement it needs to launch"
+
+require_pattern \
+    "scripts/assemble-release-app.sh" \
+    "alan-tui\\.entitlements" \
+    "release assembly must sign alan-tui with its dedicated hardened-runtime entitlements"
+
+require_pattern \
+    "scripts/validate-release-app.sh" \
+    "com\\.apple\\.security\\.cs\\.allow-jit" \
+    "release app validation must verify alan-tui hardened-runtime launch entitlements"
+
+require_pattern \
+    "scripts/release-env.sh" \
+    "ALAN_DEVELOPER_ID_APPLICATION" \
+    "release env loader must accept canonical alan signing identity variables"
+
+reject_pattern \
+    "scripts/release-env.sh" \
+    "APPLE_API_KEY" \
+    "release env loader must expose only the Apple ID app-specific-password notarization path"
+
+reject_pattern \
+    "scripts/assemble-release-app.sh" \
+    "key-id" \
+    "release assembly must submit notarization through the keychain profile only"
+
+reject_pattern \
+    "scripts/ensure-notary-profile.sh" \
+    "key-id" \
+    "notary profile setup must use only Apple ID app-specific-password credentials"
+
+require_pattern \
+    "scripts/ensure-notary-profile.sh" \
+    "notarytool store-credentials" \
+    "release automation must be able to create or refresh the notary keychain profile"
+
+require_pattern \
+    "scripts/release-check.sh" \
+    "ensure-notary-profile.sh" \
+    "release-check must validate notarization setup before building"
+
+require_pattern \
+    "justfile" \
+    "^release:" \
+    "just release must provide the public signed/notarized release workflow"
+
+require_pattern \
+    "scripts/validate-homebrew-cask.sh" \
+    "Contents/Resources/bin/alan-tui" \
+    "Homebrew cask validation must check embedded CLI/TUI binary links"
 
 require_pattern \
     "clients/apple/README.md" \
