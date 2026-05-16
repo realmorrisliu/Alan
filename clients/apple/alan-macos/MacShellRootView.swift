@@ -11,13 +11,17 @@ struct MacShellRootView: View {
     @State private var areFloatingSidebarTrafficLightsVisible = false
     @State private var sidebarRevealToken = 0
     @State private var floatingSidebarTrafficLightRevealToken = 0
+    @State private var sidebarPinMorphToken = 0
+    @State private var isSidebarPinMorphActive = false
     @State private var pinnedSidebarPresentationProgress: CGFloat
+    @State private var sidebarPinMorphProgress: CGFloat = 1
     @State private var windowChromeMetrics = ShellWindowChromeMetrics()
     @State private var systemColorScheme = ShellAppearanceMode.currentSystemColorScheme
     @State private var isCollapsedSidebarPointerRetained = false
     private let sidebarWidth: CGFloat = 264
     private let floatingSidebarInset: CGFloat = 6
     private let floatingSidebarTrafficLightRevealDelay: TimeInterval = 0.08
+    private let sidebarPinMorphDuration: TimeInterval = 0.18
     private let hiddenCommandInputOpacity = 0.001
 
     init(
@@ -57,41 +61,58 @@ struct MacShellRootView: View {
     }
 
     private var isSidebarSurfaceVisible: Bool {
-        isPinnedSidebarSurfaceActive || isSidebarPanelRevealed
-    }
-
-    private var isPinnedSidebarSurfaceActive: Bool {
-        !isSidebarCollapsed || pinnedSidebarPresentationProgress > 0.001
+        sidebarPresentation.isSurfaceVisible
     }
 
     private var isPinnedSidebarFullyCollapsed: Bool {
-        pinnedSidebarPresentationProgress <= 0.001
+        pinnedSidebarPresentationProgress <= ShellSidebarPresentationSnapshot.visibilityEpsilon
+            && !isSidebarPinMorphActive
     }
 
     private var sidebarPinnedVisibleWidth: CGFloat {
-        sidebarWidth * clampedPinnedSidebarPresentationProgress
+        sidebarPresentation.layoutWidth
     }
 
-    private var sidebarPinnedChromeOffsetX: CGFloat {
-        -sidebarWidth * (1 - clampedPinnedSidebarPresentationProgress)
+    private var sidebarPinnedContentOffsetX: CGFloat {
+        sidebarPresentation.contentOffsetX
     }
 
     private var sidebarPinnedContentOpacity: Double {
-        Double(clampedPinnedSidebarPresentationProgress)
+        sidebarPresentation.contentOpacity
     }
 
     private var clampedPinnedSidebarPresentationProgress: CGFloat {
-        min(max(pinnedSidebarPresentationProgress, 0), 1)
+        sidebarPresentation.layoutProgress
     }
 
     private var sidebarChromeSurfaceOrigin: CGPoint {
-        if isSidebarPanelRevealed {
-            return CGPoint(x: floatingSidebarInset, y: floatingSidebarInset)
-        }
-        guard isPinnedSidebarSurfaceActive else {
-            return .zero
-        }
-        return CGPoint(x: sidebarPinnedChromeOffsetX, y: 0)
+        sidebarPresentation.surfaceOrigin
+    }
+
+    private var sidebarPresentationConfiguration: ShellSidebarPresentationConfiguration {
+        ShellSidebarPresentationConfiguration(
+            sidebarWidth: sidebarWidth,
+            floatingSidebarInset: floatingSidebarInset,
+            floatingCornerRadius: ShellRadii.floatingSidebarPanel
+        )
+    }
+
+    private var sidebarPresentationPhase: ShellSidebarPresentationPhase {
+        ShellSidebarPresentationPhase.resolved(
+            isSidebarCollapsed: isSidebarCollapsed,
+            pinnedProgress: pinnedSidebarPresentationProgress,
+            isFloatingPanelRevealed: isSidebarPanelRevealed,
+            showsFloatingTrafficLights: areFloatingSidebarTrafficLightsVisible,
+            isFloatingToPinnedMorphActive: isSidebarPinMorphActive,
+            floatingToPinnedMorphProgress: sidebarPinMorphProgress
+        )
+    }
+
+    private var sidebarPresentation: ShellSidebarPresentationSnapshot {
+        ShellSidebarPresentationSnapshot(
+            phase: sidebarPresentationPhase,
+            configuration: sidebarPresentationConfiguration
+        )
     }
 
     private var commandInputOpacity: Double {
@@ -102,25 +123,11 @@ struct MacShellRootView: View {
         reduceMotion ? nil : .easeOut(duration: 0.14)
     }
 
-    private var windowChromeSurface: ShellWindowChromeSurface {
-        ShellWindowChromeSurface(
-            isVisible: isSidebarSurfaceVisible,
-            origin: sidebarChromeSurfaceOrigin,
-            width: sidebarWidth,
-            showsStandardTrafficLights: shouldShowStandardTrafficLights
-        )
-    }
-
-    private var shouldShowStandardTrafficLights: Bool {
-        if isPinnedSidebarSurfaceActive {
-            return true
-        }
-        guard isSidebarCollapsed else { return true }
-        return isSidebarPanelRevealed && areFloatingSidebarTrafficLightsVisible
-    }
-
     private var isCollapsedSidebarPointerRetentionActive: Bool {
-        isSidebarCollapsed && isPinnedSidebarFullyCollapsed && isSidebarPanelRevealed
+        isSidebarCollapsed
+            && isPinnedSidebarFullyCollapsed
+            && isSidebarPanelRevealed
+            && !isSidebarPinMorphActive
     }
 
     private func revealCollapsedSidebarPanel() {
@@ -203,17 +210,86 @@ struct MacShellRootView: View {
         reduceMotion ? nil : .easeOut(duration: 0.16)
     }
 
+    private var sidebarPinMorphAnimation: Animation? {
+        reduceMotion ? nil : .easeOut(duration: sidebarPinMorphDuration)
+    }
+
     private var resolvedAppearanceColorScheme: ColorScheme {
         appearanceMode.resolvedColorScheme(systemColorScheme: systemColorScheme)
     }
 
     private func updateSidebarCollapsed(_ collapsed: Bool) {
+        if collapsed {
+            collapsePinnedSidebar()
+        } else if shouldMorphFloatingSidebarToPinned {
+            morphFloatingSidebarToPinned()
+        } else {
+            expandPinnedSidebar()
+        }
+    }
+
+    private var shouldMorphFloatingSidebarToPinned: Bool {
+        isSidebarCollapsed && isPinnedSidebarFullyCollapsed && isSidebarPanelRevealed
+    }
+
+    private func collapsePinnedSidebar() {
+        sidebarPinMorphToken += 1
+        isSidebarPinMorphActive = false
+        sidebarPinMorphProgress = 1
         withAnimation(sidebarPinnedStateAnimation) {
-            isSidebarCollapsed = collapsed
-            pinnedSidebarPresentationProgress = collapsed ? 0 : 1
+            isSidebarCollapsed = true
+            pinnedSidebarPresentationProgress = 0
             isSidebarPanelRevealed = false
             areFloatingSidebarTrafficLightsVisible = false
             floatingSidebarTrafficLightRevealToken += 1
+        }
+    }
+
+    private func expandPinnedSidebar() {
+        sidebarPinMorphToken += 1
+        isSidebarPinMorphActive = false
+        sidebarPinMorphProgress = 1
+        withAnimation(sidebarPinnedStateAnimation) {
+            isSidebarCollapsed = false
+            pinnedSidebarPresentationProgress = 1
+            isSidebarPanelRevealed = false
+            areFloatingSidebarTrafficLightsVisible = false
+            floatingSidebarTrafficLightRevealToken += 1
+        }
+    }
+
+    private func morphFloatingSidebarToPinned() {
+        sidebarRevealToken += 1
+        floatingSidebarTrafficLightRevealToken += 1
+        sidebarPinMorphToken += 1
+        let token = sidebarPinMorphToken
+
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            isSidebarCollapsed = false
+            isSidebarPinMorphActive = true
+            sidebarPinMorphProgress = 0
+            pinnedSidebarPresentationProgress = 0
+            areFloatingSidebarTrafficLightsVisible = true
+        }
+
+        withAnimation(sidebarPinMorphAnimation) {
+            sidebarPinMorphProgress = 1
+            pinnedSidebarPresentationProgress = 1
+        }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + sidebarPinMorphDuration) {
+            guard sidebarPinMorphToken == token, isSidebarPinMorphActive else { return }
+            var completionTransaction = Transaction()
+            completionTransaction.disablesAnimations = true
+            withTransaction(completionTransaction) {
+                isSidebarPanelRevealed = false
+                isSidebarPinMorphActive = false
+                sidebarPinMorphProgress = 1
+                pinnedSidebarPresentationProgress = 1
+                areFloatingSidebarTrafficLightsVisible = false
+            }
         }
     }
 
@@ -241,11 +317,11 @@ struct MacShellRootView: View {
 
             if isSidebarCollapsed && isPinnedSidebarFullyCollapsed {
                 collapsedSidebarRevealZone
+            }
 
-                if isSidebarPanelRevealed {
-                    floatingSidebarPanel
-                        .transition(floatingSidebarPanelTransition)
-                }
+            if sidebarPresentation.showsOverlaySurface {
+                sidebarOverlaySurface
+                    .transition(floatingSidebarPanelTransition)
             }
 
             if isSidebarSurfaceVisible {
@@ -281,8 +357,11 @@ struct MacShellRootView: View {
         .environment(\.colorScheme, resolvedAppearanceColorScheme)
         .onAppear {
             pinnedSidebarPresentationProgress = isSidebarCollapsed ? 0 : 1
+            sidebarPinMorphProgress = 1
+            isSidebarPinMorphActive = false
         }
         .onChange(of: isSidebarCollapsed) { _, collapsed in
+            guard !isSidebarPinMorphActive else { return }
             synchronizePinnedSidebarPresentation(collapsed: collapsed)
         }
         .onChange(of: host.commandInputRequestID) { _, _ in
@@ -296,11 +375,14 @@ struct MacShellRootView: View {
                 metrics: $windowChromeMetrics,
                 appearanceMode: appearanceMode,
                 pinnedSidebarPresentationProgress: pinnedSidebarPresentationProgress,
+                sidebarPinMorphProgress: sidebarPinMorphProgress,
                 isSidebarCollapsed: isSidebarCollapsed,
                 isSidebarPanelRevealed: isSidebarPanelRevealed,
                 areFloatingSidebarTrafficLightsVisible: areFloatingSidebarTrafficLightsVisible,
+                isSidebarPinMorphActive: isSidebarPinMorphActive,
                 sidebarWidth: sidebarWidth,
                 floatingSidebarInset: floatingSidebarInset,
+                floatingCornerRadius: ShellRadii.floatingSidebarPanel,
                 systemColorScheme: $systemColorScheme,
                 collapsedSidebarPointerRetentionEnabled: isCollapsedSidebarPointerRetentionActive,
                 collapsedSidebarPointerRetained: $isCollapsedSidebarPointerRetained
@@ -308,15 +390,23 @@ struct MacShellRootView: View {
         )
     }
 
+    @ViewBuilder
     private func pinnedSidebarSurface() -> some View {
-        sidebarContent(isSwipeEnabled: true)
-            .frame(width: sidebarWidth)
-            .offset(x: sidebarPinnedChromeOffsetX)
-            .opacity(sidebarPinnedContentOpacity)
-            .allowsHitTesting(!isSidebarCollapsed)
-            .frame(width: sidebarPinnedVisibleWidth, alignment: .leading)
-            .clipped()
-            .ignoresSafeArea(edges: .top)
+        if sidebarPresentation.showsPinnedSurfaceContent {
+            sidebarContent(isSwipeEnabled: true)
+                .frame(width: sidebarWidth)
+                .offset(x: sidebarPinnedContentOffsetX)
+                .opacity(sidebarPinnedContentOpacity)
+                .allowsHitTesting(!isSidebarCollapsed)
+                .frame(width: sidebarPinnedVisibleWidth, alignment: .leading)
+                .clipped()
+                .ignoresSafeArea(edges: .top)
+        } else {
+            Color.clear
+                .frame(width: sidebarPinnedVisibleWidth)
+                .allowsHitTesting(false)
+                .ignoresSafeArea(edges: .top)
+        }
     }
 
     private func synchronizePinnedSidebarPresentation(collapsed: Bool) {
@@ -354,39 +444,33 @@ struct MacShellRootView: View {
             .zIndex(10)
     }
 
-    private var floatingSidebarPanel: some View {
-        ZStack(alignment: .topLeading) {
-            RoundedRectangle(cornerRadius: ShellRadii.floatingSidebarPanel, style: .continuous)
+    private var sidebarOverlaySurface: some View {
+        let presentation = sidebarPresentation
+        let shape = RoundedRectangle(cornerRadius: presentation.cornerRadius, style: .continuous)
+
+        return ZStack(alignment: .topLeading) {
+            shape
                 .fill(.clear)
                 .background {
                     ShellMaterialBackgroundView(.sidebarGlass)
-                        .clipShape(
-                            RoundedRectangle(
-                                cornerRadius: ShellRadii.floatingSidebarPanel,
-                                style: .continuous
-                            )
-                        )
+                        .clipShape(shape)
                 }
                 .overlay {
-                    RoundedRectangle(cornerRadius: ShellRadii.floatingSidebarPanel, style: .continuous)
+                    shape
                         .stroke(ShellPalette.line.opacity(0.22), lineWidth: 0.8)
+                        .opacity(Double(presentation.floatingTreatmentProgress))
                 }
 
             sidebarContent(isSwipeEnabled: true)
-                .clipShape(
-                    RoundedRectangle(
-                        cornerRadius: ShellRadii.floatingSidebarPanel,
-                        style: .continuous
-                    )
-                )
+                .clipShape(shape)
         }
         .frame(width: sidebarWidth, alignment: .topLeading)
         .frame(maxHeight: .infinity, alignment: .topLeading)
-        .padding(.leading, floatingSidebarInset)
-        .padding(.top, floatingSidebarInset)
-        .padding(.bottom, floatingSidebarInset)
-        .shellShadow(ShellShadows.floatingPanel)
+        .padding(.bottom, presentation.overlayBottomInset)
+        .offset(x: presentation.surfaceOrigin.x, y: presentation.surfaceOrigin.y)
+        .shellShadow(presentation.showsFloatingShadow ? ShellShadows.floatingPanel : ShellShadows.none)
         .onHover(perform: handleCollapsedSidebarHover)
+        .allowsHitTesting(presentation.hitTestingRole != .morphingFloatingToPinned)
         .ignoresSafeArea(edges: [.top, .bottom])
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .zIndex(20)
@@ -433,18 +517,26 @@ private struct ShellWindowPlacementAnimationSyncView: View, Animatable {
     @Binding var metrics: ShellWindowChromeMetrics
     let appearanceMode: ShellAppearanceMode
     var pinnedSidebarPresentationProgress: CGFloat
+    var sidebarPinMorphProgress: CGFloat
     let isSidebarCollapsed: Bool
     let isSidebarPanelRevealed: Bool
     let areFloatingSidebarTrafficLightsVisible: Bool
+    let isSidebarPinMorphActive: Bool
     let sidebarWidth: CGFloat
     let floatingSidebarInset: CGFloat
+    let floatingCornerRadius: CGFloat
     @Binding var systemColorScheme: ColorScheme
     let collapsedSidebarPointerRetentionEnabled: Bool
     @Binding var collapsedSidebarPointerRetained: Bool
 
-    var animatableData: CGFloat {
-        get { pinnedSidebarPresentationProgress }
-        set { pinnedSidebarPresentationProgress = newValue }
+    var animatableData: AnimatablePair<CGFloat, CGFloat> {
+        get {
+            AnimatablePair(pinnedSidebarPresentationProgress, sidebarPinMorphProgress)
+        }
+        set {
+            pinnedSidebarPresentationProgress = newValue.first
+            sidebarPinMorphProgress = newValue.second
+        }
     }
 
     var body: some View {
@@ -459,42 +551,29 @@ private struct ShellWindowPlacementAnimationSyncView: View, Animatable {
     }
 
     private var windowChromeSurface: ShellWindowChromeSurface {
-        ShellWindowChromeSurface(
-            isVisible: isSidebarSurfaceVisible,
-            origin: sidebarChromeSurfaceOrigin,
-            width: sidebarWidth,
-            showsStandardTrafficLights: shouldShowStandardTrafficLights
+        sidebarPresentation.chromeSurface
+    }
+
+    private var sidebarPresentation: ShellSidebarPresentationSnapshot {
+        ShellSidebarPresentationSnapshot(
+            phase: sidebarPresentationPhase,
+            configuration: ShellSidebarPresentationConfiguration(
+                sidebarWidth: sidebarWidth,
+                floatingSidebarInset: floatingSidebarInset,
+                floatingCornerRadius: floatingCornerRadius
+            )
         )
     }
 
-    private var isSidebarSurfaceVisible: Bool {
-        isPinnedSidebarSurfaceActive || isSidebarPanelRevealed
-    }
-
-    private var isPinnedSidebarSurfaceActive: Bool {
-        !isSidebarCollapsed || clampedPinnedSidebarPresentationProgress > 0.001
-    }
-
-    private var clampedPinnedSidebarPresentationProgress: CGFloat {
-        min(max(pinnedSidebarPresentationProgress, 0), 1)
-    }
-
-    private var sidebarChromeSurfaceOrigin: CGPoint {
-        if isSidebarPanelRevealed {
-            return CGPoint(x: floatingSidebarInset, y: floatingSidebarInset)
-        }
-        guard isPinnedSidebarSurfaceActive else {
-            return .zero
-        }
-        return CGPoint(x: -sidebarWidth * (1 - clampedPinnedSidebarPresentationProgress), y: 0)
-    }
-
-    private var shouldShowStandardTrafficLights: Bool {
-        if isPinnedSidebarSurfaceActive {
-            return true
-        }
-        guard isSidebarCollapsed else { return true }
-        return isSidebarPanelRevealed && areFloatingSidebarTrafficLightsVisible
+    private var sidebarPresentationPhase: ShellSidebarPresentationPhase {
+        ShellSidebarPresentationPhase.resolved(
+            isSidebarCollapsed: isSidebarCollapsed,
+            pinnedProgress: pinnedSidebarPresentationProgress,
+            isFloatingPanelRevealed: isSidebarPanelRevealed,
+            showsFloatingTrafficLights: areFloatingSidebarTrafficLightsVisible,
+            isFloatingToPinnedMorphActive: isSidebarPinMorphActive,
+            floatingToPinnedMorphProgress: sidebarPinMorphProgress
+        )
     }
 }
 

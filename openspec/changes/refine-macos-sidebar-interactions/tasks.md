@@ -14,9 +14,9 @@
 - [x] 2.4 Preserve collapsed floating-sidebar reveal behavior: narrow edge hover, toolbar-hover retention, stable terminal workspace geometry, and no traffic-light appearance ahead of panel reveal.
 - [x] 2.5 Add or update focused window-placement tests for hidden traffic lights, floating surface origin, pinned motion final frames, and native traffic-light behavior.
 - [x] 2.6 Promote collapsed floating-sidebar hide retention to a window-level pointer-region check that includes the left resize frame while preserving native AppKit resize hit-testing.
-- [ ] 2.7 Replace direct boolean branching for pinned/floating sidebar chrome with a unified sidebar presentation model that emits layout progress, visible surface origin, surface treatment, hit-testing role, and `ShellWindowChromeSurface` values.
-- [ ] 2.8 Add a floating-to-pinned morph path so pinning from a revealed collapsed sidebar keeps one visible sidebar surface while opening the pinned layout reservation and moving titlebar/traffic-light chrome with the same presentation snapshot.
-- [ ] 2.9 Add focused model or window-placement coverage proving the floating-to-pinned path has no intermediate hidden, offscreen, or duplicated sidebar frame.
+- [x] 2.7 Replace direct boolean branching for pinned/floating sidebar chrome with a unified sidebar presentation model that emits layout progress, visible surface origin, surface treatment, hit-testing role, and `ShellWindowChromeSurface` values.
+- [x] 2.8 Add a floating-to-pinned morph path so pinning from a revealed collapsed sidebar keeps one visible sidebar surface while opening the pinned layout reservation and moving titlebar/traffic-light chrome with the same presentation snapshot.
+- [x] 2.9 Add focused model or window-placement coverage proving the floating-to-pinned path has no intermediate hidden, offscreen, or duplicated sidebar frame.
 
 ## 3. Sidebar-local Space Content Pager
 
@@ -36,8 +36,10 @@
 - [x] 4.4 Run focused Apple checks: `clients/apple/scripts/test-shell-runtime-metadata.sh`, `clients/apple/scripts/test-shell-sidebar-swipe-monitor.sh`, `clients/apple/scripts/test-shell-window-placement.sh`, and `clients/apple/scripts/check-shell-contracts.sh`.
 - [ ] 4.5 Build or run the macOS app and capture manual verification notes or screenshots for pinned collapse/expand, floating reveal/hide, tab click persistence, space click persistence, and space swipe pager motion.
   - 2026-05-15: macOS Debug build passed with project-local DerivedData and manual verification notes were added in `manual-verification.md`. Live visual interaction was not performed in this run, so this remains unchecked for human acceptance.
+  - 2026-05-16: macOS Debug build passed again after adding the unified sidebar presentation model. Live visual interaction was still not performed, so this remains unchecked for human acceptance.
 - [x] 4.6 Verify the visible-frame-zoomed collapsed-sidebar case manually or with focused AppKit coverage: reveal the sidebar, move the pointer into the left resize cursor region, confirm the panel remains visible, and confirm native resizing still works.
 - [ ] 4.7 Visually verify or capture evidence that pinning from a revealed collapsed sidebar morphs into the pinned layout without a hide-then-show bounce.
+  - 2026-05-16: focused model coverage now verifies the morph keeps one visible surface and has no hidden/offscreen/duplicated intermediate frame. Live visual verification or captured evidence is still pending.
 
 ## 5. OpenSpec And Review Readiness
 

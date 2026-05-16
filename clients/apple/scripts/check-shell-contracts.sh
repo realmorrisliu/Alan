@@ -514,8 +514,8 @@ require_pattern \
     "collapsed sidebar chrome must publish its floating surface state to AppKit"
 
 require_pattern \
-    "clients/apple/alan-macos/MacShellRootView.swift" \
-    "isVisible: isSidebarSurfaceVisible" \
+    "clients/apple/alan-macos/Support/ShellSidebarPresentation.swift" \
+    "isVisible: false" \
     "traffic lights must hide when the collapsed sidebar surface is hidden"
 
 require_pattern \
@@ -599,9 +599,34 @@ require_pattern \
     "pinned sidebar collapse must be driven by continuous presentation progress"
 
 require_pattern \
+    "clients/apple/alan-macos/Support/ShellSidebarPresentation.swift" \
+    "morphingFloatingToPinned" \
+    "sidebar presentation must model the floating-to-pinned morph explicitly"
+
+require_pattern \
+    "clients/apple/alan-macos/Support/ShellSidebarPresentation.swift" \
+    "visibleSurfaceCount" \
+    "sidebar presentation model must expose single-surface invariants for pin morph coverage"
+
+require_pattern \
+    "clients/apple/alan-macos/MacShellRootView.swift" \
+    "sidebarPresentation\\.chromeSurface" \
+    "mac shell root must derive window chrome from the unified sidebar presentation snapshot"
+
+require_pattern \
+    "clients/apple/alan-macos/MacShellRootView.swift" \
+    "morphFloatingSidebarToPinned" \
+    "pinning a revealed floating sidebar must use a dedicated morph path"
+
+require_pattern \
     "clients/apple/alan-macos/MacShellRootView.swift" \
     "ShellWindowPlacementAnimationSyncView: View, Animatable" \
     "window chrome placement must receive animated pinned-sidebar progress instead of only final state"
+
+require_pattern \
+    "clients/apple/alan-macos/MacShellRootView.swift" \
+    "AnimatablePair<CGFloat, CGFloat>" \
+    "window chrome placement must animate both pinned layout progress and floating-to-pinned morph progress"
 
 require_pattern \
     "clients/apple/alan-macos/Views/Shell/ShellWorkspaceView.swift" \
@@ -612,6 +637,16 @@ require_pattern \
     "clients/apple/alan-macos/MacShellRootView.swift" \
     "frame\\(width: sidebarPinnedVisibleWidth" \
     "pinned sidebar must stay mounted while visible width animates"
+
+require_pattern \
+    "clients/apple/scripts/test-shell-sidebar-presentation.swift" \
+    "verifiesFloatingToPinnedMorphKeepsOneVisibleSurface" \
+    "sidebar presentation tests must cover floating-to-pinned morph single-surface behavior"
+
+require_pattern \
+    "clients/apple/scripts/test-shell-sidebar-presentation.sh" \
+    "ShellSidebarPresentation\\.swift" \
+    "sidebar presentation tests must compile the shared presentation model"
 
 reject_pattern \
     "clients/apple/alan-macos/MacShellRootView.swift" \
