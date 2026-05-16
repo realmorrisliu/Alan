@@ -13,13 +13,15 @@ are changed.
 
 #### Scenario: Sidebar-local space pager gesture tested
 - **WHEN** horizontal space swipe behavior changes
-- **THEN** focused tests cover undecided-axis buffering, horizontal intent lock, vertical scroll pass-through, edge resistance, commit threshold, cancel threshold, phaseful release, phase-less idle release, and fast flick velocity commit
+- **THEN** focused tests cover undecided-axis buffering, horizontal intent lock, vertical scroll pass-through, stable five-page rendering around the source space, one-page-plus-overdrag drag clamping, edge resistance, commit threshold, cancel threshold, phaseful release, phase-less idle release, and fast flick velocity commit
 - **AND** verification confirms only the sidebar active-space header and tab list move during the gesture
 - **AND** verification confirms the command input, bottom space switcher, sidebar chrome, traffic lights, and workspace terminal surface remain fixed during the gesture
 
 #### Scenario: Pinned sidebar motion reviewed
 - **WHEN** pinned sidebar collapse or expansion behavior changes
 - **THEN** maintainers can inspect automated invariants, screenshots, or manual notes showing that the sidebar surface, workspace inset, titlebar controls, and standard macOS traffic-light controls move as one coordinated transition
+- **AND** verification covers the revealed-floating-sidebar to pinned-sidebar morph and confirms there is no intermediate hidden/offscreen/duplicated sidebar frame
+- **AND** focused checks or contract checks confirm the presentation model, not independent pinned/floating booleans alone, drives the sidebar surface and window chrome values used during that morph
 
 #### Scenario: Floating sidebar chrome reviewed
 - **WHEN** collapsed floating-sidebar reveal or hide behavior changes

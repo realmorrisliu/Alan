@@ -67,6 +67,7 @@
 		00000000000000000000003A /* ShellWorkspaceManifestStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000013A /* ShellWorkspaceManifestStore.swift */; };
 		00000000000000000000003B /* ShellSidebarSpaceContentPager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000013B /* ShellSidebarSpaceContentPager.swift */; };
 		00000000000000000000003C /* AlanCommandLineToolInstaller.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000013C /* AlanCommandLineToolInstaller.swift */; };
+		00000000000000000000003D /* ShellSidebarPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000013D /* ShellSidebarPresentation.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -131,6 +132,7 @@
 		00000000000000000000013A /* ShellWorkspaceManifestStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/Shell/ShellWorkspaceManifestStore.swift; sourceTree = "<group>"; };
 		00000000000000000000013B /* ShellSidebarSpaceContentPager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Support/ShellSidebarSpaceContentPager.swift; sourceTree = "<group>"; };
 		00000000000000000000013C /* AlanCommandLineToolInstaller.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Support/AlanCommandLineToolInstaller.swift; sourceTree = "<group>"; };
+		00000000000000000000013D /* ShellSidebarPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Support/ShellSidebarPresentation.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -207,6 +209,7 @@
 				00000000000000000000013C /* AlanCommandLineToolInstaller.swift */,
 				000000000000000000000136 /* ConsoleAdaptiveColor.swift */,
 				000000000000000000000138 /* ShellSidebarSwipeMonitor.swift */,
+				00000000000000000000013D /* ShellSidebarPresentation.swift */,
 				00000000000000000000013B /* ShellSidebarSpaceContentPager.swift */,
 				000000000000000000000119 /* ShellWindowPlacement.swift */,
 				00000000000000000000011D /* ShellVoiceCommandController.swift */,
@@ -469,6 +472,7 @@
 				000000000000000000000036 /* ConsoleAdaptiveColor.swift in Sources */,
 				000000000000000000000037 /* ShellHostControlCommandHandling.swift in Sources */,
 				000000000000000000000038 /* ShellSidebarSwipeMonitor.swift in Sources */,
+				00000000000000000000003D /* ShellSidebarPresentation.swift in Sources */,
 				00000000000000000000003B /* ShellSidebarSpaceContentPager.swift in Sources */,
 				00000000000000000000003C /* AlanCommandLineToolInstaller.swift in Sources */,
 				000000000000000000000039 /* ShellWorkspaceManifest.swift in Sources */,

@@ -8,6 +8,9 @@ enum ShellSidebarSpaceContentPagerSettlementPhase: Equatable {
 }
 
 struct ShellSidebarSpaceContentPagerState: Equatable {
+    static let renderRadius = 2
+    static let overdragGapRatio: CGFloat = 0.18
+
     let sourceIndex: Int
     var targetIndex: Int?
     var dragOffset: CGFloat
@@ -40,14 +43,22 @@ struct ShellSidebarSpaceContentPagerState: Equatable {
     }
 
     var pageIndicesForRendering: [Int] {
-        guard let targetIndex, targetIndex != sourceIndex else {
-            return [sourceIndex]
-        }
-        return [sourceIndex, targetIndex]
+        let lowerBound = sourceIndex - Self.renderRadius
+        let upperBound = sourceIndex + Self.renderRadius
+        return Array(lowerBound...upperBound)
+    }
+
+    func pageIndicesForRendering(validRange: Range<Int>) -> [Int] {
+        pageIndicesForRendering.filter { validRange.contains($0) }
     }
 
     func offset(for index: Int) -> CGFloat {
         CGFloat(index - sourceIndex) * max(pageWidth, 1) + dragOffset
+    }
+
+    static func clampedDragOffset(for translationX: CGFloat, pageWidth: CGFloat) -> CGFloat {
+        let limit = max(pageWidth, 1) * (1 + overdragGapRatio)
+        return min(max(translationX, -limit), limit)
     }
 }
 #endif

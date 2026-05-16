@@ -886,7 +886,9 @@ enum AlanShellWindowPlacement {
             return metrics
         }
 
-        if chromeSurface.showsStandardTrafficLights {
+        let shouldPrimeInvisibleTrafficLights =
+            chromeSurface.showsStandardTrafficLights && standardWindowButtonsAreHidden(in: window)
+        if shouldPrimeInvisibleTrafficLights {
             setStandardWindowButtons(in: window, hidden: false, alphaValue: 0)
         }
 
@@ -935,6 +937,11 @@ enum AlanShellWindowPlacement {
                 button.isHidden = hidden
             }
         }
+    }
+
+    private static func standardWindowButtonsAreHidden(in window: NSWindow) -> Bool {
+        guard let group = standardWindowButtonGroup(in: window) else { return false }
+        return group.buttons.allSatisfy(\.isHidden)
     }
 
     private static func localTrafficLightGroupFrame(for frame: CGRect) -> CGRect {

@@ -20,6 +20,8 @@ private enum ShellSidebarSwipeMonitorTests {
         verifiesPhasefulHorizontalGestureCancelsOnCancelPhase()
         verifiesFastFlickUsesTerminalDelta()
         verifiesPagerOffsetsPagesFromSharedDragOffset()
+        verifiesPagerRendersFivePageWindowAroundSource()
+        verifiesPagerClampsDragToOnePageWithOverdragGap()
         verifiesPagerEdgeResistanceDoesNotRenderWrappedTarget()
         verifiesPagerSettlementPhaseExposesCommitAndCancelState()
         print("Shell sidebar swipe monitor tests passed.")
@@ -158,8 +160,49 @@ private enum ShellSidebarSwipeMonitorTests {
             "target sidebar content page must share the same drag offset from the adjacent page position"
         )
         expect(
-            pager.pageIndicesForRendering == [1, 2],
-            "sidebar content pager must render source and adjacent target pages together"
+            pager.pageIndicesForRendering == [-1, 0, 1, 2, 3],
+            "sidebar content pager must render a stable five-page window around the source"
+        )
+    }
+
+    private static func verifiesPagerRendersFivePageWindowAroundSource() {
+        let pager = ShellSidebarSpaceContentPagerState(
+            sourceIndex: 2,
+            targetIndex: 3,
+            dragOffset: -310,
+            pageWidth: 300,
+            settlementPhase: .dragging
+        )
+
+        expect(
+            pager.pageIndicesForRendering == [0, 1, 2, 3, 4],
+            "sidebar content pager must keep previous two and next two pages mounted"
+        )
+        expect(
+            pager.offset(for: 4).isApproximately(290),
+            "overdrag past one page must be able to reveal a sliver of the second next page"
+        )
+    }
+
+    private static func verifiesPagerClampsDragToOnePageWithOverdragGap() {
+        let pageWidth: CGFloat = 300
+        let clampedLeft = ShellSidebarSpaceContentPagerState.clampedDragOffset(
+            for: -900,
+            pageWidth: pageWidth
+        )
+        let clampedRight = ShellSidebarSpaceContentPagerState.clampedDragOffset(
+            for: 900,
+            pageWidth: pageWidth
+        )
+        let expectedLimit = pageWidth * (1 + ShellSidebarSpaceContentPagerState.overdragGapRatio)
+
+        expect(
+            clampedLeft.isApproximately(-expectedLimit),
+            "left swipe drag offset must be limited to one page plus the overdrag gap"
+        )
+        expect(
+            clampedRight.isApproximately(expectedLimit),
+            "right swipe drag offset must be limited to one page plus the overdrag gap"
         )
     }
 
@@ -174,8 +217,8 @@ private enum ShellSidebarSwipeMonitorTests {
 
         expect(pager.isEdgeResistance, "edge gestures without a target must enter resistance mode")
         expect(
-            pager.pageIndicesForRendering == [0],
-            "edge resistance must not synthesize or wrap to a target page"
+            pager.pageIndicesForRendering(validRange: 0..<3) == [0, 1, 2],
+            "edge resistance must keep the valid centered page window without wrapping"
         )
         expect(
             pager.offset(for: 0).isApproximately(42),

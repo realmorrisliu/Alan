@@ -14,6 +14,18 @@ Date: 2026-05-15
 - `xcodebuild -project clients/apple/alan-macos.xcodeproj -scheme alan-macos -configuration Debug -destination 'platform=macOS' -derivedDataPath target/xcode-derived build` passed. Xcode still printed CoreSimulator availability warnings, but the macOS build completed successfully.
 - `git diff --check` passed.
 
+Additional 2026-05-16 automated verification after adding the unified sidebar
+presentation model:
+
+- `clients/apple/scripts/test-shell-sidebar-presentation.sh` passed with focused coverage for pinned, collapsed, floating, and floating-to-pinned morph snapshots.
+- `clients/apple/scripts/test-shell-window-placement.sh` passed.
+- `clients/apple/scripts/test-shell-runtime-metadata.sh` passed.
+- `clients/apple/scripts/test-shell-sidebar-swipe-monitor.sh` passed.
+- `bash clients/apple/scripts/check-shell-contracts.sh` passed.
+- `openspec validate refine-macos-sidebar-interactions --strict` passed.
+- `git diff --check` passed.
+- `xcodebuild -project clients/apple/alan-macos.xcodeproj -scheme alan-macos -configuration Debug -destination 'platform=macOS' -derivedDataPath target/xcode-derived-sidebar-presentation CODE_SIGNING_ALLOWED=NO build` passed. Xcode still printed CoreSimulator availability warnings, but the macOS build completed successfully.
+
 ## Manual Visual Verification Status
 
 - Pinned sidebar collapse/expand: not performed in this run.
@@ -22,6 +34,7 @@ Date: 2026-05-15
 - Space click persistence: not performed in this run.
 - Sidebar-local space swipe pager motion: not performed in this run.
 - Visible-frame-zoomed collapsed-sidebar left-edge retention: covered by focused AppKit geometry tests; live visual verification not performed in this run.
+- Floating-to-pinned morph: covered by focused presentation-model tests for one visible surface and no hidden/offscreen/duplicated intermediate frame; live visual verification not performed in this run.
 
 The remaining human acceptance work is to launch the built app and visually verify those five interactions in the macOS shell. In particular, confirm that sidebar-local swipe motion moves only the active-space header and tab list while the command launcher, bottom space dock, sidebar chrome, traffic lights, and terminal workspace remain fixed.
 
