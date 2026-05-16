@@ -171,6 +171,18 @@ struct ShellSidebarPresentationSnapshot: Equatable {
         (showsOverlaySurface ? 1 : 0) + (showsPinnedSurfaceContent ? 1 : 0)
     }
 
+    func visibleSurfaceFrame(in containerSize: CGSize) -> CGRect {
+        guard isSurfaceVisible else { return .zero }
+
+        let height = max(0, containerSize.height - surfaceOrigin.y - overlayBottomInset)
+        return CGRect(
+            x: surfaceOrigin.x,
+            y: surfaceOrigin.y,
+            width: surfaceWidth,
+            height: height
+        )
+    }
+
     private static func clamp(_ value: CGFloat) -> CGFloat {
         min(max(value, 0), 1)
     }

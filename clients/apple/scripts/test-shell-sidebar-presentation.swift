@@ -18,6 +18,7 @@ private enum ShellSidebarPresentationTests {
     static func run() throws {
         try verifiesCollapsedHiddenHasNoVisibleSurface()
         try verifiesFloatingRevealUsesOverlaySurfaceWithoutLayoutReservation()
+        try verifiesFloatingRevealKeepsBalancedVerticalInsets()
         try verifiesFloatingToPinnedMorphKeepsOneVisibleSurface()
         try verifiesPinnedPhaseUsesPinnedLayoutSurface()
         print("Shell sidebar presentation tests passed.")
@@ -54,6 +55,42 @@ private enum ShellSidebarPresentationTests {
         expect(
             snapshot.chromeSurface.showsStandardTrafficLights,
             "floating reveal must be able to show native traffic lights"
+        )
+    }
+
+    private static func verifiesFloatingRevealKeepsBalancedVerticalInsets() throws {
+        let snapshot = ShellSidebarPresentationSnapshot(
+            phase: .floatingRevealed(showsTrafficLights: true),
+            configuration: configuration
+        )
+        let frame = snapshot.visibleSurfaceFrame(in: CGSize(width: 1200, height: 800))
+
+        expect(
+            frame.minY.isApproximately(6),
+            "floating reveal frame must start at the floating top inset"
+        )
+        expect(
+            frame.maxY.isApproximately(794),
+            "floating reveal frame must preserve the floating bottom inset"
+        )
+        expect(
+            frame.height.isApproximately(788),
+            "floating reveal frame height must subtract top and bottom insets"
+        )
+
+        let midpoint = ShellSidebarPresentationSnapshot(
+            phase: .morphingFloatingToPinned(progress: 0.5),
+            configuration: configuration
+        )
+        let midpointFrame = midpoint.visibleSurfaceFrame(in: CGSize(width: 1200, height: 800))
+
+        expect(
+            midpointFrame.minY.isApproximately(3),
+            "morph frame must interpolate the top inset"
+        )
+        expect(
+            midpointFrame.maxY.isApproximately(797),
+            "morph frame must interpolate the bottom inset"
         )
     }
 
