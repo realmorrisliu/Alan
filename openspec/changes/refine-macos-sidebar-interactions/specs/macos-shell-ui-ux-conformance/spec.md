@@ -55,6 +55,10 @@ motion of the sidebar surface, workspace inset, lightweight sidebar titlebar
 controls, and standard macOS traffic-light controls rather than as independent
 insertions, removals, or frame jumps.
 
+The shell SHALL derive pinned, collapsed, floating, and floating-to-pinned
+sidebar presentation from one presentation model so the visible sidebar surface
+and window chrome share one transition state.
+
 #### Scenario: Sidebar collapses
 - **WHEN** the user hides the pinned sidebar and reduced motion is disabled
 - **THEN** the sidebar surface moves or narrows out with a short, crisp animation
@@ -65,6 +69,18 @@ insertions, removals, or frame jumps.
 - **WHEN** the user pins or expands the sidebar and reduced motion is disabled
 - **THEN** the sidebar surface, terminal workspace inset, lightweight sidebar titlebar controls, and standard macOS traffic-light controls move together with a short, non-dragging animation
 - **AND** the expanded state settles without delayed toolbar drift or terminal content relayout after the visual motion has completed
+
+#### Scenario: Revealed floating sidebar pins without hiding first
+- **WHEN** the sidebar is collapsed, the floating sidebar panel is revealed, and the user chooses Pin Sidebar from that visible panel
+- **THEN** alan morphs the visible floating surface into the pinned sidebar position instead of first hiding the floating panel and then expanding a separate pinned surface
+- **AND** no rendered frame shows the sidebar absent, offscreen, or duplicated between the floating panel and pinned surface
+- **AND** the terminal workspace inset opens continuously during the morph rather than jumping after the panel disappears
+
+#### Scenario: Unified presentation owns chrome during pin morph
+- **WHEN** a revealed floating sidebar is pinning into the pinned layout
+- **THEN** the lightweight titlebar controls and standard macOS traffic-light controls follow the same interpolated sidebar surface origin
+- **AND** traffic lights remain native AppKit controls rather than SwiftUI replicas
+- **AND** the final pinned state clears transient floating reveal state only after the visible morph has settled
 
 #### Scenario: Reduced motion collapse
 - **WHEN** reduced motion is enabled and the pinned sidebar is hidden or shown

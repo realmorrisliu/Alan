@@ -20,6 +20,8 @@ are changed.
 #### Scenario: Pinned sidebar motion reviewed
 - **WHEN** pinned sidebar collapse or expansion behavior changes
 - **THEN** maintainers can inspect automated invariants, screenshots, or manual notes showing that the sidebar surface, workspace inset, titlebar controls, and standard macOS traffic-light controls move as one coordinated transition
+- **AND** verification covers the revealed-floating-sidebar to pinned-sidebar morph and confirms there is no intermediate hidden/offscreen/duplicated sidebar frame
+- **AND** focused checks or contract checks confirm the presentation model, not independent pinned/floating booleans alone, drives the sidebar surface and window chrome values used during that morph
 
 #### Scenario: Floating sidebar chrome reviewed
 - **WHEN** collapsed floating-sidebar reveal or hide behavior changes

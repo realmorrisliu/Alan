@@ -4,6 +4,7 @@ The current macOS shell sidebar has three related interaction problems:
 
 - Sidebar tab and space clicks update `selectedSpaceID` / `selectedTabID` without updating the authoritative `shellState.focusedPaneID`. Later runtime metadata or state publication calls `synchronizeSelection()` and restores selection from the old focused pane.
 - Pinned-sidebar collapse is expressed as conditional SwiftUI insertion/removal, while titlebar controls and AppKit traffic-light placement are synchronized through a separate bridge. This produces uncoordinated motion and can make collapse appear instantaneous.
+- Pinning from a revealed collapsed floating sidebar currently crosses two presentation paths: the floating overlay is removed, then the pinned sidebar expands from its collapsed/offscreen state. That can read as a brief hide-then-show instead of one Arc-like morph from the visible floating surface into the pinned layout.
 - Collapsed floating-sidebar reveal is retained by SwiftUI view-local hover on the narrow reveal zone, the floating panel, and titlebar controls. After double-click visible-frame zoom, the left AppKit resize frame can take pointer ownership before the SwiftUI hover surfaces see the pointer as still inside the reveal neighborhood, so the sidebar schedules a hide even though the user is still intentionally working the left edge.
 - Horizontal space swipe is represented as a discontinuous sidebar-local source/target transition. It previews the sidebar header and tab list only, commits after settle, and does not model the ordered space sequence as a continuous sidebar-local content pager.
 
@@ -14,11 +15,11 @@ The implementation must preserve alan's terminal-first layout, native material s
 **Goals:**
 
 - Make sidebar tab and space selection persist by routing selection through authoritative shell focus.
-- Give pinned sidebar collapse and expansion one coordinated motion model across sidebar width, terminal content inset, sidebar toolbar controls, and standard macOS traffic lights.
+- Give pinned sidebar collapse, expansion, and floating-to-pinned pinning one coordinated presentation model across sidebar width, terminal content inset, sidebar toolbar controls, and standard macOS traffic lights.
 - Keep collapsed floating-sidebar reveal stable across AppKit window-frame hit testing, including the left resize cursor region after visible-frame zoom.
 - Replace discontinuous sidebar space swipe behavior with a continuous,
   sidebar-local content pager over the ordered `ShellSpace` sequence.
-- Keep collapsed floating sidebar reveal transient: it must not resize terminal content, and it must retain the narrow edge/titlebar-control hover behavior.
+- Keep collapsed floating sidebar reveal transient: it must not resize terminal content except during an explicit user-initiated pin morph, and it must retain the narrow edge/titlebar-control hover behavior.
 - Add focused automated and contract verification for the new interaction guarantees.
 
 **Non-Goals:**
@@ -27,6 +28,7 @@ The implementation must preserve alan's terminal-first layout, native material s
 - Add new space types, workspace persistence formats, or cross-window space movement.
 - Rework terminal pane input ownership or Ghostty rendering.
 - Implement a full visual snapshot automation system beyond the focused checks needed for this change.
+- Reproduce Arc's exact animation physics, duration, or private implementation details.
 
 ## Decisions
 
@@ -36,11 +38,15 @@ The implementation must preserve alan's terminal-first layout, native material s
 
    Alternative considered: preserve a separate "preview selection" state and delay focus until terminal click. That matches passive preview behavior but keeps the current flashback failure mode and makes sidebar navigation feel unreliable.
 
-2. **Pinned sidebar motion uses a continuous presentation progress.**
+2. **Sidebar presentation uses one model, not separate pinned/floating surfaces.**
 
-   The pinned sidebar should remain mounted while its visible width, content opacity/offset, and workspace leading inset animate from expanded to collapsed. The same progress drives titlebar tool position and the `ShellWindowChromeSurface` origin/visibility passed to AppKit.
+   `MacShellRootView` should derive sidebar rendering and window chrome from one presentation snapshot rather than directly branching on booleans such as `isSidebarCollapsed`, `isSidebarPanelRevealed`, and `pinnedSidebarPresentationProgress`. The model should represent the durable modes (`pinned`, `collapsedHidden`, `floatingRevealed`) and the transient mode needed for pinning (`morphingFloatingToPinned`). Each snapshot should provide the layout reservation progress, visible surface origin, surface width, content opacity/offset, corner treatment, floating shadow, hit-testing role, titlebar tool position, and `ShellWindowChromeSurface` values.
+
+   The pinned sidebar should still remain mounted while its visible width, content opacity/offset, and workspace leading inset animate from expanded to collapsed. When a revealed floating sidebar is pinned, the visible surface should not be removed first. It should morph from the floating origin and floating treatment into the pinned origin and layout-reserved treatment, while the workspace leading inset opens continuously. Only after the morph settles should transient floating state be cleared.
 
    Alternative considered: tune the existing `.transition(.move(edge: .leading))`. This would not coordinate the HStack layout, titlebar overlay, and AppKit traffic lights because they still change through separate state paths.
+
+   Alternative considered: keep separate pinned and floating views and bridge them with `matchedGeometryEffect`. That still leaves AppKit traffic lights and window chrome outside the matched geometry system, so it risks two animations with different owners.
 
 3. **AppKit traffic lights are animated through the window chrome bridge.**
 
@@ -99,6 +105,8 @@ The implementation must preserve alan's terminal-first layout, native material s
 ## Risks / Trade-offs
 
 - **Risk: traffic-light animation fights AppKit layout corrections.** → Keep the AppKit bridge as the only owner of standard button frames, coalesce chrome syncs, and ensure final frames are corrected without visible jumps.
+- **Risk: a unified presentation model grows too broad.** → Keep it limited to shell chrome presentation data: surface origin, layout progress, treatment, visibility, hit-testing, and window chrome values. Sidebar content, space selection, and terminal runtime identity remain owned by their existing components.
+- **Risk: floating-to-pinned morph shows duplicate sidebar content.** → During the morph, render one visible sidebar surface for the active presentation. The pinned layout reservation may open underneath, but the user should not see both the floating panel and a second pinned sidebar copy.
 - **Risk: window-level pointer retention blocks native resizing.** → Keep AppKit as the owner of resize hit-testing and only use pointer location to keep or cancel the sidebar hide timer; do not install a mouse-down-consuming overlay on the resize frame.
 - **Risk: immediate focus commit changes terminal runtime focus while the old sidebar page is still visible during settle.** → Keep a short sidebar content pager state that decouples rendering from the already-committed focus for the duration of settlement.
 - **Risk: sidebar-local pager accidentally moves fixed shell regions.** → Keep command input, the bottom space switcher, sidebar chrome, traffic lights, and the terminal workspace outside the moving page.

@@ -1,13 +1,13 @@
 ## Why
 
-The macOS sidebar currently feels unreliable and physically inconsistent: tab and space selection can flash back to the previously focused terminal, pinned-sidebar collapse is not a coordinated motion, and horizontal space swipes need a continuous sidebar-local content pager instead of discontinuous source/target preview behavior.
+The macOS sidebar currently feels unreliable and physically inconsistent: tab and space selection can flash back to the previously focused terminal, pinned-sidebar collapse is not a coordinated motion, pinning a revealed floating sidebar can appear to hide before expanding, and horizontal space swipes need a continuous sidebar-local content pager instead of discontinuous source/target preview behavior.
 
 This change formalizes a focused interaction pass so sidebar navigation, window chrome, and space switching share one authoritative focus and motion contract.
 
 ## What Changes
 
 - Make sidebar tab and space selection authoritative focus transitions: selecting a tab or space updates the shell focused pane through the same shell-state path used by terminal activation.
-- Replace pinned-sidebar insertion/removal with a continuous collapse and expand motion so the sidebar, terminal content inset, titlebar controls, and macOS traffic-light controls move together.
+- Replace pinned-sidebar insertion/removal with a unified sidebar presentation model so pinned, collapsed, floating, and floating-to-pinned morph states drive the sidebar surface, terminal content inset, titlebar controls, and macOS traffic-light controls together.
 - Refine collapsed/floating sidebar chrome timing so traffic lights do not jump, appear ahead of the panel, or linger on the bare window corner.
 - Promote collapsed-sidebar reveal retention from view-local SwiftUI hover to a window-level pointer judgment so a revealed floating sidebar does not hide when the pointer crosses the left resize frame after visible-frame zoom.
 - Replace discontinuous sidebar space swipe behavior with a continuous, sidebar-local content pager over the ordered `ShellSpace` sequence, including edge preview, commit/cancel animation, and terminal focus handoff only after commit.
