@@ -4,13 +4,13 @@ cask "alan" do
 
   url "https://github.com/realmorrisliu/Alan/releases/download/v#{version}/alan-#{version}-macos.zip",
       verified: "github.com/realmorrisliu/Alan/"
-  name "alan"
+  name "Alan"
   desc "Native agent terminal workspace"
   homepage "https://github.com/realmorrisliu/Alan"
 
-  app "alan.app"
-  binary "#{appdir}/alan.app/Contents/Resources/bin/alan", target: "alan"
-  binary "#{appdir}/alan.app/Contents/Resources/bin/alan-tui", target: "alan-tui"
+  app "Alan.app"
+  binary "#{appdir}/Alan.app/Contents/Resources/bin/alan", target: "alan"
+  binary "#{appdir}/Alan.app/Contents/Resources/bin/alan-tui", target: "alan-tui"
 
   zap trash: [
     "~/Library/Application Support/alan-macos",

@@ -1,4 +1,4 @@
-# alan for macOS Terminal Workspace UI / UX Contract
+# Alan for macOS Terminal Workspace UI / UX Contract
 
 > Status: superseded bridge. The canonical current macOS terminal workspace UI/UX contract
 > lives in OpenSpec long-lived specs under `openspec/specs/`.

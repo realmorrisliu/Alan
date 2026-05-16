@@ -71,7 +71,7 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
-		0000000000000000000000F1 /* alan.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = alan.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		0000000000000000000000F1 /* Alan.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Alan.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		000000000000000000000101 /* AlanApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlanApp.swift; sourceTree = "<group>"; };
 		000000000000000000000102 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/Console/ContentView.swift; sourceTree = "<group>"; };
 		000000000000000000000103 /* AlanAPIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/Daemon/AlanAPIClient.swift; sourceTree = "<group>"; };
@@ -322,7 +322,7 @@
 		000000000000000000000303 /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				0000000000000000000000F1 /* alan.app */,
+				0000000000000000000000F1 /* Alan.app */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -345,7 +345,7 @@
 			);
 			name = alan-macos;
 			productName = alan-macos;
-			productReference = 0000000000000000000000F1 /* alan.app */;
+			productReference = 0000000000000000000000F1 /* Alan.app */;
 			productType = "com.apple.product-type.application";
 		};
 /* End PBXNativeTarget section */
@@ -533,8 +533,8 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = "";
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_CFBundleDisplayName = alan;
-				"INFOPLIST_KEY_CFBundleDisplayName[sdk=macosx*]" = alan;
+				INFOPLIST_KEY_CFBundleDisplayName = Alan;
+				"INFOPLIST_KEY_CFBundleDisplayName[sdk=macosx*]" = Alan;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
@@ -554,7 +554,7 @@
 				MARKETING_VERSION = 0.1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = app.alanworks.macos;
 				PRODUCT_NAME = "$(TARGET_NAME)";
-				"PRODUCT_NAME[sdk=macosx*]" = alan;
+				"PRODUCT_NAME[sdk=macosx*]" = Alan;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
@@ -570,8 +570,8 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = "";
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_CFBundleDisplayName = alan;
-				"INFOPLIST_KEY_CFBundleDisplayName[sdk=macosx*]" = alan;
+				INFOPLIST_KEY_CFBundleDisplayName = Alan;
+				"INFOPLIST_KEY_CFBundleDisplayName[sdk=macosx*]" = Alan;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
@@ -591,7 +591,7 @@
 				MARKETING_VERSION = 0.1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = app.alanworks.macos;
 				PRODUCT_NAME = "$(TARGET_NAME)";
-				"PRODUCT_NAME[sdk=macosx*]" = alan;
+				"PRODUCT_NAME[sdk=macosx*]" = Alan;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;

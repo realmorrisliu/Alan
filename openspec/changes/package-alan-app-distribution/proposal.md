@@ -2,17 +2,17 @@
 
 alan currently has a split local installation story: `just install` installs the
 release CLI and TUI, while `just app` builds and force-restarts a debug
-`alan.app`. This does not match the intended user-facing distribution model,
-where `alan.app` is the primary signed artifact and the CLI/TUI are installed
+`Alan.app`. This does not match the intended user-facing distribution model,
+where `Alan.app` is the primary signed artifact and the CLI/TUI are installed
 from that same release package.
 
 ## What Changes
 
-- Introduce a signed release packaging contract where `alan.app` is the primary
+- Introduce a signed release packaging contract where `Alan.app` is the primary
   distribution artifact and embeds release `alan` and `alan-tui` executables.
 - Require Developer ID signing for the app bundle and nested CLI/TUI binaries;
   local ad-hoc signing is not an accepted distribution path for this change.
-- Define the future Homebrew cask shape: install `alan.app` and expose the
+- Define the future Homebrew cask shape: install `Alan.app` and expose the
   embedded `alan` and `alan-tui` binaries through Homebrew's `bin` directory.
 - Change the local developer install flow so `just install` builds and installs
   the release app and PATH-visible CLI/TUI symlinks without killing or launching
@@ -46,9 +46,9 @@ from that same release package.
     `clients/apple/scripts/`
 - Apple build outputs and signing:
   - `clients/apple/alan-macos.xcodeproj`
-  - `target/xcode-derived/Build/Products/Release/alan.app`
-  - `alan.app/Contents/Resources/bin/alan`
-  - `alan.app/Contents/Resources/bin/alan-tui`
+  - `target/xcode-derived/Build/Products/Release/Alan.app`
+  - `Alan.app/Contents/Resources/bin/alan`
+  - `Alan.app/Contents/Resources/bin/alan-tui`
 - Homebrew distribution metadata for the future `alan` cask.
 - Documentation and focused Apple validation scripts that currently assume
   `just app` or `clients/apple/scripts/run-alan-debug-app.sh` is the local app

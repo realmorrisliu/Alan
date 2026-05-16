@@ -12,11 +12,13 @@ fail() {
 
 [[ -f "$CASK_PATH" ]] || fail "cask template not found: $CASK_PATH"
 
-grep -Eq '^[[:space:]]*app "alan\.app"' "$CASK_PATH" ||
-    fail "cask must install alan.app"
-grep -Eq 'Contents/Resources/bin/alan", target: "alan"' "$CASK_PATH" ||
+grep -Eq '^[[:space:]]*name "Alan"' "$CASK_PATH" ||
+    fail "cask display name must be Alan"
+grep -Eq '^[[:space:]]*app "Alan\.app"' "$CASK_PATH" ||
+    fail "cask must install Alan.app"
+grep -Eq 'Alan\.app/Contents/Resources/bin/alan", target: "alan"' "$CASK_PATH" ||
     fail "cask must link embedded alan binary"
-grep -Eq 'Contents/Resources/bin/alan-tui", target: "alan-tui"' "$CASK_PATH" ||
+grep -Eq 'Alan\.app/Contents/Resources/bin/alan-tui", target: "alan-tui"' "$CASK_PATH" ||
     fail "cask must link embedded alan-tui binary"
 grep -Eq 'brew install --cask alan|--cask alan' "$REPO_ROOT/packaging/homebrew/README.md" ||
     fail "Homebrew docs must use brew install --cask alan"

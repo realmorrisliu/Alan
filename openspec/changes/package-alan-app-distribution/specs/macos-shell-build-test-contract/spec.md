@@ -14,7 +14,7 @@ the supported local app workflow. The repository MUST NOT require or preserve a
 #### Scenario: Legacy debug runner is removed
 - **WHEN** Apple client contract checks inspect app runner scripts
 - **THEN** they do not require `clients/apple/scripts/run-alan-debug-app.sh` as the supported app workflow
-- **AND** they fail if a default local app workflow kills a running `alan.app` process and immediately relaunches it
+- **AND** they fail if a default local app workflow kills a running `Alan.app` process and immediately relaunches it
 
 ### Requirement: Release packaging has focused validation
 The Apple client SHALL provide focused validation for the release app package,
@@ -23,7 +23,7 @@ when distribution packaging changes.
 
 #### Scenario: Release app layout is checked
 - **WHEN** release packaging implementation is ready for review
-- **THEN** focused checks verify `alan.app` was built in Release configuration
+- **THEN** focused checks verify `Alan.app` was built in Release configuration
 - **AND** focused checks verify embedded `Contents/Resources/bin/alan` and `Contents/Resources/bin/alan-tui` exist and are executable
 - **AND** focused checks verify the embedded binaries are the release binaries from the current build
 - **AND** focused checks verify the package manifest SHA-256 values are recorded after embedded binary signing and match the delivered embedded binaries

@@ -27,7 +27,7 @@ private func temporaryDirectory(_ name: String) throws -> URL {
 }
 
 private func makeResourceRoot() throws -> URL {
-    let appRoot = try temporaryDirectory("alan.app")
+    let appRoot = try temporaryDirectory("Alan.app")
     let root = appRoot
         .appendingPathComponent("Contents", isDirectory: true)
         .appendingPathComponent("Resources", isDirectory: true)
@@ -136,6 +136,37 @@ private func testSkipsWhenHomebrewAlreadyManagesLinks() throws {
     }
 }
 
+private func testReplacesLegacyLowercaseAppLinks() throws {
+    let resourceRoot = try makeResourceRoot()
+    let targetDirectory = try temporaryDirectory("target")
+    try FileManager.default.createDirectory(at: targetDirectory, withIntermediateDirectories: true)
+
+    for tool in AlanCommandLineToolInstaller.toolNames {
+        let legacyDestination = URL(fileURLWithPath: "/Applications/alan.app")
+            .appendingPathComponent("Contents", isDirectory: true)
+            .appendingPathComponent("Resources", isDirectory: true)
+            .appendingPathComponent("bin", isDirectory: true)
+            .appendingPathComponent(tool)
+        let link = targetDirectory.appendingPathComponent(tool)
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: legacyDestination)
+    }
+
+    let records = try AlanCommandLineToolInstaller.install(
+        targetDirectory: targetDirectory,
+        resourceURL: resourceRoot
+    )
+
+    try require(records.count == 2, "installer must report both tools")
+    for tool in AlanCommandLineToolInstaller.toolNames {
+        let target = targetDirectory.appendingPathComponent(tool)
+        let destination = try FileManager.default.destinationOfSymbolicLink(atPath: target.path)
+        try require(
+            destination.contains("/Alan.app/Contents/Resources/bin/\(tool)"),
+            "installer must replace legacy lowercase app links for \(tool)"
+        )
+    }
+}
+
 private func testRejectsAlanHomeBinTarget() throws {
     let resourceRoot = try makeResourceRoot()
     let targetDirectory = try temporaryDirectory("home")
@@ -161,6 +192,7 @@ private enum TestRunner {
         try testSkipsNonAlanFiles()
         try testRejectsHomebrewPrefixTarget()
         try testSkipsWhenHomebrewAlreadyManagesLinks()
+        try testReplacesLegacyLowercaseAppLinks()
         try testRejectsAlanHomeBinTarget()
     }
 }

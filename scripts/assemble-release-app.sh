@@ -10,7 +10,7 @@ source "$SCRIPT_DIR/release-env.sh"
 DERIVED_DATA="${ALAN_XCODE_DERIVED_DATA:-$REPO_ROOT/target/xcode-derived}"
 ARTIFACT_DIR="${ALAN_RELEASE_ARTIFACT_DIR:-$REPO_ROOT/target/release-artifacts}"
 STAGING_DIR="$ARTIFACT_DIR/staging"
-APP_BUNDLE="$DERIVED_DATA/Build/Products/Release/alan.app"
+APP_BUNDLE="$DERIVED_DATA/Build/Products/Release/Alan.app"
 EMBEDDED_BIN_DIR="$APP_BUNDLE/Contents/Resources/bin"
 MANIFEST_PATH="$APP_BUNDLE/Contents/Resources/alan-package-manifest.json"
 TUI_ENTITLEMENTS="$REPO_ROOT/scripts/entitlements/alan-tui.entitlements"
@@ -107,11 +107,11 @@ printf 'Building standalone alan-tui...\n'
 chmod +x "$STAGING_DIR/alan-tui"
 
 if [[ -e "$APP_BUNDLE" ]]; then
-    printf 'Removing stale Release alan.app build product...\n'
+    printf 'Removing stale Release Alan.app build product...\n'
     rm -rf "$APP_BUNDLE"
 fi
 
-printf 'Building Release alan.app...\n'
+printf 'Building Release Alan.app...\n'
 xcodebuild \
     -project "$REPO_ROOT/clients/apple/alan-macos.xcodeproj" \
     -scheme alan-macos \
@@ -125,7 +125,7 @@ if [[ ! -d "$APP_BUNDLE" ]]; then
     fail "Release build did not produce $APP_BUNDLE"
 fi
 
-printf 'Embedding CLI and TUI into alan.app...\n'
+printf 'Embedding CLI and TUI into Alan.app...\n'
 mkdir -p "$EMBEDDED_BIN_DIR"
 cp "$REPO_ROOT/target/release/alan" "$EMBEDDED_BIN_DIR/alan"
 cp "$STAGING_DIR/alan-tui" "$EMBEDDED_BIN_DIR/alan-tui"
@@ -143,7 +143,7 @@ TUI_SHA="$(sha256 "$EMBEDDED_BIN_DIR/alan-tui")"
 cat >"$MANIFEST_PATH" <<EOF
 {
   "schema_version": 1,
-  "package": "alan.app",
+  "package": "Alan.app",
   "version": "$(json_escape "$VERSION")",
   "git_revision": "$(json_escape "$REVISION")",
   "git_dirty": $DIRTY,

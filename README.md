@@ -180,7 +180,7 @@ just build
 
 ### Installation
 
-The supported macOS distribution is app-first. The signed `alan.app` bundle
+The supported macOS distribution is app-first. The signed `Alan.app` bundle
 contains the `alan` CLI and `alan-tui` executable under
 `Contents/Resources/bin`.
 
@@ -224,7 +224,7 @@ creates or refreshes the notary keychain profile automatically before
 submitting the release artifact.
 
 Homebrew links the embedded `alan` and `alan-tui` binaries into its prefix.
-When installing `alan.app` directly, use **Tools > Install Command Line
+When installing `Alan.app` directly, use **Tools > Install Command Line
 Tools...** in the app to create PATH-visible symlinks. `~/.alan/bin` is not a
 supported install location.
 

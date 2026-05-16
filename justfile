@@ -52,7 +52,7 @@ serve:
 build:
     cargo build --release
 
-# Install release alan.app plus CLI/TUI locally
+# Install release Alan.app plus CLI/TUI locally
 install:
     ./scripts/install.sh
 

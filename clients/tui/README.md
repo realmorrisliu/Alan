@@ -25,7 +25,7 @@ brew install --cask alan
 just install
 ```
 
-The TUI is distributed as a standalone executable embedded in `alan.app` at
+The TUI is distributed as a standalone executable embedded in `Alan.app` at
 `Contents/Resources/bin/alan-tui`. Homebrew cask installs link that embedded
 tool automatically. For a direct app install, use **Tools > Install Command
 Line Tools...** in the macOS app.

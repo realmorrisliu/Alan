@@ -2,7 +2,7 @@
 
 - Breaking change: `just app` and the force-kill debug app runner are removed.
 - `just install` is now the local release install path. It assembles signed
-  `alan.app`, embeds `alan` and `alan-tui`, installs the app, and links the
+  `Alan.app`, embeds `alan` and `alan-tui`, installs the app, and links the
   embedded tools into a configurable PATH directory without using `~/.alan/bin`.
 - Formal signing is required. Release assembly fails closed unless
   `ALAN_DEVELOPER_ID_APPLICATION` or `ALAN_SIGNING_IDENTITY` names a Developer
@@ -14,7 +14,7 @@
   including `ALAN_DEVELOPER_ID_APPLICATION` and Apple ID app-specific-password
   notarization settings.
 - Homebrew distribution is cask-first: `brew install --cask alan` installs
-  `alan.app` and links `Contents/Resources/bin/alan` plus
+  `Alan.app` and links `Contents/Resources/bin/alan` plus
   `Contents/Resources/bin/alan-tui`.
 - Direct `.app` installs can use the macOS **Tools > Install Command Line
   Tools...** action to create PATH-visible symlinks, while refusing Homebrew
