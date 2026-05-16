@@ -445,32 +445,39 @@ struct MacShellRootView: View {
     }
 
     private var sidebarOverlaySurface: some View {
-        let presentation = sidebarPresentation
-        let shape = RoundedRectangle(cornerRadius: presentation.cornerRadius, style: .continuous)
+        GeometryReader { proxy in
+            let presentation = sidebarPresentation
+            let surfaceFrame = presentation.visibleSurfaceFrame(in: proxy.size)
+            let shape = RoundedRectangle(
+                cornerRadius: presentation.cornerRadius,
+                style: .continuous
+            )
 
-        return ZStack(alignment: .topLeading) {
-            shape
-                .fill(.clear)
-                .background {
-                    ShellMaterialBackgroundView(.sidebarGlass)
-                        .clipShape(shape)
-                }
-                .overlay {
-                    shape
-                        .stroke(ShellPalette.line.opacity(0.22), lineWidth: 0.8)
-                        .opacity(Double(presentation.floatingTreatmentProgress))
-                }
+            ZStack(alignment: .topLeading) {
+                shape
+                    .fill(.clear)
+                    .background {
+                        ShellMaterialBackgroundView(.sidebarGlass)
+                            .clipShape(shape)
+                    }
+                    .overlay {
+                        shape
+                            .stroke(ShellPalette.line.opacity(0.22), lineWidth: 0.8)
+                            .opacity(Double(presentation.floatingTreatmentProgress))
+                    }
 
-            sidebarContent(isSwipeEnabled: true)
-                .clipShape(shape)
+                sidebarContent(isSwipeEnabled: true)
+                    .clipShape(shape)
+            }
+            .frame(width: surfaceFrame.width, height: surfaceFrame.height, alignment: .topLeading)
+            .offset(x: surfaceFrame.minX, y: surfaceFrame.minY)
+            .shellShadow(
+                presentation.showsFloatingShadow ? ShellShadows.floatingPanel : ShellShadows.none
+            )
+            .onHover(perform: handleCollapsedSidebarHover)
+            .allowsHitTesting(presentation.hitTestingRole != .morphingFloatingToPinned)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
-        .frame(width: sidebarWidth, alignment: .topLeading)
-        .frame(maxHeight: .infinity, alignment: .topLeading)
-        .padding(.bottom, presentation.overlayBottomInset)
-        .offset(x: presentation.surfaceOrigin.x, y: presentation.surfaceOrigin.y)
-        .shellShadow(presentation.showsFloatingShadow ? ShellShadows.floatingPanel : ShellShadows.none)
-        .onHover(perform: handleCollapsedSidebarHover)
-        .allowsHitTesting(presentation.hitTestingRole != .morphingFloatingToPinned)
         .ignoresSafeArea(edges: [.top, .bottom])
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .zIndex(20)
