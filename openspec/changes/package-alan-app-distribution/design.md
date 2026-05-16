@@ -127,7 +127,9 @@ should not preserve ad-hoc signing as a supported local install fallback.
    startup files, or use `~/.alan/bin`.
 
    For Homebrew installs, the cask-managed binary links are authoritative. The
-   direct-app installer must not write into Homebrew's prefix.
+   direct-app installer must not write into Homebrew's prefix and must not create
+   alternate links in a different PATH directory when an existing Homebrew prefix
+   already exposes alan command-line links.
 
 6. **Turn `just install` into the local release install path.**
 
@@ -152,7 +154,9 @@ should not preserve ad-hoc signing as a supported local install fallback.
   while still requiring Developer ID signing.
 - **Risk: direct app command-line install conflicts with Homebrew-managed
   binaries.** -> Treat Homebrew prefix links as externally managed, require an
-  explicit install action, and avoid writing into Homebrew's prefix from the app.
+  explicit install action, avoid writing into Homebrew's prefix from the app,
+  and skip direct-install symlink creation when Homebrew-managed links already
+  exist in another prefix.
 - **Risk: `/usr/local/bin` is not writable on every machine.** -> The installer
   reports the exact target and provides an override or manual command instead
   of falling back to `~/.alan/bin`.
@@ -162,7 +166,7 @@ should not preserve ad-hoc signing as a supported local install fallback.
 - **Risk: the app and CLI versions drift.** -> The package should include
   version metadata or a manifest generated during assembly and used by
   verification to prove the app, CLI, and TUI came from the same source revision
-  and version.
+  and version, with manifest SHA-256 values compared to the embedded binaries.
 
 ## Migration Plan
 

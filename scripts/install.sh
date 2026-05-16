@@ -63,6 +63,42 @@ is_homebrew_prefix_target() {
     return 1
 }
 
+has_homebrew_managed_tool_links() {
+    local prefix
+    local tool
+    local link
+    local target
+    local prefixes=()
+
+    if command -v brew >/dev/null 2>&1; then
+        prefix="$(brew --prefix 2>/dev/null || true)"
+        if [[ -n "$prefix" ]]; then
+            prefixes+=("$prefix")
+        fi
+    fi
+
+    [[ -d /opt/homebrew ]] && prefixes+=("/opt/homebrew")
+    [[ -d /usr/local/Homebrew ]] && prefixes+=("/usr/local")
+
+    for prefix in "${prefixes[@]}"; do
+        for tool in alan alan-tui; do
+            link="$prefix/bin/$tool"
+            if [[ ! -L "$link" ]]; then
+                continue
+            fi
+            target="$(readlink "$link")"
+            case "$target" in
+                *"/alan.app/Contents/Resources/bin/$tool")
+                    printf '%s\n' "$link"
+                    return 0
+                    ;;
+            esac
+        done
+    done
+
+    return 1
+}
+
 link_tool() {
     local tool="$1"
     local source="$APP_TARGET/Contents/Resources/bin/$tool"
@@ -108,6 +144,11 @@ printf 'Linking CLI and TUI into %s...\n' "$CLI_INSTALL_DIR"
 if is_homebrew_prefix_target "$CLI_INSTALL_DIR"; then
     printf 'error: %s is inside a Homebrew prefix.\n' "$CLI_INSTALL_DIR" >&2
     printf '       use the Homebrew cask for Homebrew-managed links, or set ALAN_CLI_INSTALL_DIR to a non-Homebrew PATH directory.\n' >&2
+    exit 1
+fi
+if homebrew_link="$(has_homebrew_managed_tool_links)"; then
+    printf 'error: Homebrew already manages alan command-line links at %s\n' "$homebrew_link" >&2
+    printf '       use the Homebrew cask to update alan, or remove the Homebrew links before creating direct-install symlinks.\n' >&2
     exit 1
 fi
 mkdir -p "$CLI_INSTALL_DIR"

@@ -44,6 +44,47 @@ require_entitlement() {
     fi
 }
 
+manifest_value() {
+    local key="$1"
+
+    sed -nE "s/.*\"$key\": \"([^\"]+)\".*/\\1/p" "$MANIFEST" | head -n 1
+}
+
+manifest_binary_sha256() {
+    local binary="$1"
+
+    awk -v binary="\"$binary\"" '
+        $0 ~ binary "[[:space:]]*:" {
+            in_binary = 1
+            next
+        }
+        in_binary && /"sha256"[[:space:]]*:/ {
+            value = $0
+            sub(/^.*"sha256"[[:space:]]*:[[:space:]]*"/, "", value)
+            sub(/".*$/, "", value)
+            print value
+            exit
+        }
+        in_binary && /^[[:space:]]*}/ {
+            in_binary = 0
+        }
+    ' "$MANIFEST"
+}
+
+require_manifest_checksum() {
+    local binary="$1"
+    local path="$2"
+    local expected
+    local actual
+
+    expected="$(manifest_binary_sha256 "$binary")"
+    [[ -n "$expected" ]] || fail "manifest does not record sha256 for $binary"
+    actual="$(shasum -a 256 "$path" | awk '{print $1}')"
+    if [[ "$actual" != "$expected" ]]; then
+        fail "manifest sha256 for $binary does not match embedded binary"
+    fi
+}
+
 [[ -d "$APP_BUNDLE" ]] || fail "app bundle not found: $APP_BUNDLE"
 require_executable "$APP_BUNDLE/Contents/MacOS/alan"
 require_executable "$ALAN_BIN"
@@ -54,6 +95,15 @@ grep -q '"path": "Contents/Resources/bin/alan"' "$MANIFEST" ||
     fail "manifest does not record embedded alan path"
 grep -q '"path": "Contents/Resources/bin/alan-tui"' "$MANIFEST" ||
     fail "manifest does not record embedded alan-tui path"
+
+manifest_version="$(manifest_value "version")"
+repo_version="$(awk -F '"' '/^version = / { print $2; exit }' "$REPO_ROOT/Cargo.toml")"
+[[ -n "$manifest_version" ]] || fail "manifest does not record package version"
+if [[ "$manifest_version" != "$repo_version" ]]; then
+    fail "manifest version $manifest_version does not match Cargo.toml version $repo_version"
+fi
+require_manifest_checksum "alan" "$ALAN_BIN"
+require_manifest_checksum "alan-tui" "$TUI_BIN"
 
 require_developer_id_signature "$ALAN_BIN"
 require_developer_id_signature "$TUI_BIN"

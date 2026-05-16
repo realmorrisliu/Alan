@@ -27,7 +27,10 @@ private func temporaryDirectory(_ name: String) throws -> URL {
 }
 
 private func makeResourceRoot() throws -> URL {
-    let root = try temporaryDirectory("resources")
+    let appRoot = try temporaryDirectory("alan.app")
+    let root = appRoot
+        .appendingPathComponent("Contents", isDirectory: true)
+        .appendingPathComponent("Resources", isDirectory: true)
     let bin = root.appendingPathComponent("bin", isDirectory: true)
     try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
 
@@ -95,6 +98,44 @@ private func testRejectsHomebrewPrefixTarget() throws {
     }
 }
 
+private func testSkipsWhenHomebrewAlreadyManagesLinks() throws {
+    let resourceRoot = try makeResourceRoot()
+    let targetDirectory = try temporaryDirectory("target")
+    let homebrewPrefix = try temporaryDirectory("homebrew")
+    let homebrewBin = homebrewPrefix.appendingPathComponent("bin", isDirectory: true)
+    try FileManager.default.createDirectory(at: homebrewBin, withIntermediateDirectories: true)
+
+    for tool in AlanCommandLineToolInstaller.toolNames {
+        let source = resourceRoot
+            .appendingPathComponent("bin", isDirectory: true)
+            .appendingPathComponent(tool)
+        let link = homebrewBin.appendingPathComponent(tool)
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: source)
+    }
+
+    let records = try AlanCommandLineToolInstaller.install(
+        targetDirectory: targetDirectory,
+        resourceURL: resourceRoot,
+        homebrewPrefixes: [homebrewPrefix.path]
+    )
+
+    try require(records.count == 2, "installer must report both tools")
+    for record in records {
+        guard case .skipped(let reason) = record.status else {
+            throw TestFailure.message("installer must skip when Homebrew already owns links")
+        }
+        try require(
+            reason.contains("Homebrew already manages"),
+            "skip reason must explain Homebrew ownership"
+        )
+        let alternateTarget = targetDirectory.appendingPathComponent(record.tool)
+        try require(
+            !FileManager.default.fileExists(atPath: alternateTarget.path),
+            "installer must not create alternate PATH links when Homebrew owns \(record.tool)"
+        )
+    }
+}
+
 private func testRejectsAlanHomeBinTarget() throws {
     let resourceRoot = try makeResourceRoot()
     let targetDirectory = try temporaryDirectory("home")
@@ -119,6 +160,7 @@ private enum TestRunner {
         try testInstallsSymlinks()
         try testSkipsNonAlanFiles()
         try testRejectsHomebrewPrefixTarget()
+        try testSkipsWhenHomebrewAlreadyManagesLinks()
         try testRejectsAlanHomeBinTarget()
     }
 }

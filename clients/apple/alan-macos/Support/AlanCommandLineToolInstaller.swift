@@ -42,6 +42,24 @@ enum AlanCommandLineToolInstaller {
             throw CocoaError(.fileWriteNoPermission)
         }
 
+        let existingHomebrewLinks = homebrewManagedCommandLinks(
+            fileManager: fileManager,
+            homebrewPrefixes: homebrewPrefixes
+        )
+        if !existingHomebrewLinks.isEmpty {
+            return toolNames.map { tool in
+                let source = embeddedBinDirectory.appendingPathComponent(tool)
+                let target = existingHomebrewLinks[tool]
+                    ?? targetDirectory.appendingPathComponent(tool).path
+                return AlanCommandLineToolInstallRecord(
+                    tool: tool,
+                    sourcePath: source.path,
+                    targetPath: target,
+                    status: .skipped("Homebrew already manages alan command-line links.")
+                )
+            }
+        }
+
         try fileManager.createDirectory(
             at: targetDirectory,
             withIntermediateDirectories: true
@@ -120,6 +138,47 @@ enum AlanCommandLineToolInstaller {
 
         return prefixes.contains { prefix in
             targetPath.hasPrefix(prefix + "/")
+        }
+    }
+
+    private static func homebrewManagedCommandLinks(
+        fileManager: FileManager,
+        homebrewPrefixes: [String]? = nil
+    ) -> [String: String] {
+        let prefixes = resolvedHomebrewPrefixes(
+            fileManager: fileManager,
+            homebrewPrefixes: homebrewPrefixes
+        )
+        var links: [String: String] = [:]
+
+        for prefix in prefixes {
+            let binDirectory = URL(fileURLWithPath: prefix, isDirectory: true)
+                .appendingPathComponent("bin", isDirectory: true)
+            for tool in toolNames {
+                let link = binDirectory.appendingPathComponent(tool)
+                if isAlanOwnedLink(link, tool: tool, fileManager: fileManager) {
+                    links[tool] = link.path
+                }
+            }
+        }
+
+        return links
+    }
+
+    private static func resolvedHomebrewPrefixes(
+        fileManager: FileManager,
+        homebrewPrefixes: [String]? = nil
+    ) -> [String] {
+        if let homebrewPrefixes {
+            return homebrewPrefixes.map { URL(fileURLWithPath: $0).standardizedFileURL.path }
+        }
+
+        return [
+            "/opt/homebrew",
+            "/usr/local",
+        ].filter { prefix in
+            fileManager.fileExists(atPath: "\(prefix)/Homebrew")
+                || fileManager.fileExists(atPath: "\(prefix)/bin/brew")
         }
     }
 }

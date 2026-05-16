@@ -1164,6 +1164,16 @@ require_pattern \
     "direct app command-line tool installer must use a conventional PATH directory instead of ~/.alan/bin"
 
 require_pattern \
+    "clients/apple/alan-macos/Support/AlanCommandLineToolInstaller.swift" \
+    "homebrewManagedCommandLinks" \
+    "direct app command-line tool installer must detect existing Homebrew-managed links before creating alternate PATH links"
+
+require_pattern \
+    "scripts/install.sh" \
+    "has_homebrew_managed_tool_links" \
+    "local install must detect existing Homebrew-managed links before creating alternate PATH links"
+
+require_pattern \
     "clients/apple/alan-macos/TerminalHostRuntime.swift" \
     "bundled_resource_binary" \
     "alan launch resolution must support the app-bundled CLI"
@@ -1182,6 +1192,11 @@ require_pattern \
     "scripts/validate-release-app.sh" \
     "Developer ID Application" \
     "release app validation must require Developer ID signatures"
+
+require_pattern \
+    "scripts/validate-release-app.sh" \
+    "require_manifest_checksum" \
+    "release app validation must compare manifest checksums with embedded binaries"
 
 require_pattern \
     "scripts/entitlements/alan-tui.entitlements" \

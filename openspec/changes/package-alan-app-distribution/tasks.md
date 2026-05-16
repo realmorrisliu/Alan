@@ -25,7 +25,7 @@
 - [x] 3.1 Add app-side command-line tool installer logic that locates embedded CLI/TUI resources in `Contents/Resources/bin`.
 - [x] 3.2 Add an explicit macOS app command or menu action that installs or refreshes PATH-visible `alan` and `alan-tui` symlinks when Homebrew has not already provided authoritative binary links.
 - [x] 3.3 Refuse to overwrite non-alan-owned files at the target CLI/TUI paths and surface actionable skipped-path diagnostics.
-- [x] 3.4 Ensure the direct app installer never writes into Homebrew's prefix, never writes into `~/.alan/bin`, and does not run silently on app launch.
+- [x] 3.4 Ensure the direct app installer never writes into Homebrew's prefix, never creates alternate PATH links when Homebrew-managed links already exist, never writes into `~/.alan/bin`, and does not run silently on app launch.
 
 ## 4. Homebrew Cask Distribution
 
@@ -39,7 +39,7 @@
 
 - [x] 5.1 Update `README.md`, `AGENTS.md`, `clients/tui/README.md`, and `clients/apple/README.md` to describe the app-first install and remove `just app` guidance.
 - [x] 5.2 Update `clients/apple/scripts/check-shell-contracts.sh` so it rejects reintroducing `just app` or a default force-kill app runner.
-- [x] 5.3 Add focused package-layout validation for Release `alan.app`, embedded executable paths, executable bits, and stale binary detection.
+- [x] 5.3 Add focused package-layout validation for Release `alan.app`, embedded executable paths, executable bits, manifest SHA-256 checksums, and stale binary detection.
 - [x] 5.4 Add focused signature validation that fails on ad-hoc signatures and verifies nested binaries and app bundle signing order outcomes.
 - [x] 5.5 Add publication validation for notarization/stapling and Homebrew cask binary links.
 - [x] 5.6 Document the private release env loader and its supported local signing/notarization variables.
@@ -56,7 +56,7 @@ current keychain reports no valid Developer ID signing identities.
 - [ ] 6.1a Run `just release-check` with complete local signing and notarization credentials.
 - [ ] 6.2 Run the release assembly validation with a Developer ID signing identity configured.
 - [ ] 6.3 Run `just install` and verify it installs the signed app plus PATH symlinks without killing or launching `alan.app`.
-- [x] 6.4 Verify direct app command-line tool install behavior for missing CLI/TUI entries, existing Homebrew links, non-alan-owned target files, and no `~/.alan/bin` writes.
+- [x] 6.4 Verify direct app command-line tool install behavior for missing CLI/TUI entries, existing Homebrew links in any detected prefix, non-alan-owned target files, and no `~/.alan/bin` writes.
 - [x] 6.5 Run focused Apple checks including `clients/apple/scripts/check-shell-contracts.sh`, the direct installer test, and a macOS target build.
 - [x] 6.6 Validate Homebrew cask metadata locally against the generated release artifact or template.
 - [ ] 6.7 Run release app package/signature validation against a signed assembled app.

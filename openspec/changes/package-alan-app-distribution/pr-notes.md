@@ -18,7 +18,8 @@
   `Contents/Resources/bin/alan-tui`.
 - Direct `.app` installs can use the macOS **Tools > Install Command Line
   Tools...** action to create PATH-visible symlinks, while refusing Homebrew
-  prefixes, non-alan-owned targets, and `~/.alan/bin`.
+  prefixes, existing Homebrew-managed links in other prefixes, non-alan-owned
+  targets, and `~/.alan/bin`.
 - Public release is one-command after `.env` is configured: `just release-check`
   validates signing/notarization and creates or refreshes the notary keychain
   profile; `just release` builds, signs, notarizes, staples, and archives.

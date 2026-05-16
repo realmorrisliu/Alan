@@ -15,6 +15,7 @@ contains the GUI app executable plus release CLI/TUI executables embedded under
 #### Scenario: Version cohesion is verified
 - **WHEN** a release package is validated
 - **THEN** verification confirms the app, embedded CLI, and embedded TUI came from the same source revision or release version
+- **AND** verification recomputes the embedded CLI and TUI SHA-256 checksums and compares them with the package manifest
 - **AND** verification fails if the app bundle contains stale CLI/TUI binaries from an earlier assembly
 
 ### Requirement: Distribution signing uses Developer ID
@@ -72,6 +73,7 @@ Homebrew has not already provided authoritative binary links.
 - **WHEN** the app detects Homebrew-managed `alan` and `alan-tui` links for the installed app
 - **THEN** the app treats Homebrew as the authoritative binary installer
 - **AND** the app does not attempt to modify Homebrew's linked binaries
+- **AND** the app does not create duplicate direct-install links in another PATH directory
 
 #### Scenario: App launches directly
 - **WHEN** a user launches `alan.app` directly
