@@ -18,6 +18,8 @@ terminal-first layout and causes visible artifacts at the terminal surface.
 
 - Keep space swipe scoped to the sidebar.
 - Make the swipe continuous and finger-tracked.
+- Render a stable five-page window around the current space: previous two,
+  current, and next two when available.
 - Move only the active-space content inside the sidebar: the space title/header
   and the active space tab list.
 - Keep the command input, bottom space switcher, sidebar material surface,
@@ -34,6 +36,7 @@ terminal-first layout and causes visible artifacts at the terminal surface.
   layout, or pane lifecycle semantics.
 - Do not make the bottom space switcher part of the moving page; it is a fixed
   navigation control.
+- Do not allow one swipe to skip multiple spaces.
 
 ## Architecture
 
@@ -84,6 +87,8 @@ tracks:
 - adjacent target space index, when one exists
 - direct drag offset from finger translation
 - sidebar content page width
+- a stable rendering window centered on the source space, with up to two
+  previous and two next pages
 - settlement phase: dragging, settling to source, or settling to target
 
 `ShellHostController` remains the owner of committed shell selection and focus.
@@ -95,7 +100,10 @@ commit to a target space.
 During drag:
 
 - horizontal movement maps directly to the sidebar content offset;
-- the current and adjacent space content pages move from the same translation;
+- the previous two, current, and next two space content pages move from the same
+  translation when those pages exist;
+- drag distance is clamped to one page plus a small overdrag gap so fast input
+  can expose a sliver of the second adjacent page without skipping spaces;
 - edge swipes apply resistance instead of wrapping or showing nonexistent
   spaces;
 - vertical tab-list scrolling is disabled only after horizontal intent locks;
@@ -107,6 +115,8 @@ On release:
 - if distance or velocity crosses the commit threshold and an adjacent target
   exists, the pager settles to the target and commits shell selection through
   the controller path;
+- a single gesture can commit only the immediately adjacent previous or next
+  space;
 - if the threshold is not met, the pager settles back to the source and leaves
   shell selection unchanged;
 - release handling should use the last effective finger velocity rather than a

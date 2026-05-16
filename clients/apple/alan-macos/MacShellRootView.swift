@@ -292,10 +292,15 @@ struct MacShellRootView: View {
             handleCollapsedSidebarPointerRetention(retained)
         }
         .background(
-            ShellWindowPlacementView(
+            ShellWindowPlacementAnimationSyncView(
                 metrics: $windowChromeMetrics,
                 appearanceMode: appearanceMode,
-                chromeSurface: windowChromeSurface,
+                pinnedSidebarPresentationProgress: pinnedSidebarPresentationProgress,
+                isSidebarCollapsed: isSidebarCollapsed,
+                isSidebarPanelRevealed: isSidebarPanelRevealed,
+                areFloatingSidebarTrafficLightsVisible: areFloatingSidebarTrafficLightsVisible,
+                sidebarWidth: sidebarWidth,
+                floatingSidebarInset: floatingSidebarInset,
                 systemColorScheme: $systemColorScheme,
                 collapsedSidebarPointerRetentionEnabled: isCollapsedSidebarPointerRetentionActive,
                 collapsedSidebarPointerRetained: $isCollapsedSidebarPointerRetained
@@ -421,6 +426,75 @@ struct MacShellRootView: View {
         }
         .ignoresSafeArea(edges: .top)
         .zIndex(30)
+    }
+}
+
+private struct ShellWindowPlacementAnimationSyncView: View, Animatable {
+    @Binding var metrics: ShellWindowChromeMetrics
+    let appearanceMode: ShellAppearanceMode
+    var pinnedSidebarPresentationProgress: CGFloat
+    let isSidebarCollapsed: Bool
+    let isSidebarPanelRevealed: Bool
+    let areFloatingSidebarTrafficLightsVisible: Bool
+    let sidebarWidth: CGFloat
+    let floatingSidebarInset: CGFloat
+    @Binding var systemColorScheme: ColorScheme
+    let collapsedSidebarPointerRetentionEnabled: Bool
+    @Binding var collapsedSidebarPointerRetained: Bool
+
+    var animatableData: CGFloat {
+        get { pinnedSidebarPresentationProgress }
+        set { pinnedSidebarPresentationProgress = newValue }
+    }
+
+    var body: some View {
+        ShellWindowPlacementView(
+            metrics: $metrics,
+            appearanceMode: appearanceMode,
+            chromeSurface: windowChromeSurface,
+            systemColorScheme: $systemColorScheme,
+            collapsedSidebarPointerRetentionEnabled: collapsedSidebarPointerRetentionEnabled,
+            collapsedSidebarPointerRetained: $collapsedSidebarPointerRetained
+        )
+    }
+
+    private var windowChromeSurface: ShellWindowChromeSurface {
+        ShellWindowChromeSurface(
+            isVisible: isSidebarSurfaceVisible,
+            origin: sidebarChromeSurfaceOrigin,
+            width: sidebarWidth,
+            showsStandardTrafficLights: shouldShowStandardTrafficLights
+        )
+    }
+
+    private var isSidebarSurfaceVisible: Bool {
+        isPinnedSidebarSurfaceActive || isSidebarPanelRevealed
+    }
+
+    private var isPinnedSidebarSurfaceActive: Bool {
+        !isSidebarCollapsed || clampedPinnedSidebarPresentationProgress > 0.001
+    }
+
+    private var clampedPinnedSidebarPresentationProgress: CGFloat {
+        min(max(pinnedSidebarPresentationProgress, 0), 1)
+    }
+
+    private var sidebarChromeSurfaceOrigin: CGPoint {
+        if isSidebarPanelRevealed {
+            return CGPoint(x: floatingSidebarInset, y: floatingSidebarInset)
+        }
+        guard isPinnedSidebarSurfaceActive else {
+            return .zero
+        }
+        return CGPoint(x: -sidebarWidth * (1 - clampedPinnedSidebarPresentationProgress), y: 0)
+    }
+
+    private var shouldShowStandardTrafficLights: Bool {
+        if isPinnedSidebarSurfaceActive {
+            return true
+        }
+        guard isSidebarCollapsed else { return true }
+        return isSidebarPanelRevealed && areFloatingSidebarTrafficLightsVisible
     }
 }
 

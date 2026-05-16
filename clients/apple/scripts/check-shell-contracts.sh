@@ -599,6 +599,11 @@ require_pattern \
     "pinned sidebar collapse must be driven by continuous presentation progress"
 
 require_pattern \
+    "clients/apple/alan-macos/MacShellRootView.swift" \
+    "ShellWindowPlacementAnimationSyncView: View, Animatable" \
+    "window chrome placement must receive animated pinned-sidebar progress instead of only final state"
+
+require_pattern \
     "clients/apple/alan-macos/Views/Shell/ShellWorkspaceView.swift" \
     "expandedSidebarProgress" \
     "workspace view must expose continuous sidebar progress for terminal surface spacing"
@@ -662,6 +667,16 @@ require_pattern \
     "clients/apple/alan-macos/Support/ShellSidebarSpaceContentPager.swift" \
     "settlementPhase" \
     "space pager state must model drag, commit, and cancel settlement phases"
+
+require_pattern \
+    "clients/apple/alan-macos/Support/ShellSidebarSpaceContentPager.swift" \
+    "renderRadius = 2" \
+    "space pager must keep a five-page rendering window around the source"
+
+require_pattern \
+    "clients/apple/alan-macos/Support/ShellSidebarSpaceContentPager.swift" \
+    "clampedDragOffset" \
+    "space pager must clamp one gesture to one page plus overdrag"
 
 require_pattern \
     "clients/apple/alan-macos/Views/Shell/ShellSidebarView.swift" \
@@ -1020,8 +1035,13 @@ require_pattern \
 
 require_pattern \
     "clients/apple/alan-macos/Support/ShellWindowPlacement.swift" \
-    "setStandardWindowButtons\\(in: window, hidden: false, alphaValue: 0\\)" \
-    "floating sidebar traffic lights must be made invisible before AppKit-visible repositioning"
+    "shouldPrimeInvisibleTrafficLights" \
+    "floating sidebar traffic lights must only be made invisible before repositioning when revealing from a hidden state"
+
+reject_pattern \
+    "clients/apple/alan-macos/Support/ShellWindowPlacement.swift" \
+    "^        if chromeSurface\\.showsStandardTrafficLights \\{$" \
+    "visible pinned sidebar traffic-light movement must not unconditionally prime standard buttons to alpha zero"
 
 require_pattern \
     "clients/apple/alan-macos/Support/ShellWindowPlacement.swift" \

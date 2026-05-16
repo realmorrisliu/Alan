@@ -284,9 +284,14 @@ struct ShellSidebarView: View {
     private func updateSpacePager(translationX: CGFloat) {
         guard abs(translationX) > 0.5 else { return }
         guard let sourceIndex = spacePager?.sourceIndex ?? selectedSpaceIndex else { return }
-        let direction = translationX < 0 ? 1 : -1
+        let clampedTranslationX = ShellSidebarSpaceContentPagerState.clampedDragOffset(
+            for: translationX,
+            pageWidth: sidebarSwipePageWidth
+        )
+        let direction = clampedTranslationX < 0 ? 1 : -1
         let targetIndex = adjacentSpaceIndex(from: sourceIndex, direction: direction)
-        let dragOffset = targetIndex == nil ? resistedEdgeOffset(for: translationX) : translationX
+        let dragOffset =
+            targetIndex == nil ? resistedEdgeOffset(for: clampedTranslationX) : clampedTranslationX
 
         var transaction = Transaction()
         transaction.disablesAnimations = true
@@ -392,7 +397,7 @@ struct ShellSidebarView: View {
         guard let spacePager else {
             return selectedSpaceIndex.map { [$0] } ?? []
         }
-        return spacePager.pageIndicesForRendering.filter { host.spaces.indices.contains($0) }
+        return spacePager.pageIndicesForRendering(validRange: host.spaces.indices)
     }
 
     private func spacePageOffset(for index: Int, pageWidth: CGFloat) -> CGFloat {

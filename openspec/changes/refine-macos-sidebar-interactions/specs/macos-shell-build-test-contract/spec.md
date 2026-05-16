@@ -13,7 +13,7 @@ are changed.
 
 #### Scenario: Sidebar-local space pager gesture tested
 - **WHEN** horizontal space swipe behavior changes
-- **THEN** focused tests cover undecided-axis buffering, horizontal intent lock, vertical scroll pass-through, edge resistance, commit threshold, cancel threshold, phaseful release, phase-less idle release, and fast flick velocity commit
+- **THEN** focused tests cover undecided-axis buffering, horizontal intent lock, vertical scroll pass-through, stable five-page rendering around the source space, one-page-plus-overdrag drag clamping, edge resistance, commit threshold, cancel threshold, phaseful release, phase-less idle release, and fast flick velocity commit
 - **AND** verification confirms only the sidebar active-space header and tab list move during the gesture
 - **AND** verification confirms the command input, bottom space switcher, sidebar chrome, traffic lights, and workspace terminal surface remain fixed during the gesture
 

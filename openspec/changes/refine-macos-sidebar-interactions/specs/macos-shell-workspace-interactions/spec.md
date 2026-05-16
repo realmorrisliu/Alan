@@ -34,13 +34,17 @@ include only the sidebar's active-space header and active-space tab list. The
 command input, bottom space switcher, sidebar material surface, sidebar chrome,
 macOS traffic-light placement, and workspace terminal surface SHALL remain
 visually fixed while the gesture is active. alan SHALL avoid mutating durable
-shell selection until the gesture commits.
+shell selection until the gesture commits. The pager SHALL keep the current
+space centered in a bounded five-page rendering window: up to two previous
+spaces, the current space, and up to two next spaces.
 
 #### Scenario: Gesture-tracked sidebar content pager
 - **WHEN** a user horizontally swipes inside the sidebar and an adjacent space exists
 - **THEN** the current sidebar space header and tab list move with the gesture while the adjacent space content previews from the side
 - **AND** the space header and tab list use the same full sidebar content page width for horizontal offsets
 - **AND** movement is rendered directly from horizontal finger translation instead of being amplified, quantized, or shaped by the commit threshold
+- **AND** the pager keeps previous, current, and next page slots stable while direction changes instead of replacing the rendered target page based only on current drag sign
+- **AND** visual drag is clamped to one page plus a small overdrag gap that can reveal part of the second adjacent page for physical feedback
 - **AND** the space header pager is not narrowed by row padding or trailing creation controls
 - **AND** the sidebar pager avoids static left or right padding gaps while pages move
 - **AND** the command input remains fixed
@@ -66,6 +70,7 @@ shell selection until the gesture commits.
 - **AND** the sidebar content pager settles smoothly to the committed space without being reverted by concurrent runtime updates
 - **AND** the workspace terminal surface and terminal focus follow the committed space after shell selection commits
 - **AND** release is honored even when the macOS ended or momentum-start event carries zero scroll delta
+- **AND** a single release commits at most the immediately adjacent previous or next space, never multiple spaces
 
 #### Scenario: Cancel preserves focus and layout
 - **WHEN** the user releases a space swipe before the commit threshold

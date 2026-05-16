@@ -69,16 +69,21 @@ The implementation must preserve alan's terminal-first layout, native material s
    failure on some displays, but it still loses to AppKit frame hit-testing and
    makes the collapsed trigger less intentional.
 
-5. **Space swipe is a sidebar-local content pager.**
+5. **Space swipe is a sidebar-local five-page content pager.**
 
    The gesture model should track `sourceIndex`, `targetIndex`, `dragOffset`,
    `pageWidth`, and settlement phase for the sidebar's active-space content
-   area. The moving page includes only the active space title/header and the
-   active space tab list. Command input, the bottom space switcher, sidebar
-   material/chrome, traffic lights, and the terminal workspace surface remain
-   visually fixed while dragging. Commit and cancel use the same pager model,
-   but shell selection and terminal focus change only when the gesture commits
-   to a target space.
+   area. The rendered strip should keep the current space at the center with up
+   to two previous and two next spaces mounted, so reversing direction during a
+   swipe does not replace the target page and overdrag can reveal a sliver of
+   the second adjacent page. The moving page includes only the active space
+   title/header and the active space tab list. Command input, the bottom space
+   switcher, sidebar material/chrome, traffic lights, and the terminal workspace
+   surface remain visually fixed while dragging. Commit and cancel use the same
+   pager model, but shell selection and terminal focus change only when the
+   gesture commits to a target space. A single gesture may commit at most one
+   adjacent space; any movement beyond one page is bounded to a small physical
+   overdrag gap for feel rather than multi-space navigation.
 
    Alternative considered: make the entire shell content area a continuous
    space pager. That breaks the accepted terminal-first layout because the
@@ -97,6 +102,7 @@ The implementation must preserve alan's terminal-first layout, native material s
 - **Risk: window-level pointer retention blocks native resizing.** → Keep AppKit as the owner of resize hit-testing and only use pointer location to keep or cancel the sidebar hide timer; do not install a mouse-down-consuming overlay on the resize frame.
 - **Risk: immediate focus commit changes terminal runtime focus while the old sidebar page is still visible during settle.** → Keep a short sidebar content pager state that decouples rendering from the already-committed focus for the duration of settlement.
 - **Risk: sidebar-local pager accidentally moves fixed shell regions.** → Keep command input, the bottom space switcher, sidebar chrome, traffic lights, and the terminal workspace outside the moving page.
+- **Risk: swipe velocity makes one gesture skip multiple spaces.** → Clamp visual drag to one page plus a small overdrag gap and keep commit targets limited to the immediate previous or next space.
 - **Risk: gesture axis arbitration regresses vertical sidebar scrolling.** → Preserve the existing intent lock behavior and add tests for undecided, vertical, phaseful, phase-less, momentum, and fast flick paths.
 
 ## Migration Plan
