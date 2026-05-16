@@ -15,12 +15,18 @@ struct ShellRuntimeMetadataTestRunner {
 private enum ShellRuntimeMetadataTests {
     static func run() {
         verifiesRuntimeProjectsTerminalStatusIntoPaneMetadata()
-        verifiesSurfaceExitOverridesRunningMetadata()
+        verifiesSurfaceExitClosesFinalPaneWithoutRestarting()
         verifiesTerminalStatusSummaryPrioritizesExitAndRendererHealth()
         verifiesPaneTitleBarPrefersTerminalTitle()
         verifiesPaneTitleBarFallbackOrdering()
         verifiesPaneTitleBarSuppressesInternalTitles()
         verifiesOpeningTabSkipsStaleRuntimePaneIDs()
+        verifiesOpeningTerminalTabInheritsFocusedRuntimeCwd()
+        verifiesOpeningTerminalTabFallsBackToFocusedPaneSnapshotCwd()
+        verifiesOpeningTerminalTabHonorsExplicitCwd()
+        verifiesTerminalChildExitClosesSplitPane()
+        verifiesTerminalChildExitClosesSinglePaneTab()
+        verifiesTerminalChildExitCanLeaveEmptyFocusedSpace()
         verifiesClosingTabReleasesTerminalRuntime()
         verifiesTabSelectionCommitsAuthoritativeFocus()
         verifiesSpaceSelectionCommitsAuthoritativeFocus()
@@ -94,7 +100,7 @@ private enum ShellRuntimeMetadataTests {
         expect(controller.shellState.spaces.first?.attention == .notable, "space attention must track pane attention")
     }
 
-    private static func verifiesSurfaceExitOverridesRunningMetadata() {
+    private static func verifiesSurfaceExitClosesFinalPaneWithoutRestarting() {
         let controller = makeController()
         guard let pane = controller.selectedPane else {
             fail("bootstrap shell must expose a selected pane")
@@ -144,13 +150,15 @@ private enum ShellRuntimeMetadataTests {
             )
         )
 
-        let updated = controller.shellState.panes.first { $0.paneID == pane.paneID }
         expect(
-            updated?.context?.processState == "exited",
-            "surface child exit must override running metadata in pane context"
+            controller.shellState.pane(paneID: pane.paneID) == nil,
+            "surface child exit must close the owning final pane"
         )
-        expect(updated?.viewport?.summary == "Exited 7", "surface child exit must drive viewport status")
-        expect(updated?.attention == .awaitingUser, "surface child exit must drive pane attention")
+        expect(
+            controller.shellState.spaces.first?.tabs.isEmpty == true,
+            "surface child exit must leave the focused space empty instead of restarting a terminal"
+        )
+        expect(controller.shellState.focusedPaneID == nil, "surface child exit must clear pane focus")
     }
 
     private static func verifiesTerminalStatusSummaryPrioritizesExitAndRendererHealth() {
@@ -415,6 +423,78 @@ private enum ShellRuntimeMetadataTests {
             !registry.registeredPaneIDs.contains("pane_2"),
             "opening a tab must release stale runtime-only panes after adopting the new state"
         )
+    }
+
+    private static func verifiesOpeningTerminalTabInheritsFocusedRuntimeCwd() {
+        let controller = makeController()
+        controller.updateTerminalMetadata(metadata(title: "cwd update", cwd: "/repo/app"), for: "pane_1")
+
+        _ = controller.openTerminalTab()
+
+        expect(
+            controller.selectedPane?.cwd == "/repo/app",
+            "new terminal tabs must inherit the focused pane runtime cwd"
+        )
+    }
+
+    private static func verifiesOpeningTerminalTabFallsBackToFocusedPaneSnapshotCwd() {
+        let windowID = "metadata_snapshot_cwd_\(UUID().uuidString)"
+        let controller = makeController(
+            windowID: windowID,
+            shellState: .bootstrapDefault(windowID: windowID, workingDirectory: "/snapshot/cwd")
+        )
+
+        _ = controller.openTerminalTab()
+
+        expect(
+            controller.selectedPane?.cwd == "/snapshot/cwd",
+            "new terminal tabs must fall back to the focused pane snapshot cwd"
+        )
+    }
+
+    private static func verifiesOpeningTerminalTabHonorsExplicitCwd() {
+        let controller = makeController()
+        controller.updateTerminalMetadata(metadata(title: "cwd update", cwd: "/repo/app"), for: "pane_1")
+
+        _ = controller.openTerminalTab(workingDirectory: "/explicit/cwd")
+
+        expect(
+            controller.selectedPane?.cwd == "/explicit/cwd",
+            "explicit new-tab cwd must override focused pane cwd"
+        )
+    }
+
+    private static func verifiesTerminalChildExitClosesSplitPane() {
+        let controller = makeController()
+        _ = controller.splitPane(paneID: "pane_1", placement: .right)
+
+        controller.updateTerminalMetadata(childExitMetadata(title: "fish", exitCode: 0), for: "pane_2")
+
+        expect(controller.pane(paneID: "pane_2") == nil, "child exit must close the owning split pane")
+        expect(controller.pane(paneID: "pane_1") != nil, "child exit must preserve sibling panes")
+        expect(controller.shellState.focusedPaneID == "pane_1", "child exit must focus the remaining sibling")
+    }
+
+    private static func verifiesTerminalChildExitClosesSinglePaneTab() {
+        let controller = makeController()
+        _ = controller.openTerminalTab(workingDirectory: "/second")
+
+        controller.updateTerminalMetadata(childExitMetadata(title: "fish", exitCode: 0), for: "pane_2")
+
+        expect(controller.shellState.tab(tabID: "tab_2") == nil, "child exit must close the owning single-pane tab")
+        expect(controller.pane(paneID: "pane_1") != nil, "child exit must preserve other tabs")
+        expect(controller.shellState.focusedPaneID == "pane_1", "child exit must move focus to the next valid pane")
+    }
+
+    private static func verifiesTerminalChildExitCanLeaveEmptyFocusedSpace() {
+        let controller = makeController()
+
+        controller.updateTerminalMetadata(childExitMetadata(title: "fish", exitCode: 0), for: "pane_1")
+
+        expect(controller.shellState.spaces.count == 1, "final child exit must keep the focused space")
+        expect(controller.shellState.spaces.first?.tabs.isEmpty == true, "final child exit may leave an empty space")
+        expect(controller.shellState.panes.isEmpty, "final child exit must not restart a replacement pane")
+        expect(controller.shellState.focusedPaneID == nil, "final child exit must clear focused pane")
     }
 
     private static func verifiesClosingTabReleasesTerminalRuntime() {
@@ -766,10 +846,13 @@ private enum ShellRuntimeMetadataTests {
             metadata(title: "done", processExited: true, activeTaskState: .foregroundCommand),
             for: "pane_1"
         )
-        expect(activeTask(in: exitedURL) == .inactive, "exited terminal must not protect tab")
         expect(
-            exitedController.shellState.panes.first?.context?.processState == "exited",
-            "exited metadata must override foreground active-task projection"
+            activeTask(in: exitedURL) == nil,
+            "exited terminal must not protect a tab after lifecycle close removes it"
+        )
+        expect(
+            exitedController.shellState.panes.isEmpty,
+            "exited metadata must close the pane instead of preserving foreground state"
         )
 
         let activeOnlyURL = manifestURL("active_only")
@@ -933,6 +1016,23 @@ private enum ShellRuntimeMetadataTests {
             lastCommandExitCode: nil,
             lastUpdatedAt: Date(timeIntervalSince1970: 3_000),
             activeTaskState: activeTaskState
+        )
+    }
+
+    private static func childExitMetadata(
+        title: String,
+        cwd: String = "/Users/morris/Developer/Alan",
+        exitCode: Int
+    ) -> TerminalPaneMetadataSnapshot {
+        TerminalPaneMetadataSnapshot(
+            title: title,
+            workingDirectory: cwd,
+            summary: "process exited",
+            attention: .awaitingUser,
+            processExited: true,
+            lastCommandExitCode: exitCode,
+            lastUpdatedAt: Date(timeIntervalSince1970: 3_100),
+            activeTaskState: .inactive
         )
     }
 

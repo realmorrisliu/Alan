@@ -295,7 +295,7 @@ final class AlanTerminalInputAdapter {
         }
 
         guard input.phase == .down else { return .terminalKey }
-        guard input.modifiers.subtracting([.shift, .option]).isEmpty else {
+        guard input.modifiers.subtracting([.shift]).isEmpty else {
             return .terminalKey
         }
         guard let characters = input.characters, !characters.isEmpty else { return .terminalKey }

@@ -597,11 +597,13 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         title: String? = nil,
         workingDirectory: String? = nil
     ) -> String? {
-        openTab(
+        let resolvedWorkingDirectory = workingDirectory
+            ?? focusedPaneWorkingDirectory()
+        return openTab(
             launchTarget: .shell,
             in: spaceID,
             title: title,
-            workingDirectory: workingDirectory
+            workingDirectory: resolvedWorkingDirectory
         )
     }
 
@@ -805,6 +807,9 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
                 processExited: runtimeProcessExited,
                 for: paneID
             )
+            if closePaneAfterChildExitIfNeeded(paneID: paneID, processExited: runtimeProcessExited) {
+                return
+            }
             let projectedContext = paneProjection.projectedContext(
                 for: pane,
                 bootProfile: bootProfile,
@@ -865,6 +870,9 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
             processExited: metadataProcessExited,
             for: paneID
         )
+        if closePaneAfterChildExitIfNeeded(paneID: paneID, processExited: metadataProcessExited) {
+            return
+        }
         let projectedContext = paneProjection.projectedContext(
             for: pane,
             bootProfile: bootProfile,
@@ -1485,6 +1493,29 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         } catch {
             return .paneNotFound
         }
+    }
+
+    private func focusedPaneWorkingDirectory() -> String? {
+        guard let pane = focusedPane ?? selectedPane else { return nil }
+        let runtimeCwd = runtime(for: pane.paneID).paneMetadata.workingDirectory
+        return nonEmptyWorkingDirectory(runtimeCwd)
+            ?? nonEmptyWorkingDirectory(pane.cwd)
+    }
+
+    private func nonEmptyWorkingDirectory(_ path: String?) -> String? {
+        guard let path else { return nil }
+        let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    @discardableResult
+    private func closePaneAfterChildExitIfNeeded(
+        paneID: String,
+        processExited: Bool
+    ) -> Bool {
+        guard processExited else { return false }
+        guard pane(paneID: paneID) != nil else { return false }
+        return closePane(paneID: paneID) == .closed
     }
 
     func movePane(
