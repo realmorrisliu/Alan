@@ -297,7 +297,8 @@ protocol AlanTerminalSurfaceHandle: AnyObject {
         to canvasView: NSView,
         focused: Bool,
         onDiagnosticsChange: @escaping (TerminalRendererSnapshot) -> Void,
-        onMetadataChange: @escaping (TerminalPaneMetadataSnapshot) -> Void
+        onMetadataChange: @escaping (TerminalPaneMetadataSnapshot) -> Void,
+        onCloseRequest: @escaping (Bool) -> Void
     )
     func detach()
     func updateHostRuntimeSnapshot(_ snapshot: TerminalHostRuntimeSnapshot)
@@ -379,7 +380,8 @@ final class AlanGhosttySurfaceHandle: AlanTerminalSurfaceHandle {
         to canvasView: NSView,
         focused: Bool,
         onDiagnosticsChange: @escaping (TerminalRendererSnapshot) -> Void,
-        onMetadataChange: @escaping (TerminalPaneMetadataSnapshot) -> Void
+        onMetadataChange: @escaping (TerminalPaneMetadataSnapshot) -> Void,
+        onCloseRequest: @escaping (Bool) -> Void
     ) {
         guard currentSnapshot.teardownStatus != .completed else {
             onDiagnosticsChange(currentSnapshot.renderer)
@@ -431,6 +433,9 @@ final class AlanGhosttySurfaceHandle: AlanTerminalSurfaceHandle {
             guard let self else { return }
             updateSnapshot(metadata: metadata)
             onMetadataChange(metadata)
+        }
+        liveHost.onCloseRequest = { requiresConfirmation in
+            onCloseRequest(requiresConfirmation)
         }
         liveHost.attach(to: canvasView, bootProfile: bootProfile, focused: focused)
         updateSnapshot(
@@ -830,6 +835,7 @@ final class FakeAlanTerminalSurfaceHandle: AlanTerminalSurfaceHandle {
     var ready = true
     private var searchUpdateHandler: ((AlanTerminalSearchEngineUpdate) -> Void)?
     private var scrollbackUpdateHandler: ((AlanTerminalScrollbackMetrics) -> Void)?
+    private var closeRequestHandler: ((Bool) -> Void)?
     private var currentSnapshot: AlanTerminalSurfaceSnapshot
 
     init(paneID: String) {
@@ -854,9 +860,11 @@ final class FakeAlanTerminalSurfaceHandle: AlanTerminalSurfaceHandle {
         to canvasView: NSView,
         focused: Bool,
         onDiagnosticsChange: @escaping (TerminalRendererSnapshot) -> Void,
-        onMetadataChange: @escaping (TerminalPaneMetadataSnapshot) -> Void
+        onMetadataChange: @escaping (TerminalPaneMetadataSnapshot) -> Void,
+        onCloseRequest: @escaping (Bool) -> Void
     ) {
         attachCount += 1
+        closeRequestHandler = onCloseRequest
         updateSnapshot(lifecyclePhase: .attached, attachedViewCount: 1)
         onDiagnosticsChange(currentSnapshot.renderer)
         onMetadataChange(currentSnapshot.metadata)
@@ -864,6 +872,7 @@ final class FakeAlanTerminalSurfaceHandle: AlanTerminalSurfaceHandle {
 
     func detach() {
         detachCount += 1
+        closeRequestHandler = nil
         updateSnapshot(attachedViewCount: 0)
     }
 
@@ -901,6 +910,10 @@ final class FakeAlanTerminalSurfaceHandle: AlanTerminalSurfaceHandle {
             activeTaskState: .inactive
         )
         updateSnapshot(metadata: metadata)
+    }
+
+    func requestClose(requiresConfirmation: Bool) {
+        closeRequestHandler?(requiresConfirmation)
     }
 
     @discardableResult

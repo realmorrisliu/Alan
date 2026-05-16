@@ -19,4 +19,4 @@ inheritance, and shell child-exit lifecycle changes.
 
 #### Scenario: Exit lifecycle verification
 - **WHEN** child-exit handling is changed
-- **THEN** verification covers `exit` from a split pane, `exit` from a single-pane tab, final-pane fallback behavior, and rejection of later text delivery to an exited runtime
+- **THEN** verification covers `exit` from a split pane, `exit` from a single-pane tab, final-pane fallback behavior, direct surface close-request forwarding, and rejection of later text delivery to an exited runtime

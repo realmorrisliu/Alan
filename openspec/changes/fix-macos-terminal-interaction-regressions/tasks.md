@@ -8,8 +8,9 @@
 
 - [x] 2.1 梳理 `TerminalHostView` 的 `performKeyEquivalent`、`keyDown`、command input routing、workspace command routing 和 native command routing 优先级。
 - [x] 2.2 调整 focused terminal 的键盘路由，使非 app-reserved 的 Escape、Tab、Backspace、Control/Option 组合键和 Ghostty terminal binding 优先交给 terminal runtime。
-- [x] 2.3 保留 command input 可见时的 submit/dismiss/toggle 行为，以及 `Command-T`、`Command-W` 等明确 native workspace shortcut。
-- [x] 2.4 为 fake terminal surface 或 focused shell contract 增加键盘输入验证，覆盖 Vim/TUI 关键按键和 native command shortcut 非回归。
+- [x] 2.3 修复 IME marked text 场景：组合输入态下 Backspace/Ctrl-H 先进入 `interpretKeyEvents` 更新 preedit，并阻止组合态 control 字符删除已提交 terminal 内容。
+- [x] 2.4 保留 command input 可见时的 submit/dismiss/toggle 行为，以及 `Command-T`、`Command-W` 等明确 native workspace shortcut。
+- [x] 2.5 为 fake terminal surface 或 focused shell contract 增加键盘输入验证，覆盖 Vim/TUI 关键按键、IME composing Backspace 和 native command shortcut 非回归。
 
 ## 3. New Tab Cwd Inheritance
 
@@ -25,6 +26,7 @@
 - [x] 4.3 实现 single-pane tab 中 `exit` 后关闭 owning tab，并把 focus 移到下一个有效 tab 或 empty-space state。
 - [x] 4.4 实现 final-pane 安全行为：关闭 final pane 后保留 focused empty Space，并避免自动重启 runtime。
 - [x] 4.5 增加 text delivery after exit 的失败验证，确保 exited runtime 不再报告 delivery success。
+- [x] 4.6 参考 Ghostty macOS 的 close notification/controller 模型，新增 surface close-request 通道，让 non-confirming close request 直接关闭 owning pane/tab。
 
 ## 5. Verification And Handoff
 
