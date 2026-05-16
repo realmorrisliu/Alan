@@ -78,6 +78,8 @@ The Rust TUI will talk to the daemon through alan's session APIs:
 alan
   explicit subcommand -> existing CLI command
   no subcommand       -> alan_tui::run()
+                         -> resolve daemon URL / local lifecycle
+                         -> health check or auto-start
                          -> daemon client
                          -> session create/read/events/submit/resume/interrupt
 ```
@@ -85,6 +87,14 @@ alan
 The TUI owns presentation and terminal interaction. The daemon owns runtime
 startup, workspace resolution, connection profiles, governance, event
 persistence, and session lifecycle.
+
+Bare `alan` must preserve the existing interactive startup behavior before it
+uses session APIs. For a default or local daemon URL, the TUI first checks
+`/health`, starts the local daemon when it is not already reachable, waits for
+readiness, and then creates or attaches to a session. For an explicit remote
+daemon URL such as `ALAN_AGENTD_URL`, the TUI treats that daemon as externally
+managed: it performs health/connect checks against the configured remote and
+does not spawn or stop a local daemon.
 
 Alternatives considered:
 
@@ -159,8 +169,9 @@ requirements before archiving.
 
 1. Add the Rust TUI crate as a library and wire no-subcommand `alan` to it behind
    a minimal compiling shell.
-2. Add the daemon client boundary and session reducer before building detailed UI
-   components.
+2. Add daemon URL resolution, local daemon health/auto-start, remote override
+   handling, the daemon client boundary, and the session reducer before building
+   detailed UI components.
 3. Implement terminal infrastructure, history cells, bottom composer, and pending
    input surfaces with focused terminal tests.
 4. Remove the TypeScript TUI, Bun build paths, `ALAN_TUI_PATH`, `alan-tui`

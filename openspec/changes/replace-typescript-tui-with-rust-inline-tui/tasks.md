@@ -35,22 +35,28 @@
 
 ## 4. Daemon Client Contract
 
-- [ ] 4.1 Add or expose Rust endpoint helpers for session lifecycle, event
+- [ ] 4.1 Implement daemon URL resolution for default local configuration,
+  host-configured URLs, and explicit remote overrides such as `ALAN_AGENTD_URL`.
+- [ ] 4.2 Implement local daemon health checks, auto-start, readiness wait,
+  existing-daemon reuse, and startup failure reporting before any session API
+  call.
+- [ ] 4.3 Add or expose Rust endpoint helpers for session lifecycle, event
   streaming, reconnect snapshot/history reads, submissions, connection queries,
   and skill catalog reads.
-- [ ] 4.2 Refactor the Rust TUI daemon client to use endpoint helpers instead of
+- [ ] 4.4 Refactor the Rust TUI daemon client to use endpoint helpers instead of
   raw canonical `/api/v1/...` route strings.
-- [ ] 4.3 Add contract checks or snapshots that detect drift in protocol event
+- [ ] 4.5 Add contract checks or snapshots that detect drift in protocol event
   names and selected daemon payloads used by the Rust TUI.
-- [ ] 4.4 Preserve public daemon route paths while replacing the TypeScript TUI
+- [ ] 4.6 Preserve public daemon route paths while replacing the TypeScript TUI
   client.
 
 ## 5. TUI Application Core
 
 - [ ] 5.1 Implement the internal `AppEvent` bus and main event loop selecting
   over terminal input, daemon events, app events, and background completions.
-- [ ] 5.2 Implement daemon-backed session create/attach, history/reconnect
-  hydration, event streaming, gap detection, and reconnect behavior.
+- [ ] 5.2 Implement daemon-backed session create/attach after daemon readiness,
+  history/reconnect hydration, event streaming, gap detection, and reconnect
+  behavior.
 - [ ] 5.3 Implement protocol submissions for turns, follow-up input, resume
   data, interrupt, rollback, and compaction.
 - [ ] 5.4 Implement session reducers that translate `EventEnvelope` streams into
@@ -101,12 +107,14 @@
 - [ ] 9.1 Run `cargo fmt --all`.
 - [ ] 9.2 Run `cargo test -p alan-tui` or the final TUI crate package name.
 - [ ] 9.3 Run `cargo test -p alan`.
-- [ ] 9.4 Run daemon API contract checks that cover endpoint helpers and payload
+- [ ] 9.4 Run TUI daemon-lifecycle checks covering local auto-start,
+  existing-daemon reuse, remote override behavior, and startup failure reporting.
+- [ ] 9.5 Run daemon API contract checks that cover endpoint helpers and payload
   drift for the Rust TUI.
-- [ ] 9.5 Run Apple shell/package contract checks that cover single-binary
+- [ ] 9.6 Run Apple shell/package contract checks that cover single-binary
   packaging and bare-`alan` launch.
-- [ ] 9.6 Run `openspec validate --all --strict`.
-- [ ] 9.7 Run `git diff --check`.
+- [ ] 9.7 Run `openspec validate --all --strict`.
+- [ ] 9.8 Run `git diff --check`.
 
 ## 10. Review And Archive Readiness
 

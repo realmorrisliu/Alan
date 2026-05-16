@@ -32,6 +32,9 @@ only shipped `alan` binary.
 - Keep the TUI daemon-backed for V1: the UI owns terminal interaction and
   presentation, while sessions, tools, runtime execution, and persistence stay
   behind the existing alan daemon/session APIs.
+- Preserve bare-`alan` startup ergonomics: local daemon health check,
+  auto-start/readiness wait when needed, existing daemon reuse, and explicit
+  remote daemon override behavior before any session API call.
 - Update release packaging, app install, Homebrew cask expectations, and Apple
   shell launch paths so the only embedded and linked command-line executable is
   `alan`.

@@ -45,6 +45,33 @@ The Rust TUI SHALL use alan daemon/session APIs for workspace resolution,
 connection profile resolution, session lifecycle, event streaming, submissions,
 resume operations, interrupts, compaction, rollback, and persisted history.
 
+#### Scenario: Local daemon starts before session APIs
+- **WHEN** a user runs bare `alan` with the default local daemon configuration
+  and no healthy daemon is reachable
+- **THEN** the Rust TUI starts the local daemon before creating or attaching to a
+  session
+- **AND** it waits for the daemon health endpoint to report readiness before
+  calling session APIs
+
+#### Scenario: Existing local daemon is reused
+- **WHEN** a user runs bare `alan` and the configured local daemon is already
+  healthy
+- **THEN** the Rust TUI reuses that daemon
+- **AND** it does not stop the daemon on exit unless the TUI started that daemon
+  instance for this run
+
+#### Scenario: Remote daemon override is respected
+- **WHEN** a user runs bare `alan` with an explicit remote daemon URL such as
+  `ALAN_AGENTD_URL`
+- **THEN** the Rust TUI connects to that configured daemon
+- **AND** it does not start, stop, or otherwise manage a local daemon process
+
+#### Scenario: Daemon startup failure is actionable
+- **WHEN** the configured local daemon cannot be started or does not become
+  healthy before the startup timeout
+- **THEN** the Rust TUI reports an actionable startup error before attempting to
+  create or attach to a session
+
 #### Scenario: Session starts through daemon APIs
 - **WHEN** the Rust TUI starts a new conversation for a workspace
 - **THEN** it creates or attaches to a daemon-backed session using the public
