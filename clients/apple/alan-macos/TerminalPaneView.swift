@@ -632,6 +632,10 @@ private struct ShellTerminalLeafView: View {
                     activationDelegate: activationDelegate,
                     onWorkspaceCommand: onWorkspaceCommand,
                     onCommandInput: onCommandInput,
+                    onCloseRequest: { requiresConfirmation in
+                        guard !requiresConfirmation else { return }
+                        onClosePane()
+                    },
                     onRuntimeUpdate: onRuntimeUpdate,
                     onMetadataUpdate: onMetadataUpdate
                 )

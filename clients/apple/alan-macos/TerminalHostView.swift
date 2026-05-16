@@ -20,6 +20,7 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
     private weak var activationDelegate: TerminalHostActivationDelegate?
     private var workspaceCommandHandler: ((ShellWorkspaceCommand) -> Void)?
     private var commandInputHandler: (() -> Void)?
+    private var closeRequestHandler: ((Bool) -> Void)?
     private var runtimeObserver: ((TerminalHostRuntimeSnapshot) -> Void)?
     private var metadataObserver: ((TerminalPaneMetadataSnapshot) -> Void)?
     private var rendererSnapshot: TerminalRendererSnapshot = .placeholder
@@ -134,6 +135,7 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
         activationDelegate: TerminalHostActivationDelegate?,
         onWorkspaceCommand: ((ShellWorkspaceCommand) -> Void)?,
         onCommandInput: (() -> Void)?,
+        onCloseRequest: ((Bool) -> Void)?,
         onRuntimeUpdate: @escaping (TerminalHostRuntimeSnapshot) -> Void,
         onMetadataUpdate: @escaping (TerminalPaneMetadataSnapshot) -> Void
     ) {
@@ -147,6 +149,7 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
         self.activationDelegate = activationDelegate
         workspaceCommandHandler = onWorkspaceCommand
         commandInputHandler = onCommandInput
+        closeRequestHandler = onCloseRequest
         runtimeObserver = onRuntimeUpdate
         metadataObserver = onMetadataUpdate
 
@@ -305,9 +308,21 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
                 reportMetadataIfNeeded(snapshot)
                 syncOverlayVisibility()
                 publishRuntimeSnapshot()
+            },
+            onCloseRequest: { [weak self] requiresConfirmation in
+                self?.reportCloseRequest(requiresConfirmation: requiresConfirmation)
             }
         )
 #endif
+    }
+
+    private func reportCloseRequest(requiresConfirmation: Bool) {
+        guard let closeRequestHandler else { return }
+        let paneID = pane?.paneID
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.pane?.paneID == paneID else { return }
+            closeRequestHandler(requiresConfirmation)
+        }
     }
 
     private func syncNativeScrollback() {
@@ -792,12 +807,6 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
 
         requestTerminalFocus()
         let inputRoutingDecision = surfaceController.inputAdapter.routeKey(terminalKeyInput(for: event))
-        let shouldInterpretText: Bool
-        if case .terminalText = inputRoutingDecision {
-            shouldInterpretText = true
-        } else {
-            shouldInterpretText = false
-        }
 
         let translationModsGhostty =
             surfaceController.keyTranslationMods(for: modsFromEvent(event))
@@ -846,34 +855,61 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
         defer { keyTextAccumulator = nil }
 
         let markedTextBefore = markedText.length > 0
+        let shouldInterpretText = surfaceController.inputAdapter.shouldInterpretTextInput(
+            inputRoutingDecision,
+            hasMarkedText: markedTextBefore
+        )
         if shouldInterpretText {
             interpretKeyEvents([translationEvent])
             syncPreedit(clearIfNeeded: markedTextBefore)
         }
+        let composing = markedText.length > 0 || markedTextBefore
+        let action = event.isARepeat ? GHOSTTY_ACTION_REPEAT : GHOSTTY_ACTION_PRESS
 
         if shouldInterpretText,
            let keyTextAccumulator,
            !keyTextAccumulator.isEmpty
         {
-            keyTextAccumulator.forEach { surfaceController.sendText($0) }
+            for text in keyTextAccumulator {
+                guard !AlanTerminalInputAdapter.shouldSuppressComposingControlInput(
+                    text,
+                    composing: composing
+                ) else {
+                    continue
+                }
+
+                if markedTextBefore {
+                    sendCommittedPreeditText(text, action: action)
+                } else {
+                    surfaceController.sendText(text)
+                }
+            }
+
+            if markedTextBefore, shouldReplayCommittedPreeditKey(translationEvent) {
+                sendGhosttyKeyEvent(
+                    for: event,
+                    action: action,
+                    translationMods: translationMods,
+                    composing: false
+                )
+            }
             return
         }
 
-        var keyEvent = ghosttyKeyEvent(
-            for: event,
-            action: event.isARepeat ? GHOSTTY_ACTION_REPEAT : GHOSTTY_ACTION_PRESS,
-            translationMods: translationMods
-        )
-        keyEvent.composing = markedText.length > 0 || markedTextBefore
-
-        if let text = textForKeyEvent(translationEvent), shouldSendText(text) {
-            text.withCString { cString in
-                keyEvent.text = cString
-                _ = surfaceController.sendKey(keyEvent)
-            }
-        } else {
-            _ = surfaceController.sendKey(keyEvent)
+        if AlanTerminalInputAdapter.shouldSuppressComposingControlInput(
+            event.characters,
+            composing: composing
+        ) {
+            return
         }
+
+        sendGhosttyKeyEvent(
+            for: event,
+            action: action,
+            translationMods: translationMods,
+            textEvent: translationEvent,
+            composing: composing
+        )
 #else
         super.keyDown(with: event)
 #endif
@@ -963,6 +999,64 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
         keyEvent.composing = false
         keyEvent.unshifted_codepoint = unshiftedCodepointFromEvent(event)
         return keyEvent
+    }
+
+    @discardableResult
+    private func sendGhosttyKeyEvent(
+        for event: NSEvent,
+        action: ghostty_input_action_e,
+        translationMods: NSEvent.ModifierFlags,
+        textEvent: NSEvent? = nil,
+        composing: Bool
+    ) -> Bool {
+        var keyEvent = ghosttyKeyEvent(
+            for: event,
+            action: action,
+            translationMods: translationMods
+        )
+        keyEvent.composing = composing
+
+        if let textEvent,
+           let text = textForKeyEvent(textEvent),
+           shouldSendText(text)
+        {
+            return text.withCString { cString in
+                keyEvent.text = cString
+                return surfaceController.sendKey(keyEvent)
+            }
+        }
+
+        return surfaceController.sendKey(keyEvent)
+    }
+
+    private func sendCommittedPreeditText(
+        _ text: String,
+        action: ghostty_input_action_e
+    ) {
+        var keyEvent = ghostty_input_key_s()
+        keyEvent.action = action
+        keyEvent.keycode = 0
+        keyEvent.mods = GHOSTTY_MODS_NONE
+        keyEvent.consumed_mods = GHOSTTY_MODS_NONE
+        keyEvent.text = nil
+        keyEvent.composing = false
+        keyEvent.unshifted_codepoint = 0
+
+        text.withCString { cString in
+            keyEvent.text = cString
+            _ = surfaceController.sendKey(keyEvent)
+        }
+    }
+
+    private func shouldReplayCommittedPreeditKey(_ event: NSEvent) -> Bool {
+        switch event.keyCode {
+        case 0x7C, 0x7D, 0x7E:
+            return true
+        case 0x7B:
+            return !event.modifierFlags.isDisjoint(with: [.shift, .control, .option, .command])
+        default:
+            return false
+        }
     }
 
     private func unshiftedCodepointFromEvent(_ event: NSEvent) -> UInt32 {
@@ -1102,7 +1196,12 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
             return
         }
 
+        let wasComposing = markedText.length > 0
         unmarkText()
+        guard !AlanTerminalInputAdapter.shouldSuppressComposingControlInput(
+            characters,
+            composing: wasComposing
+        ) else { return }
 
         if var keyTextAccumulator {
             keyTextAccumulator.append(characters)

@@ -223,6 +223,33 @@ enum AlanTerminalInputRoutingDecision: Equatable {
 
 @MainActor
 final class AlanTerminalInputAdapter {
+    func shouldInterpretTextInput(
+        _ decision: AlanTerminalInputRoutingDecision,
+        hasMarkedText: Bool
+    ) -> Bool {
+        switch decision {
+        case .terminalText:
+            return true
+        case .terminalKey:
+            return hasMarkedText
+        case .nativeCommand, .ignored:
+            return false
+        }
+    }
+
+    static func shouldSuppressComposingControlInput(
+        _ text: String?,
+        composing: Bool
+    ) -> Bool {
+        guard composing, let text else { return false }
+        let scalars = text.unicodeScalars
+        guard let scalar = scalars.first,
+              scalars.index(after: scalars.startIndex) == scalars.endIndex else {
+            return false
+        }
+        return scalar.value < 0x20 || scalar.value == 0x7F
+    }
+
     func routeWorkspaceCommand(_ input: AlanTerminalKeyInput) -> ShellWorkspaceCommand? {
         guard input.phase == .down, !input.isRepeat else { return nil }
 
@@ -309,6 +336,7 @@ final class AlanTerminalInputAdapter {
         }
         return .terminalText(characters)
     }
+
 }
 
 enum AlanTerminalPointerPhase: Equatable {
@@ -854,7 +882,8 @@ final class AlanTerminalSurfaceController {
         bootProfile: AlanShellBootProfile?,
         focused: Bool,
         onDiagnosticsChange: @escaping (TerminalRendererSnapshot) -> Void,
-        onMetadataChange: @escaping (TerminalPaneMetadataSnapshot) -> Void
+        onMetadataChange: @escaping (TerminalPaneMetadataSnapshot) -> Void,
+        onCloseRequest: @escaping (Bool) -> Void
     ) {
         surfaceHandle?.configure(bootProfile: bootProfile)
         surfaceHandle?.attach(
@@ -869,7 +898,8 @@ final class AlanTerminalSurfaceController {
                 guard let self else { return }
                 latestMetadata = metadata
                 onMetadataChange(metadata)
-            }
+            },
+            onCloseRequest: onCloseRequest
         )
     }
 

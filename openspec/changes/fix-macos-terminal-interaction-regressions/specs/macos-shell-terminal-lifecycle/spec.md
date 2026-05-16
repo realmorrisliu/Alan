@@ -10,6 +10,13 @@ app-reserved `Command` shortcut owns that key.
 - **THEN** non-`Command` terminal keys such as Escape, Tab, Backspace, `Control-[`, `Control-W`, `Control-F`, and `Control-B` are delivered to the terminal runtime
 - **AND** the shell workspace command router does not consume those keys as pane, tab, or command-input actions
 
+#### Scenario: IME marked text owns composing backspace
+- **WHEN** a focused terminal pane has active AppKit `NSTextInputClient` marked text from a Chinese/Japanese/Korean input method
+- **AND** the user presses Backspace or an equivalent composing control key
+- **THEN** alan lets AppKit `interpretKeyEvents` update or clear the marked text before terminal delivery
+- **AND** alan updates Ghostty preedit state from the resulting marked text
+- **AND** alan MUST NOT forward the composing control character to the terminal as a deletion of already-committed terminal input
+
 #### Scenario: Ghostty binding wins for focused terminal
 - **WHEN** Ghostty reports that a focused terminal key event is a terminal binding
 - **THEN** alan sends the key event to the terminal runtime instead of treating it as an unresolved native command
@@ -36,6 +43,13 @@ implicitly restart the terminal runtime.
 - **WHEN** the only pane in a tab receives a normal shell child-exit signal and the tab can be closed
 - **THEN** alan closes that tab through the normal tab-close path
 - **AND** focus moves to the shell model's next valid tab or empty-space state
+
+#### Scenario: Close-surface after child exit preserves exited metadata
+- **WHEN** Ghostty reports a close-surface callback for a terminal surface whose child process is no longer alive
+- **THEN** alan forwards a non-confirming close request from the surface host to the shell owner
+- **AND** the shell owner closes the owning pane or tab through the normal close path
+- **AND** alan preserves exited runtime metadata long enough for observers to see the terminal lifecycle transition
+- **AND** releasing the Ghostty surface MUST NOT rewrite the pane metadata back to a running state before the controller observes the exit
 
 #### Scenario: Final pane cannot close safely
 - **WHEN** the final visible terminal pane receives a shell child-exit signal and closing it would leave the shell in an unsupported state

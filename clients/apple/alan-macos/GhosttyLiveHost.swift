@@ -9,6 +9,7 @@ import QuartzCore
 final class AlanGhosttyLiveHost: NSObject {
     var onDiagnosticsChange: ((TerminalRendererSnapshot) -> Void)?
     var onMetadataChange: ((TerminalPaneMetadataSnapshot) -> Void)?
+    var onCloseRequest: ((Bool) -> Void)?
     var onSearchUpdate: ((AlanTerminalSearchEngineUpdate) -> Void)?
     var onScrollbackUpdate: ((AlanTerminalScrollbackMetrics) -> Void)?
 
@@ -30,6 +31,7 @@ final class AlanGhosttyLiveHost: NSObject {
     private var diagnostics = TerminalRendererSnapshot.placeholder
     private var metadata = TerminalPaneMetadataSnapshot.placeholder
     private let terminalModeTracker = AlanTerminalModeTracker()
+    private var didEmitNonConfirmingCloseRequest = false
 
     private enum KeyCode {
         static let returnKey: UInt32 = 36
@@ -275,8 +277,9 @@ final class AlanGhosttyLiveHost: NSObject {
         runtimeConfig.write_clipboard_cb = { _, location, content, len, _ in
             AlanGhosttyLiveHost.writeClipboard(location: location, content: content, len: len)
         }
-        runtimeConfig.close_surface_cb = { userdata, _ in
-            AlanGhosttyLiveHost.from(userdata)?.teardownSurface()
+        runtimeConfig.close_surface_cb = { userdata, processAlive in
+            AlanGhosttyLiveHost.from(userdata)?
+                .handleSurfaceCloseRequest(processAlive: processAlive)
         }
 
         guard let primaryConfig = makePrimaryConfig() else {
@@ -354,6 +357,7 @@ final class AlanGhosttyLiveHost: NSObject {
 
         teardownSurface()
         didEmitFirstRefresh = false
+        didEmitNonConfirmingCloseRequest = false
         terminalModeTracker.reset()
 
         transition(
@@ -518,7 +522,30 @@ final class AlanGhosttyLiveHost: NSObject {
         tickScheduleLock.unlock()
     }
 
-    private func teardownSurface() {
+    private func handleSurfaceCloseRequest(processAlive: Bool) {
+        performOnMain {
+            self.updateMetadata(
+                summary: processAlive ? "surface close requested" : "process exited",
+                attention: .awaitingUser,
+                processExited: !processAlive,
+                activeTaskState: processAlive ? self.metadata.activeTaskState : .inactive
+            )
+            self.emitCloseRequest(requiresConfirmation: processAlive)
+
+            guard !processAlive else { return }
+            self.teardownSurface(preservingMetadata: true)
+        }
+    }
+
+    private func emitCloseRequest(requiresConfirmation: Bool) {
+        if !requiresConfirmation {
+            guard !didEmitNonConfirmingCloseRequest else { return }
+            didEmitNonConfirmingCloseRequest = true
+        }
+        onCloseRequest?(requiresConfirmation)
+    }
+
+    private func teardownSurface(preservingMetadata: Bool = false) {
         if let surface {
             ghostty_surface_free(surface)
             self.surface = nil
@@ -540,6 +567,7 @@ final class AlanGhosttyLiveHost: NSObject {
             )
         }
 
+        guard !preservingMetadata else { return }
         updateMetadata(
             summary: app == nil ? nil : "surface released",
             attention: .idle,

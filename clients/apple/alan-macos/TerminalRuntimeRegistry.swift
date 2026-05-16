@@ -57,6 +57,7 @@ final class TerminalRuntimeRegistry: ObservableObject {
         activationDelegate: TerminalHostActivationDelegate?,
         onWorkspaceCommand: ((ShellWorkspaceCommand) -> Void)?,
         onCommandInput: (() -> Void)?,
+        onCloseRequest: ((Bool) -> Void)?,
         onRuntimeUpdate: @escaping (TerminalHostRuntimeSnapshot) -> Void,
         onMetadataUpdate: @escaping (TerminalPaneMetadataSnapshot) -> Void
     ) -> AlanTerminalHostNSView {
@@ -88,6 +89,7 @@ final class TerminalRuntimeRegistry: ObservableObject {
             activationDelegate: activationDelegate,
             onWorkspaceCommand: onWorkspaceCommand,
             onCommandInput: onCommandInput,
+            onCloseRequest: onCloseRequest,
             onRuntimeUpdate: onRuntimeUpdate,
             onMetadataUpdate: onMetadataUpdate
         )

@@ -21,12 +21,14 @@ private enum TerminalSurfaceControllerTests {
         verifiesNativeScrollViewForwardsMouseEvents()
         verifiesInputCommandRouting()
         verifiesTUIKeyboardRoutingKeepsTerminalOwnedKeysInTerminal()
+        verifiesTextInputInterpretationPolicyPreservesIMEMarkedText()
         verifiesPointerRoutingFollowsTerminalMouseModes()
         verifiesPointerButtonMappingMatchesGhostty()
         verifiesPaneScopedSearchState()
         verifiesSearchActionsReachSurfaceEngine()
         verifiesScrollbackActionsReachSurfaceEngine()
         verifiesBindClearsStaleScrollbackState()
+        verifiesSurfaceCloseRequestIsForwarded()
         verifiesSurfaceSnapshotEqualityIgnoresTimestamp()
         verifiesClipboardDeliveryStates()
         verifiesSelectionCopyAndPasteUseController()
@@ -275,6 +277,79 @@ private enum TerminalSurfaceControllerTests {
             )
         )
         expect(commandT == .newTerminalTab, "command-t must remain a native workspace shortcut")
+    }
+
+    private static func verifiesTextInputInterpretationPolicyPreservesIMEMarkedText() {
+        let adapter = AlanTerminalInputAdapter()
+
+        let backspace = adapter.routeKey(
+            AlanTerminalKeyInput(
+                characters: "\u{7F}",
+                keyCode: 51,
+                modifiers: [],
+                phase: .down,
+                isRepeat: false
+            )
+        )
+        expect(backspace == .terminalKey, "backspace must remain a terminal-owned key outside IME composition")
+        expect(
+            !adapter.shouldInterpretTextInput(backspace, hasMarkedText: false),
+            "backspace must not go through NSTextInput when no IME marked text exists"
+        )
+        expect(
+            adapter.shouldInterpretTextInput(backspace, hasMarkedText: true),
+            "backspace must go through NSTextInput while IME marked text exists"
+        )
+
+        let printable = adapter.routeKey(
+            AlanTerminalKeyInput(
+                characters: "a",
+                keyCode: 0,
+                modifiers: [],
+                phase: .down,
+                isRepeat: false
+            )
+        )
+        expect(
+            adapter.shouldInterpretTextInput(printable, hasMarkedText: false),
+            "printable input must still go through NSTextInput"
+        )
+
+        let findCommand = adapter.routeKey(
+            AlanTerminalKeyInput(
+                characters: "f",
+                keyCode: 3,
+                modifiers: [.command],
+                phase: .down,
+                isRepeat: false
+            )
+        )
+        expect(
+            !adapter.shouldInterpretTextInput(findCommand, hasMarkedText: true),
+            "native command shortcuts must not be reinterpreted as IME text input"
+        )
+
+        expect(
+            AlanTerminalInputAdapter.shouldSuppressComposingControlInput(
+                "\u{08}",
+                composing: true
+            ),
+            "raw C0 control input must not leak to the terminal during composition"
+        )
+        expect(
+            AlanTerminalInputAdapter.shouldSuppressComposingControlInput(
+                "\u{7F}",
+                composing: true
+            ),
+            "backspace must not leak to the terminal during composition"
+        )
+        expect(
+            !AlanTerminalInputAdapter.shouldSuppressComposingControlInput(
+                "\u{08}",
+                composing: false
+            ),
+            "raw C0 control input remains terminal-owned outside composition"
+        )
     }
 
     private static func verifiesPointerRoutingFollowsTerminalMouseModes() {
@@ -632,6 +707,28 @@ private enum TerminalSurfaceControllerTests {
             controller.surfaceStateSnapshot.rendererHealth != "failed",
             "rebinding to a new surface must clear stale renderer failure state"
         )
+    }
+
+    private static func verifiesSurfaceCloseRequestIsForwarded() {
+        let controller = AlanTerminalSurfaceController()
+        let handle = FakeAlanTerminalSurfaceHandle(paneID: "pane_1")
+        var closeRequests: [Bool] = []
+
+        controller.bind(surfaceHandle: handle, paneID: "pane_1")
+        controller.attach(
+            to: NSView(),
+            bootProfile: nil,
+            focused: true,
+            onDiagnosticsChange: { _ in },
+            onMetadataChange: { _ in },
+            onCloseRequest: { requiresConfirmation in
+                closeRequests.append(requiresConfirmation)
+            }
+        )
+
+        handle.requestClose(requiresConfirmation: false)
+
+        expect(closeRequests == [false], "surface close requests must be forwarded to the shell owner")
     }
 
     private static func verifiesSurfaceSnapshotEqualityIgnoresTimestamp() {

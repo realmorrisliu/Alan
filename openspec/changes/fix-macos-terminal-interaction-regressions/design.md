@@ -5,7 +5,7 @@
 - `TerminalHostView` 先处理 command input / workspace command / native command，再进入 Ghostty key binding 和 `keyDown` 转译。
 - `ShellHostController.performShellWorkspaceCommand(.newTerminalTab)` 当前直接调用 `openTerminalTab()`，没有把 focused pane 的运行时 cwd 传入。
 - `ShellStateSnapshot.openingTab(...)` 在 `workingDirectory == nil` 时回退到 `defaultShellWorkingDirectory()`，而 split pane 已经从原 pane 继承 cwd。
-- Ghostty 的 `GHOSTTY_ACTION_SHOW_CHILD_EXITED` 已经能把 `processExited` 写入 runtime metadata，但这个信号还没有被提升为用户可理解的 pane/tab 关闭语义。
+- Ghostty 的 `GHOSTTY_ACTION_SHOW_CHILD_EXITED` 已经能把 `processExited` 写入 runtime metadata，但 Ghostty macOS app 的正确 close 模型不是 metadata-only：`close_surface_cb` 发出 close request，terminal controller 直接从 surface tree 移除对应 node。alan 之前缺少这条从 embedded surface 到 shell controller 的直接 close-request 通道，导致 `exit` 只能依赖 metadata 旁路。
 
 这三个问题应该作为终端交互回归一起处理，因为它们共享同一个产品边界：终端 host 是活动 pane 的输入和进程生命周期 owner，shell controller 只负责明确的 workspace mutation。
 
@@ -29,7 +29,7 @@
 
 1. **终端输入优先走 terminal host，再让明确 app command 截获。**
 
-   Focused pane 的 `TerminalHostView` 应该把非 command-key 的控制键、Escape、Tab、Backspace、功能键、Option/Control 组合键和 Ghostty 识别为 terminal binding 的事件交给 terminal surface。Command input 可见时仍然优先处理自己的 Escape/Return/Command-P；`Command-T`、`Command-W` 等显式 app/workspace command 继续走 native command routing。
+   Focused pane 的 `TerminalHostView` 应该把非 command-key 的控制键、Escape、Tab、Backspace、功能键、Option/Control 组合键和 Ghostty 识别为 terminal binding 的事件交给 terminal surface。IME 组合输入是这个规则的输入法例外：当 AppKit `NSTextInputClient` 已有 marked text 时，Backspace/Ctrl-H 等 control input 必须先交给 `interpretKeyEvents` 更新 preedit，并抑制组合态控制字符漏到 terminal。Command input 可见时仍然优先处理自己的 Escape/Return/Command-P；`Command-T`、`Command-W` 等显式 app/workspace command 继续走 native command routing。
 
    备选方案是继续先跑 workspace/native routing，再对缺失快捷键逐个开洞。这会把 Vim/TUI 支持变成无穷补丁列表，也容易再次截获 `Ctrl-*` 这类终端快捷键。
 
@@ -41,7 +41,7 @@
 
 3. **child exit 是 lifecycle 事件，不是重启触发器。**
 
-   `GHOSTTY_ACTION_SHOW_CHILD_EXITED` 或等价 runtime metadata 应由 `ShellHostController` 观察并转成 pane/tab mutation：split tab 中关闭退出的 pane；单 pane tab 中关闭 tab；如果实现层不能安全关闭最后的可见 shell surface，则保留 exited state 并提供明确的新建/重启入口。任何路径都不能为了保持画面可输入而自动创建新的 shell runtime。
+   `GHOSTTY_ACTION_SHOW_CHILD_EXITED`、Ghostty `close_surface_cb` 中 child 已不活跃的 close request，或等价 runtime metadata 应由 `ShellHostController` 观察并转成 pane/tab mutation：split tab 中关闭退出的 pane；单 pane tab 中关闭 tab。实现应参考 Ghostty macOS 的 `ghosttyCloseSurface -> closeSurface(node, withConfirmation:) -> removeSurfaceNode/closeTab/closeWindow` 模型，让 non-confirming close request 直接驱动 shell close path，而不是只写 metadata 等间接观察。如果实现层不能安全关闭最后的可见 shell surface，则保留 exited state 并提供明确的新建/重启入口。任何路径都不能为了保持画面可输入而自动创建新的 shell runtime，也不能在 controller 观察前把 exited metadata 重置回 running。
 
    备选方案是只在 pane UI 上展示 “exited” 状态。它能解释状态，但不符合用户输入 `exit` 后退出当前 pane/tab 的预期；只适合作为最终 pane 或关闭失败时的 fallback。
 

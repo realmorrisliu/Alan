@@ -532,6 +532,7 @@ private enum ShellRuntimeMetadataTests {
             activationDelegate: nil,
             onWorkspaceCommand: nil,
             onCommandInput: nil,
+            onCloseRequest: nil,
             onRuntimeUpdate: { _ in },
             onMetadataUpdate: { _ in }
         )
@@ -569,6 +570,7 @@ private enum ShellRuntimeMetadataTests {
             activationDelegate: nil,
             onWorkspaceCommand: nil,
             onCommandInput: nil,
+            onCloseRequest: nil,
             onRuntimeUpdate: { _ in },
             onMetadataUpdate: { _ in }
         )

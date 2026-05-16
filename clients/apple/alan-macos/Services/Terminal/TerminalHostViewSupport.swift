@@ -11,6 +11,7 @@ struct TerminalHostView: NSViewRepresentable {
     let activationDelegate: TerminalHostActivationDelegate?
     let onWorkspaceCommand: ((ShellWorkspaceCommand) -> Void)?
     let onCommandInput: (() -> Void)?
+    let onCloseRequest: ((Bool) -> Void)?
     let onRuntimeUpdate: (TerminalHostRuntimeSnapshot) -> Void
     let onMetadataUpdate: (TerminalPaneMetadataSnapshot) -> Void
 
@@ -22,6 +23,7 @@ struct TerminalHostView: NSViewRepresentable {
             activationDelegate: activationDelegate,
             onWorkspaceCommand: onWorkspaceCommand,
             onCommandInput: onCommandInput,
+            onCloseRequest: onCloseRequest,
             onRuntimeUpdate: onRuntimeUpdate,
             onMetadataUpdate: onMetadataUpdate
         )
@@ -36,6 +38,7 @@ struct TerminalHostView: NSViewRepresentable {
             activationDelegate: activationDelegate,
             onWorkspaceCommand: onWorkspaceCommand,
             onCommandInput: onCommandInput,
+            onCloseRequest: onCloseRequest,
             onRuntimeUpdate: onRuntimeUpdate,
             onMetadataUpdate: onMetadataUpdate
         )
