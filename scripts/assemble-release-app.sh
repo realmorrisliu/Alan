@@ -132,6 +132,11 @@ cp "$STAGING_DIR/alan-tui" "$EMBEDDED_BIN_DIR/alan-tui"
 chmod +x "$EMBEDDED_BIN_DIR/alan" "$EMBEDDED_BIN_DIR/alan-tui"
 
 ASSEMBLED_AT="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+printf 'Signing embedded binaries...\n'
+sign_path "$EMBEDDED_BIN_DIR/alan"
+sign_path_with_entitlements "$EMBEDDED_BIN_DIR/alan-tui" "$TUI_ENTITLEMENTS"
+
+printf 'Recording signed embedded binary checksums...\n'
 ALAN_SHA="$(sha256 "$EMBEDDED_BIN_DIR/alan")"
 TUI_SHA="$(sha256 "$EMBEDDED_BIN_DIR/alan-tui")"
 
@@ -156,9 +161,7 @@ cat >"$MANIFEST_PATH" <<EOF
 }
 EOF
 
-printf 'Signing embedded binaries and app bundle...\n'
-sign_path "$EMBEDDED_BIN_DIR/alan"
-sign_path_with_entitlements "$EMBEDDED_BIN_DIR/alan-tui" "$TUI_ENTITLEMENTS"
+printf 'Signing app bundle...\n'
 codesign --force --timestamp --options runtime --sign "$SIGNING_IDENTITY" "$APP_BUNDLE"
 codesign --verify --strict --verbose=2 "$APP_BUNDLE"
 

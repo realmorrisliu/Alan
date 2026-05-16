@@ -39,7 +39,7 @@
 
 - [x] 5.1 Update `README.md`, `AGENTS.md`, `clients/tui/README.md`, and `clients/apple/README.md` to describe the app-first install and remove `just app` guidance.
 - [x] 5.2 Update `clients/apple/scripts/check-shell-contracts.sh` so it rejects reintroducing `just app` or a default force-kill app runner.
-- [x] 5.3 Add focused package-layout validation for Release `alan.app`, embedded executable paths, executable bits, manifest SHA-256 checksums, and stale binary detection.
+- [x] 5.3 Add focused package-layout validation for Release `alan.app`, embedded executable paths, executable bits, post-signing manifest SHA-256 checksums, and stale binary detection.
 - [x] 5.4 Add focused signature validation that fails on ad-hoc signatures and verifies nested binaries and app bundle signing order outcomes.
 - [x] 5.5 Add publication validation for notarization/stapling and Homebrew cask binary links.
 - [x] 5.6 Document the private release env loader and its supported local signing/notarization variables.

@@ -15,7 +15,8 @@ contains the GUI app executable plus release CLI/TUI executables embedded under
 #### Scenario: Version cohesion is verified
 - **WHEN** a release package is validated
 - **THEN** verification confirms the app, embedded CLI, and embedded TUI came from the same source revision or release version
-- **AND** verification recomputes the embedded CLI and TUI SHA-256 checksums and compares them with the package manifest
+- **AND** assembly records SHA-256 checksums after embedded CLI and TUI signing
+- **AND** verification recomputes the delivered embedded CLI and TUI SHA-256 checksums and compares them with the package manifest
 - **AND** verification fails if the app bundle contains stale CLI/TUI binaries from an earlier assembly
 
 ### Requirement: Distribution signing uses Developer ID

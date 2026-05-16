@@ -166,7 +166,8 @@ should not preserve ad-hoc signing as a supported local install fallback.
 - **Risk: the app and CLI versions drift.** -> The package should include
   version metadata or a manifest generated during assembly and used by
   verification to prove the app, CLI, and TUI came from the same source revision
-  and version, with manifest SHA-256 values compared to the embedded binaries.
+  and version, with manifest SHA-256 values recorded after embedded binary
+  signing and compared to the delivered embedded binaries.
 
 ## Migration Plan
 

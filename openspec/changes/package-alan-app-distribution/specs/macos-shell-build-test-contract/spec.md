@@ -26,7 +26,7 @@ when distribution packaging changes.
 - **THEN** focused checks verify `alan.app` was built in Release configuration
 - **AND** focused checks verify embedded `Contents/Resources/bin/alan` and `Contents/Resources/bin/alan-tui` exist and are executable
 - **AND** focused checks verify the embedded binaries are the release binaries from the current build
-- **AND** focused checks verify the package manifest SHA-256 values match the embedded binaries
+- **AND** focused checks verify the package manifest SHA-256 values are recorded after embedded binary signing and match the delivered embedded binaries
 
 #### Scenario: Signatures are checked
 - **WHEN** release packaging implementation is ready for review

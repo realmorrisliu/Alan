@@ -1199,6 +1199,11 @@ require_pattern \
     "release app validation must compare manifest checksums with embedded binaries"
 
 require_pattern \
+    "scripts/assemble-release-app.sh" \
+    "Recording signed embedded binary checksums" \
+    "release assembly must record manifest checksums after embedded binaries are signed"
+
+require_pattern \
     "scripts/entitlements/alan-tui.entitlements" \
     "com\\.apple\\.security\\.cs\\.allow-jit" \
     "standalone alan-tui must declare the hardened-runtime JIT entitlement it needs to launch"
