@@ -485,10 +485,16 @@ struct AlanShellBootProfile: Equatable {
 
     func requiresSurfaceRecreation(comparedTo previous: AlanShellBootProfile?) -> Bool {
         guard let previous else { return true }
-        // Runtime PWD updates change workingDirectory but must not respawn the pane.
-        return command != previous.command
-            || environment != previous.environment
-            || ghostty != previous.ghostty
+        // Runtime PWD updates and install-time bundle/resource discovery changes must not
+        // respawn a pane. Existing terminals only recreate for logical launch-target changes.
+        return surfaceRecreationIdentity != previous.surfaceRecreationIdentity
+    }
+
+    private var surfaceRecreationIdentity: SurfaceRecreationIdentity {
+        SurfaceRecreationIdentity(
+            launchTarget: environment["ALAN_SHELL_LAUNCH_TARGET"]
+                ?? environment["ALAN_SHELL_BOOT_MODE"]
+        )
     }
 
     var launchCommandString: String {
@@ -560,6 +566,10 @@ struct AlanShellBootProfile: Equatable {
         let escaped = value.replacingOccurrences(of: "'", with: "'\\''")
         return "'\(escaped)'"
     }
+}
+
+private struct SurfaceRecreationIdentity: Equatable {
+    let launchTarget: String?
 }
 
 enum TerminalHostStage: String, Equatable {
