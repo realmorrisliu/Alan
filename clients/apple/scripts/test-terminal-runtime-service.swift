@@ -16,6 +16,7 @@ private enum TerminalRuntimeServiceTests {
     static func run() {
         verifiesGhosttyTerminfoEnvironmentProjection()
         verifiesRuntimeCwdDoesNotRequireSurfaceRecreation()
+        verifiesInstallDiscoveryChangesDoNotRequireSurfaceRecreation()
         verifiesBootstrapReuseAndPaneHandleIdentity()
         verifiesPaneScopedHandleIsolation()
         verifiesDeliveryAndMissingRuntimeResults()
@@ -59,7 +60,7 @@ private enum TerminalRuntimeServiceTests {
     private static func verifiesRuntimeCwdDoesNotRequireSurfaceRecreation() {
         let base = sampleBootProfile(workingDirectory: "/Users/morris")
         let afterCd = sampleBootProfile(workingDirectory: "/Users/morris/Developer/Alan")
-        let differentEnvironment = sampleBootProfile(
+        let rediscoveredEnvironment = sampleBootProfile(
             workingDirectory: "/Users/morris/Developer/Alan",
             environment: ["TERMINFO": "/tmp/other-terminfo"]
         )
@@ -69,12 +70,73 @@ private enum TerminalRuntimeServiceTests {
             "runtime cwd updates must not recreate the Ghostty surface"
         )
         expect(
-            differentEnvironment.requiresSurfaceRecreation(comparedTo: base),
-            "terminal environment changes must recreate the Ghostty surface"
+            !rediscoveredEnvironment.requiresSurfaceRecreation(comparedTo: base),
+            "terminal environment rediscovery must not recreate the Ghostty surface"
         )
         expect(
             base.requiresSurfaceRecreation(comparedTo: nil),
             "missing previous boot profile must require initial surface creation"
+        )
+    }
+
+    private static func verifiesInstallDiscoveryChangesDoNotRequireSurfaceRecreation() {
+        let running = sampleBootProfile(
+            workingDirectory: "/Users/morris",
+            environment: ["TERMINFO": "/Users/morris/Applications/Alan.app/Contents/Resources/ghostty-terminfo"],
+            ghostty: GhosttyIntegrationStatus(
+                frameworkPath: "/Users/morris/Applications/Alan.app/Contents/Resources/GhosttyKit.xcframework",
+                resourcesPath: "/Users/morris/Applications/Alan.app/Contents/Resources/ghostty-resources",
+                terminfoPath: "/Users/morris/Applications/Alan.app/Contents/Resources/ghostty-terminfo",
+                candidates: []
+            )
+        )
+        let whileBundleIsBeingReplaced = sampleBootProfile(
+            workingDirectory: "/Users/morris",
+            environment: [:],
+            ghostty: GhosttyIntegrationStatus(
+                frameworkPath: nil,
+                resourcesPath: nil,
+                terminfoPath: nil,
+                candidates: []
+            )
+        )
+        let alanFromBundle = sampleBootProfile(
+            workingDirectory: "/Users/morris",
+            command: sampleAlanCommand(
+                strategy: .bundledResourceBinary,
+                executablePath: "/Users/morris/Applications/Alan.app/Contents/Resources/bin/alan"
+            ),
+            environment: [
+                "ALAN_SHELL_LAUNCH_TARGET": ShellLaunchTarget.alan.rawValue,
+                "ALAN_SHELL_EXECUTABLE": "/Users/morris/Applications/Alan.app/Contents/Resources/bin/alan",
+            ]
+        )
+        let alanDuringInstall = sampleBootProfile(
+            workingDirectory: "/Users/morris",
+            command: AlanCommandResolution(
+                strategy: .shellLookup,
+                executablePath: nil,
+                launchPath: "/bin/zsh",
+                arguments: ["-lc", "alan chat"],
+                bootCommand: "alan chat",
+                surfaceCommand: "alan chat",
+                summary: "No direct alan binary found; falling back to shell PATH lookup",
+                detail: nil,
+                repoRoot: nil,
+                candidates: []
+            ),
+            environment: [
+                "ALAN_SHELL_LAUNCH_TARGET": ShellLaunchTarget.alan.rawValue
+            ]
+        )
+
+        expect(
+            !whileBundleIsBeingReplaced.requiresSurfaceRecreation(comparedTo: running),
+            "install-time Ghostty resource discovery changes must not recreate a running surface"
+        )
+        expect(
+            !alanDuringInstall.requiresSurfaceRecreation(comparedTo: alanFromBundle),
+            "install-time alan binary discovery changes must not recreate a running surface"
         )
     }
 
@@ -253,29 +315,53 @@ private enum TerminalRuntimeServiceTests {
 
     private static func sampleBootProfile(
         workingDirectory: String,
-        environment: [String: String] = ["TERMINFO": "/tmp/ghostty-terminfo"]
+        command: AlanCommandResolution? = nil,
+        environment: [String: String] = ["TERMINFO": "/tmp/ghostty-terminfo"],
+        ghostty: GhosttyIntegrationStatus = GhosttyIntegrationStatus(
+            frameworkPath: "/tmp/GhosttyKit.xcframework",
+            resourcesPath: "/tmp/ghostty-resources",
+            terminfoPath: "/tmp/ghostty-terminfo",
+            candidates: []
+        )
     ) -> AlanShellBootProfile {
         AlanShellBootProfile(
-            command: AlanCommandResolution(
-                strategy: .loginShellFallback,
-                executablePath: "/bin/zsh",
-                launchPath: "/bin/zsh",
-                arguments: ["-l"],
-                bootCommand: "/bin/zsh -l",
-                surfaceCommand: nil,
-                summary: "Launching pane with the default login shell",
-                detail: "/bin/zsh",
-                repoRoot: nil,
-                candidates: []
-            ),
+            command: command ?? sampleShellCommand(),
             workingDirectory: workingDirectory,
             environment: environment,
-            ghostty: GhosttyIntegrationStatus(
-                frameworkPath: "/tmp/GhosttyKit.xcframework",
-                resourcesPath: "/tmp/ghostty-resources",
-                terminfoPath: "/tmp/ghostty-terminfo",
-                candidates: []
-            )
+            ghostty: ghostty
+        )
+    }
+
+    private static func sampleShellCommand() -> AlanCommandResolution {
+        AlanCommandResolution(
+            strategy: .loginShellFallback,
+            executablePath: "/bin/zsh",
+            launchPath: "/bin/zsh",
+            arguments: ["-l"],
+            bootCommand: "/bin/zsh -l",
+            surfaceCommand: nil,
+            summary: "Launching pane with the default login shell",
+            detail: "/bin/zsh",
+            repoRoot: nil,
+            candidates: []
+        )
+    }
+
+    private static func sampleAlanCommand(
+        strategy: AlanLaunchStrategy,
+        executablePath: String
+    ) -> AlanCommandResolution {
+        AlanCommandResolution(
+            strategy: strategy,
+            executablePath: executablePath,
+            launchPath: executablePath,
+            arguments: ["chat"],
+            bootCommand: "\(executablePath) chat",
+            surfaceCommand: "\(executablePath) chat",
+            summary: "Launching alan",
+            detail: executablePath,
+            repoRoot: nil,
+            candidates: []
         )
     }
 
