@@ -734,7 +734,7 @@ private struct ShellPaneTitleBarView: View {
     private var accessories: [ShellPaneTitleBarAccessory] {
         var items: [ShellPaneTitleBarAccessory] = []
 
-        if let activityLabel = shellPaneActivityAccessoryLabel(for: pane) {
+        if let activityLabel = shellPaneActivityAccessoryLabel(for: pane, now: Date()) {
             items.append(
                 ShellPaneTitleBarAccessory(
                     id: "activity",

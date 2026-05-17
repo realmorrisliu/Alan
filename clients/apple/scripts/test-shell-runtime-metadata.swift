@@ -1015,6 +1015,7 @@ private enum ShellRuntimeMetadataTests {
     }
 
     private static func verifiesPaneTitleActivityAccessoryLabel() {
+        let now = Date(timeIntervalSince1970: 1_779_008_400)
         let paneWithProgress = pane(
             context: context(
                 processState: "running",
@@ -1026,13 +1027,17 @@ private enum ShellRuntimeMetadataTests {
             attention: .idle,
             activity: TerminalActivitySnapshot.progressActivity(
                 percent: 42,
-                now: Date(timeIntervalSince1970: 1_779_008_400)
+                now: now
             )
         )
 
         expect(
-            shellPaneActivityAccessoryLabel(for: paneWithProgress) == "Progress · 42%",
+            shellPaneActivityAccessoryLabel(for: paneWithProgress, now: now) == "Progress · 42%",
             "pane title activity accessory must expose source-first activity copy"
+        )
+        expect(
+            shellPaneActivityAccessoryLabel(for: paneWithProgress, now: now.addingTimeInterval(16)) == nil,
+            "pane title activity accessory must hide stale progress"
         )
     }
 
