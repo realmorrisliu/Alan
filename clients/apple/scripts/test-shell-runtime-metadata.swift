@@ -24,6 +24,17 @@ private enum ShellRuntimeMetadataTests {
         verifiesOpeningTerminalTabInheritsFocusedRuntimeCwd()
         verifiesOpeningTerminalTabFallsBackToFocusedPaneSnapshotCwd()
         verifiesOpeningTerminalTabHonorsExplicitCwd()
+        verifiesTerminalActivityProjectsByPaneID()
+        verifiesProgressActivityFactoryUsesSourceFirstDisplay()
+        verifiesCommandCompletionActivityFactory()
+        verifiesTerminalActivityCodableUsesSnakeCase()
+        verifiesTerminalActivitySidebarPriority()
+        verifiesStaleProgressIsNotSidebarWorthy()
+        verifiesDefaultSidebarActivitySelectionHonorsFreshness()
+        verifiesSuccessfulCommandIsNotSidebarWorthy()
+        verifiesClearingActivityRemovesPaneActivity()
+        verifiesPublishedStateMergeClearsActivity()
+        verifiesPaneRebuildMutationsPreserveActivity()
         verifiesTerminalChildExitClosesSplitPane()
         verifiesTerminalChildExitClosesSinglePaneTab()
         verifiesTerminalChildExitCanLeaveEmptyFocusedSpace()
@@ -461,6 +472,331 @@ private enum ShellRuntimeMetadataTests {
         expect(
             controller.selectedPane?.cwd == "/explicit/cwd",
             "explicit new-tab cwd must override focused pane cwd"
+        )
+    }
+
+    private static func verifiesTerminalActivityProjectsByPaneID() {
+        let controller = makeController()
+        _ = controller.openTerminalTab(workingDirectory: "/background")
+        let activity = progressActivity(
+            percent: 42,
+            updatedAt: "2026-05-17T09:00:00Z",
+            staleAt: "2026-05-17T09:00:15Z"
+        )
+
+        controller.updateTerminalMetadata(
+            metadata(title: "build", cwd: "/repo/app", activity: activity),
+            for: "pane_1"
+        )
+
+        let activePane = controller.pane(paneID: "pane_1")
+        let backgroundPane = controller.pane(paneID: "pane_2")
+        expect(
+            activePane?.activity == activity,
+            "terminal activity metadata must project onto the owning pane"
+        )
+        expect(
+            backgroundPane?.activity == nil,
+            "terminal activity metadata must not leak to other panes"
+        )
+    }
+
+    private static func verifiesTerminalActivitySidebarPriority() {
+        let running = activity(status: .running, source: .shell, sourceLabel: "Shell", stateLabel: "Running")
+        let progress = activity(
+            status: .progress,
+            source: .progress,
+            sourceLabel: "Progress",
+            stateLabel: "42%",
+            progress: .percent(42)
+        )
+        let needsInput = activity(
+            status: .needsInput,
+            source: .codex,
+            sourceLabel: "Codex",
+            stateLabel: "Input needed"
+        )
+
+        expect(
+            TerminalActivitySnapshot.primarySidebarActivity([running, progress]) == progress,
+            "progress must outrank generic running activity"
+        )
+        expect(
+            TerminalActivitySnapshot.primarySidebarActivity([progress, needsInput]) == needsInput,
+            "user-input-required activity must outrank progress"
+        )
+    }
+
+    private static func verifiesProgressActivityFactoryUsesSourceFirstDisplay() {
+        let now = Date(timeIntervalSince1970: 1_779_008_400)
+        let activity = TerminalActivitySnapshot.progressActivity(percent: 42, now: now)
+
+        expect(activity.source.kind == .progress, "progress factory must label source as progress")
+        expect(activity.status == .progress, "determinate progress must use progress status")
+        expect(activity.progress == .percent(42), "determinate progress must carry bounded percent")
+        expect(
+            activity.display.sourceFirstLabel == "Progress · 42%",
+            "progress display copy must be source-first"
+        )
+        expect(
+            activity.freshness.staleAt == "2026-05-17T09:00:15Z",
+            "progress activity must get the default 15 second stale deadline"
+        )
+    }
+
+    private static func verifiesCommandCompletionActivityFactory() {
+        let now = Date(timeIntervalSince1970: 1_779_008_400)
+        let success = TerminalActivitySnapshot.commandCompletion(exitCode: 0, now: now)
+        let failure = TerminalActivitySnapshot.commandCompletion(exitCode: 2, now: now)
+
+        expect(success.status == .done, "zero exit code must produce done status")
+        expect(!success.isSidebarWorthy, "successful commands must not be sidebar-worthy")
+        expect(
+            success.freshness.staleAt == "2026-05-17T09:00:08Z",
+            "successful command completion must get a short stale deadline"
+        )
+        expect(
+            !success.isFresh(at: now.addingTimeInterval(9)),
+            "successful command completion must become stale after its freshness window"
+        )
+        expect(failure.status == .failed, "non-zero exit code must produce failed status")
+        expect(failure.command?.exitCode == 2, "command completion must preserve exit code")
+        expect(
+            failure.display.sourceFirstLabel == "Shell · Command failed 2",
+            "failed command copy must be source-first"
+        )
+        expect(
+            TerminalActivitySnapshot.primarySidebarActivity([success, failure], now: now) == failure,
+            "failed command completion must outrank successful completion"
+        )
+    }
+
+    private static func verifiesTerminalActivityCodableUsesSnakeCase() {
+        let activity = TerminalActivitySnapshot(
+            source: TerminalActivitySource(kind: .codex, label: "Codex"),
+            status: .failed,
+            priority: .notable,
+            progress: nil,
+            command: TerminalActivityCommandOutcome(
+                exitCode: 2,
+                durationMilliseconds: 120_000,
+                commandText: "just check"
+            ),
+            agent: TerminalActivityAgentMetadata(
+                kind: .codex,
+                safeSessionLabel: "Codex",
+                projectLabel: "alan",
+                workingDirectory: "/Users/morris/Developer/alan"
+            ),
+            display: TerminalActivityDisplay(
+                sourceLabel: "Codex",
+                stateLabel: "Failed",
+                detailLabel: "just check",
+                paneHint: "1"
+            ),
+            freshness: TerminalActivityFreshness(
+                updatedAt: "2026-05-17T09:00:00Z",
+                staleAt: "2026-05-17T09:00:30Z",
+                expiresAt: "2026-05-17T09:05:00Z"
+            )
+        )
+
+        do {
+            let data = try JSONEncoder().encode(activity)
+            guard
+                let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                let command = root["command"] as? [String: Any],
+                let agent = root["agent"] as? [String: Any],
+                let display = root["display"] as? [String: Any],
+                let freshness = root["freshness"] as? [String: Any]
+            else {
+                fail("activity JSON must encode nested objects")
+            }
+
+            expect(command["exit_code"] as? Int == 2, "command JSON must use exit_code")
+            expect(
+                command["duration_milliseconds"] as? Int == 120_000,
+                "command JSON must use duration_milliseconds"
+            )
+            expect(command["command_text"] as? String == "just check", "command JSON must use command_text")
+            expect(!command.keys.contains("exitCode"), "command JSON must not use camelCase exitCode")
+            expect(
+                agent["safe_session_label"] as? String == "Codex",
+                "agent JSON must use safe_session_label"
+            )
+            expect(agent["project_label"] as? String == "alan", "agent JSON must use project_label")
+            expect(
+                agent["working_directory"] as? String == "/Users/morris/Developer/alan",
+                "agent JSON must use working_directory"
+            )
+            expect(display["source_label"] as? String == "Codex", "display JSON must use source_label")
+            expect(display["state_label"] as? String == "Failed", "display JSON must use state_label")
+            expect(display["detail_label"] as? String == "just check", "display JSON must use detail_label")
+            expect(display["pane_hint"] as? String == "1", "display JSON must use pane_hint")
+            expect(
+                freshness["updated_at"] as? String == "2026-05-17T09:00:00Z",
+                "freshness JSON must use updated_at"
+            )
+            expect(
+                freshness["stale_at"] as? String == "2026-05-17T09:00:30Z",
+                "freshness JSON must use stale_at"
+            )
+            expect(
+                freshness["expires_at"] as? String == "2026-05-17T09:05:00Z",
+                "freshness JSON must use expires_at"
+            )
+
+            let decoded = try JSONDecoder().decode(TerminalActivitySnapshot.self, from: data)
+            expect(decoded == activity, "activity JSON must round-trip through snake_case keys")
+        } catch {
+            fail("activity JSON contract failed: \(error)")
+        }
+    }
+
+    private static func verifiesSuccessfulCommandIsNotSidebarWorthy() {
+        let success = activity(
+            status: .done,
+            source: .command,
+            sourceLabel: "Shell",
+            stateLabel: "Command succeeded"
+        )
+
+        expect(
+            TerminalActivitySnapshot.primarySidebarActivity([success]) == nil,
+            "successful command completion must not become sidebar-worthy activity"
+        )
+    }
+
+    private static func verifiesStaleProgressIsNotSidebarWorthy() {
+        let progress = progressActivity(
+            percent: 42,
+            updatedAt: "2026-05-17T09:00:00Z",
+            staleAt: "2026-05-17T09:00:15Z"
+        )
+        let now = Date(timeIntervalSince1970: 1_779_008_416)
+
+        expect(
+            !progress.isFresh(at: now),
+            "progress must become stale after its freshness deadline"
+        )
+        expect(
+            TerminalActivitySnapshot.primarySidebarActivity([progress], now: now) == nil,
+            "stale progress must not remain sidebar-worthy"
+        )
+    }
+
+    private static func verifiesDefaultSidebarActivitySelectionHonorsFreshness() {
+        let staleProgress = progressActivity(
+            percent: 42,
+            updatedAt: "2000-01-01T00:00:00Z",
+            staleAt: "2000-01-01T00:00:15Z"
+        )
+
+        expect(
+            TerminalActivitySnapshot.primarySidebarActivity([staleProgress]) == nil,
+            "default sidebar activity selection must reject stale activity"
+        )
+    }
+
+    private static func verifiesClearingActivityRemovesPaneActivity() {
+        let controller = makeController()
+        let progress = progressActivity(
+            percent: 64,
+            updatedAt: "2026-05-17T09:00:00Z",
+            staleAt: "2026-05-17T09:00:15Z"
+        )
+
+        controller.updateTerminalMetadata(
+            metadata(title: "build", cwd: "/repo/app", activity: progress),
+            for: "pane_1"
+        )
+        expect(
+            controller.shellState.pane(paneID: "pane_1")?.activity == progress,
+            "test setup must project progress activity"
+        )
+
+        controller.updateTerminalMetadata(
+            metadata(title: "build", cwd: "/repo/app", clearsActivity: true),
+            for: "pane_1"
+        )
+        expect(
+            controller.shellState.pane(paneID: "pane_1")?.activity == nil,
+            "clear metadata must remove stale pane activity"
+        )
+    }
+
+    private static func verifiesPublishedStateMergeClearsActivity() {
+        let progress = progressActivity(
+            percent: 42,
+            updatedAt: "2026-05-17T09:00:00Z",
+            staleAt: "2026-05-17T09:00:15Z"
+        )
+        let authoritative = stateWithAlanBinding(
+            windowID: "window_activity_merge",
+            pendingYield: false,
+            activity: progress
+        )
+        let incoming = stateWithAlanBinding(
+            windowID: "window_activity_merge",
+            pendingYield: false,
+            activity: nil
+        )
+
+        let merged = AlanShellPublishedStateMerger.merge(
+            authoritative: authoritative,
+            incoming: incoming
+        )
+
+        expect(
+            merged.pane(paneID: "pane_1")?.activity == nil,
+            "published state merge must allow incoming nil activity to clear stale activity"
+        )
+    }
+
+    private static func verifiesPaneRebuildMutationsPreserveActivity() {
+        let controller = makeController()
+        let progress = progressActivity(
+            percent: 42,
+            updatedAt: "2026-05-17T09:00:00Z",
+            staleAt: "2026-05-17T09:00:15Z"
+        )
+
+        controller.updateTerminalMetadata(
+            metadata(title: "build", cwd: "/repo/app", activity: progress),
+            for: "pane_1"
+        )
+        expect(
+            controller.pane(paneID: "pane_1")?.activity == progress,
+            "test setup must project progress activity before pane rebuilds"
+        )
+
+        _ = controller.setAttention(.notable, for: "pane_1")
+        expect(
+            controller.pane(paneID: "pane_1")?.activity == progress,
+            "attention-only pane rebuild must preserve terminal activity"
+        )
+
+        guard let targetTabID = controller.openTerminalTab(workingDirectory: "/target") else {
+            fail("test setup must create a target tab")
+        }
+        expect(
+            controller.movePane(paneID: "pane_1", toTab: targetTabID, direction: .vertical),
+            "test setup must move pane into target tab"
+        )
+        expect(
+            controller.pane(paneID: "pane_1")?.activity == progress,
+            "pane move rebuild must preserve terminal activity"
+        )
+
+        switch controller.liftPaneToTab(paneID: "pane_1") {
+        case .lifted:
+            break
+        case .paneNotFound, .lastPane:
+            fail("test setup must lift moved pane into a new tab")
+        }
+        expect(
+            controller.pane(paneID: "pane_1")?.activity == progress,
+            "pane lift rebuild must preserve terminal activity"
         )
     }
 
@@ -1007,7 +1343,9 @@ private enum ShellRuntimeMetadataTests {
         title: String,
         cwd: String = "/Users/morris/Developer/Alan",
         processExited: Bool = false,
-        activeTaskState: ShellTabActiveTaskState? = nil
+        activeTaskState: ShellTabActiveTaskState? = nil,
+        activity: TerminalActivitySnapshot? = nil,
+        clearsActivity: Bool = false
     ) -> TerminalPaneMetadataSnapshot {
         TerminalPaneMetadataSnapshot(
             title: title,
@@ -1017,8 +1355,69 @@ private enum ShellRuntimeMetadataTests {
             processExited: processExited,
             lastCommandExitCode: nil,
             lastUpdatedAt: Date(timeIntervalSince1970: 3_000),
-            activeTaskState: activeTaskState
+            activeTaskState: activeTaskState,
+            activity: activity,
+            clearsActivity: clearsActivity
         )
+    }
+
+    private static func progressActivity(
+        percent: Int,
+        updatedAt: String,
+        staleAt: String
+    ) -> TerminalActivitySnapshot {
+        activity(
+            status: .progress,
+            source: .progress,
+            sourceLabel: "Progress",
+            stateLabel: "\(percent)%",
+            progress: .percent(percent),
+            updatedAt: updatedAt,
+            staleAt: staleAt
+        )
+    }
+
+    private static func activity(
+        status: TerminalActivityStatus,
+        source: TerminalActivitySourceKind,
+        sourceLabel: String,
+        stateLabel: String,
+        progress: TerminalActivityProgress? = nil,
+        updatedAt: String = "2026-05-17T09:00:00Z",
+        staleAt: String? = nil
+    ) -> TerminalActivitySnapshot {
+        TerminalActivitySnapshot(
+            source: .init(kind: source, label: sourceLabel),
+            status: status,
+            priority: priority(for: status),
+            progress: progress,
+            command: nil,
+            agent: nil,
+            display: TerminalActivityDisplay(
+                sourceLabel: sourceLabel,
+                stateLabel: stateLabel,
+                detailLabel: nil,
+                paneHint: nil
+            ),
+            freshness: TerminalActivityFreshness(
+                updatedAt: updatedAt,
+                staleAt: staleAt,
+                expiresAt: nil
+            )
+        )
+    }
+
+    private static func priority(for status: TerminalActivityStatus) -> TerminalActivityPriority {
+        switch status {
+        case .needsInput:
+            return .awaitingUser
+        case .failed, .exited:
+            return .notable
+        case .paused, .progress, .running, .bell:
+            return .active
+        case .idle, .done, .stale:
+            return .passive
+        }
     }
 
     private static func childExitMetadata(
@@ -1055,7 +1454,8 @@ private enum ShellRuntimeMetadataTests {
 
     private static func stateWithAlanBinding(
         windowID: String,
-        pendingYield: Bool
+        pendingYield: Bool,
+        activity: TerminalActivitySnapshot? = nil
     ) -> ShellStateSnapshot {
         let pane = ShellPane(
             paneID: "pane_1",
@@ -1078,6 +1478,7 @@ private enum ShellRuntimeMetadataTests {
                 lastCommandExitCode: nil
             ),
             viewport: nil,
+            activity: activity,
             alanBinding: ShellAlanBinding(
                 sessionID: "session_1",
                 runStatus: pendingYield ? "yielded" : "running",

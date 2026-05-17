@@ -32,13 +32,13 @@ draft default shortcut is `Option+Space`.
 ### Requirement: Quick Terminal Has One Global Instance
 The quick terminal SHALL have a deterministic relationship to Alan's spaces,
 tabs, focus, persistence, and runtime identity. Alan SHALL model the MVP as one
-global quick-terminal instance, not one instance per Alan Space or one instance
+global quick-terminal instance, not one instance per Alan space or one instance
 per macOS Space.
 
 #### Scenario: Existing quick terminal is reused globally
 - **WHEN** Alan creates or restores the quick terminal
 - **THEN** Alan reuses the single global quick-terminal runtime when it is live
-  rather than creating another quick terminal for the current Alan Space or
+  rather than creating another quick terminal for the current Alan space or
   macOS Space
 
 #### Scenario: Quick terminal appears in the current macOS context
@@ -61,7 +61,7 @@ per macOS Space.
   otherwise from the user's home directory
 
 #### Scenario: Quick terminal promotes into a Space
-- **WHEN** the user chooses `Open in Space` for a target Alan Space
+- **WHEN** the user chooses `Open in Space` for a target Alan space
 - **THEN** Alan moves the quick-terminal runtime into that Space as a normal tab,
   hides the Peak presentation, and clears the global quick-terminal slot
 

@@ -848,6 +848,9 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
                     ),
                     context: projectedContext,
                     viewport: viewport,
+                    activity: runtime.paneMetadata.clearsActivity
+                        ? nil
+                        : (runtime.paneMetadata.activity ?? current.activity),
                     alanBinding: projectedBinding
                 )
             }
@@ -915,6 +918,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
                 ),
                 context: projectedContext,
                 viewport: viewport,
+                activity: metadata.clearsActivity ? nil : (metadata.activity ?? current.activity),
                 alanBinding: projectedBinding
             )
         }
@@ -975,6 +979,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
                 attention: projectedBinding?.pendingYield == true ? .awaitingUser : current.attention,
                 context: projectedContext,
                 viewport: viewport,
+                activity: current.activity,
                 alanBinding: projectedBinding
             )
         }
@@ -1016,6 +1021,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
                 attention: current.attention,
                 context: projectedContext,
                 viewport: current.viewport,
+                activity: current.activity,
                 alanBinding: projectedBinding
             )
         }
@@ -1158,6 +1164,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
                 attention: pane.attention,
                 context: projectedContext,
                 viewport: pane.viewport,
+                activity: pane.activity,
                 alanBinding: pane.alanBinding
             )
         }

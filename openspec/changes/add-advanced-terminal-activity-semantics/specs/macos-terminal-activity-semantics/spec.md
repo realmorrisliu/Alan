@@ -275,6 +275,6 @@ an independent terminal runtime owner.
   path used by regular terminal panes
 
 #### Scenario: Quick terminal is promoted
-- **WHEN** the user promotes the quick terminal into an Alan Space
+- **WHEN** the user promotes the quick terminal into an Alan space
 - **THEN** Alan transfers ownership of the existing pane runtime into a normal
   tab in that Space and clears the quick-terminal slot

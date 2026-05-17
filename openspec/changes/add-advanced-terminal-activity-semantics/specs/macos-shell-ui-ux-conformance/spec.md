@@ -146,7 +146,7 @@ floating-card composition.
 
 #### Scenario: Quick terminal can become a normal tab
 - **WHEN** the user opens the Peak's `Open in Space` affordance
-- **THEN** Alan offers Alan Space destinations without duplicating sidebar
+- **THEN** Alan offers Alan space destinations without duplicating sidebar
   chrome inside the Peak
 
 #### Scenario: Quick terminal activity exists
