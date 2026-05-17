@@ -13,6 +13,11 @@ inheritance, and shell child-exit lifecycle changes.
 - **WHEN** terminal keyboard routing is changed
 - **THEN** verification covers app-reserved `Command` shortcuts and visible command-input keys so terminal input ownership does not break native macOS commands
 
+#### Scenario: AppKit responder-chain verification
+- **WHEN** terminal keyboard routing is changed
+- **THEN** verification covers `performKeyEquivalent`/`doCommand` redispatch for Control or Command key equivalents
+- **AND** verification covers Ghostty's special `Control-/` handling and focus-only split clicks that must not reach Vim mouse mode
+
 #### Scenario: New tab cwd verification
 - **WHEN** terminal tab creation is changed
 - **THEN** verification covers runtime cwd metadata, pane snapshot cwd fallback, explicit control-plane cwd, and default/home fallback

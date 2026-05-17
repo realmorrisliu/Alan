@@ -1,5 +1,6 @@
 #if os(macOS)
 import AppKit
+import Carbon
 #if canImport(QuartzCore)
 import QuartzCore
 #endif
@@ -11,6 +12,8 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
     private let canvasView = makeCanvasView()
     private let overlayPresenter = TerminalHostOverlayPresenter()
     private let surfaceController = AlanTerminalSurfaceController()
+    private let keyEquivalentAdapter = AlanTerminalKeyEquivalentAdapter()
+    private let focusClickAdapter = AlanTerminalFocusClickAdapter()
     private let runtimeReporter = TerminalHostRuntimeReporter()
     private let windowObserver = TerminalHostWindowObserver()
 
@@ -27,6 +30,7 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
     private var paneMetadata: TerminalPaneMetadataSnapshot = .placeholder
     private var lastReportedMetadata: TerminalPaneMetadataSnapshot?
     private var trackingArea: NSTrackingArea?
+    private var eventMonitor: Any?
     private var markedText = NSMutableAttributedString()
     private var keyTextAccumulator: [String]?
     private var previousPressureStage = 0
@@ -49,6 +53,7 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
     }
 
     deinit {
+        removeLocalEventMonitor()
         teardownRuntimeIfNeeded()
     }
 
@@ -109,6 +114,7 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
     override func resignFirstResponder() -> Bool {
         let result = super.resignFirstResponder()
         if result {
+            focusClickAdapter.resetSuppression()
             synchronizeLiveHost()
             publishRuntimeSnapshot()
         }
@@ -204,6 +210,7 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
         surfaceController.nativeScrollViewAdapter.attachCanvasView(canvasView)
         addSubview(nativeScrollView)
         overlayPresenter.install(in: self)
+        installLocalEventMonitor()
 
         NSLayoutConstraint.activate([
             nativeScrollView.topAnchor.constraint(equalTo: topAnchor),
@@ -212,6 +219,80 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
             nativeScrollView.bottomAnchor.constraint(equalTo: bottomAnchor),
 
         ])
+    }
+
+    private func installLocalEventMonitor() {
+        guard eventMonitor == nil else { return }
+        eventMonitor = NSEvent.addLocalMonitorForEvents(
+            matching: [.keyUp, .leftMouseDown]
+        ) { [weak self] event in
+            self?.localEventHandler(event) ?? event
+        }
+    }
+
+    private func removeLocalEventMonitor() {
+        if let eventMonitor {
+            NSEvent.removeMonitor(eventMonitor)
+            self.eventMonitor = nil
+        }
+    }
+
+    private func localEventHandler(_ event: NSEvent) -> NSEvent? {
+        switch event.type {
+        case .keyUp:
+            return localEventKeyUp(event)
+        case .leftMouseDown:
+            return localEventLeftMouseDown(event)
+        default:
+            return event
+        }
+    }
+
+    private func localEventKeyUp(_ event: NSEvent) -> NSEvent? {
+        guard event.modifierFlags.contains(.command) else { return event }
+        guard isFocused else { return event }
+        keyUp(with: event)
+        return nil
+    }
+
+    private func localEventLeftMouseDown(_ event: NSEvent) -> NSEvent? {
+        guard let window,
+              event.window != nil,
+              event.window == window,
+              let contentView = window.contentView
+        else {
+            return event
+        }
+
+        let location = contentView.convert(event.locationInWindow, from: nil)
+        let hitOwnsTerminal = terminalHostOwnsHitTestView(contentView.hitTest(location))
+        switch focusClickAdapter.routeLeftMouseDown(
+            hitOwnsTerminal: hitOwnsTerminal,
+            commandSurfaceVisible: false,
+            isFirstResponder: isFocused,
+            appIsActive: NSApp.isActive,
+            windowIsKey: window.isKeyWindow
+        ) {
+        case .ignored, .deliverToTerminal:
+            return event
+        case .focusOnly:
+            activateTerminalHostForMouseEvent()
+            return nil
+        case .focusAndDeliver:
+            activateTerminalHostForMouseEvent()
+            return event
+        }
+    }
+
+    private func terminalHostOwnsHitTestView(_ view: NSView?) -> Bool {
+        var current = view
+        while let candidate = current {
+            if candidate === self {
+                return true
+            }
+            current = candidate.superview
+        }
+        return false
     }
 
     func sendControlText(_ text: String) -> TerminalRuntimeDeliveryResult {
@@ -462,6 +543,9 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
     }
 
     override func mouseUp(with event: NSEvent) {
+        if focusClickAdapter.consumeSuppressedLeftMouseUp() {
+            return
+        }
         previousPressureStage = 0
         routePointer(terminalPointerInput(for: event, phase: .buttonUp, button: .primary))
         routePointer(
@@ -769,18 +853,29 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
 
         var keyEvent = ghosttyKeyEvent(for: event, action: GHOSTTY_ACTION_PRESS)
         var flags = ghostty_binding_flags_e(0)
-        let text = textForKeyEvent(event) ?? ""
+        let text = event.characters ?? ""
         let isBinding = text.withCString { cString in
             keyEvent.text = cString
             return surfaceController.keyIsBinding(keyEvent, flags: &flags)
         }
 
-        if isBinding {
+        switch keyEquivalentAdapter.routeKeyEquivalent(
+            terminalKeyEquivalentInput(for: event),
+            isFocused: isFocused,
+            isTerminalBinding: isBinding
+        ) {
+        case .sendOriginal:
             keyDown(with: event)
             return true
+        case .sendEquivalent(let equivalent):
+            keyDown(with: terminalKeyEquivalentEvent(equivalent: equivalent, basedOn: event) ?? event)
+            return true
+        case .deferToResponder:
+            return false
         }
-#endif
+#else
         return false
+#endif
     }
 
     override func keyDown(with event: NSEvent) {
@@ -806,6 +901,7 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
         }
 
         requestTerminalFocus()
+        keyEquivalentAdapter.clearPendingRedispatch()
         let inputRoutingDecision = surfaceController.inputAdapter.routeKey(terminalKeyInput(for: event))
 
         let translationModsGhostty =
@@ -859,8 +955,14 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
             inputRoutingDecision,
             hasMarkedText: markedTextBefore
         )
+        let keyboardIDBefore = !markedTextBefore && shouldInterpretText
+            ? AlanKeyboardLayout.currentID
+            : nil
         if shouldInterpretText {
             interpretKeyEvents([translationEvent])
+            if let keyboardIDBefore, keyboardIDBefore != AlanKeyboardLayout.currentID {
+                return
+            }
             syncPreedit(clearIfNeeded: markedTextBefore)
         }
         let composing = markedText.length > 0 || markedTextBefore
@@ -928,6 +1030,7 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
     override func flagsChanged(with event: NSEvent) {
 #if canImport(GhosttyKit)
         guard surfaceController.isSurfaceReady == true else { return super.flagsChanged(with: event) }
+        guard !hasMarkedText() else { return }
 
         let modifier: UInt32
         switch event.keyCode {
@@ -942,7 +1045,22 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
         let mods = modsFromEvent(event)
         var action = GHOSTTY_ACTION_RELEASE
         if mods.rawValue & modifier != 0 {
-            action = GHOSTTY_ACTION_PRESS
+            let sidePressed: Bool
+            switch event.keyCode {
+            case 0x3C:
+                sidePressed = event.modifierFlags.rawValue & UInt(NX_DEVICERSHIFTKEYMASK) != 0
+            case 0x3E:
+                sidePressed = event.modifierFlags.rawValue & UInt(NX_DEVICERCTLKEYMASK) != 0
+            case 0x3D:
+                sidePressed = event.modifierFlags.rawValue & UInt(NX_DEVICERALTKEYMASK) != 0
+            case 0x36:
+                sidePressed = event.modifierFlags.rawValue & UInt(NX_DEVICERCMDKEYMASK) != 0
+            default:
+                sidePressed = true
+            }
+            if sidePressed {
+                action = GHOSTTY_ACTION_PRESS
+            }
         }
 
         let keyEvent = ghosttyKeyEvent(for: event, action: action)
@@ -968,18 +1086,35 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
     }
 
     private func modsFromEvent(_ event: NSEvent) -> ghostty_input_mods_e {
-        var mods = GHOSTTY_MODS_NONE.rawValue
-        if event.modifierFlags.contains(.shift) { mods |= GHOSTTY_MODS_SHIFT.rawValue }
-        if event.modifierFlags.contains(.control) { mods |= GHOSTTY_MODS_CTRL.rawValue }
-        if event.modifierFlags.contains(.option) { mods |= GHOSTTY_MODS_ALT.rawValue }
-        if event.modifierFlags.contains(.command) { mods |= GHOSTTY_MODS_SUPER.rawValue }
-        return ghostty_input_mods_e(rawValue: mods)
+        ghosttyMods(from: event.modifierFlags)
     }
 
     private func consumedModsFromFlags(_ flags: NSEvent.ModifierFlags) -> ghostty_input_mods_e {
+        ghosttyMods(from: flags)
+    }
+
+    private func ghosttyMods(from flags: NSEvent.ModifierFlags) -> ghostty_input_mods_e {
         var mods = GHOSTTY_MODS_NONE.rawValue
         if flags.contains(.shift) { mods |= GHOSTTY_MODS_SHIFT.rawValue }
+        if flags.contains(.control) { mods |= GHOSTTY_MODS_CTRL.rawValue }
         if flags.contains(.option) { mods |= GHOSTTY_MODS_ALT.rawValue }
+        if flags.contains(.command) { mods |= GHOSTTY_MODS_SUPER.rawValue }
+        if flags.contains(.capsLock) { mods |= GHOSTTY_MODS_CAPS.rawValue }
+
+        let rawFlags = flags.rawValue
+        if rawFlags & UInt(NX_DEVICERSHIFTKEYMASK) != 0 {
+            mods |= GHOSTTY_MODS_SHIFT_RIGHT.rawValue
+        }
+        if rawFlags & UInt(NX_DEVICERCTLKEYMASK) != 0 {
+            mods |= GHOSTTY_MODS_CTRL_RIGHT.rawValue
+        }
+        if rawFlags & UInt(NX_DEVICERALTKEYMASK) != 0 {
+            mods |= GHOSTTY_MODS_ALT_RIGHT.rawValue
+        }
+        if rawFlags & UInt(NX_DEVICERCMDKEYMASK) != 0 {
+            mods |= GHOSTTY_MODS_SUPER_RIGHT.rawValue
+        }
+
         return ghostty_input_mods_e(rawValue: mods)
     }
 
@@ -1173,6 +1308,35 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
         return event.charactersIgnoringModifiers?.lowercased() == "q"
     }
 
+    private func terminalKeyEquivalentInput(for event: NSEvent) -> AlanTerminalKeyEquivalentInput {
+        AlanTerminalKeyEquivalentInput(
+            characters: event.characters,
+            charactersIgnoringModifiers: event.charactersIgnoringModifiers,
+            modifiers: terminalKeyModifiers(from: event.modifierFlags),
+            keyCode: event.keyCode,
+            timestamp: event.timestamp,
+            isRepeat: event.isARepeat
+        )
+    }
+
+    private func terminalKeyEquivalentEvent(
+        equivalent: String,
+        basedOn event: NSEvent
+    ) -> NSEvent? {
+        NSEvent.keyEvent(
+            with: .keyDown,
+            location: event.locationInWindow,
+            modifierFlags: event.modifierFlags,
+            timestamp: event.timestamp,
+            windowNumber: event.windowNumber,
+            context: nil,
+            characters: equivalent,
+            charactersIgnoringModifiers: equivalent,
+            isARepeat: event.isARepeat,
+            keyCode: event.keyCode
+        )
+    }
+
     private func syncPreedit(clearIfNeeded: Bool = true) {
 #if canImport(GhosttyKit)
         if markedText.length > 0 {
@@ -1217,7 +1381,15 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
         insertText(insertString, replacementRange: NSRange(location: NSNotFound, length: 0))
     }
 
-    override func doCommand(by selector: Selector) {}
+    override func doCommand(by selector: Selector) {
+#if canImport(GhosttyKit)
+        if let current = NSApp.currentEvent,
+           keyEquivalentAdapter.shouldRedispatchDoCommand(currentEventTimestamp: current.timestamp)
+        {
+            NSApp.sendEvent(current)
+        }
+#endif
+    }
 
     func setMarkedText(_ string: Any, selectedRange: NSRange, replacementRange: NSRange) {
         switch string {
@@ -1322,6 +1494,19 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
         if refocusTerminal {
             requestTerminalFocus()
         }
+    }
+}
+
+private enum AlanKeyboardLayout {
+    static var currentID: String? {
+        guard let source = TISCopyCurrentKeyboardInputSource()?.takeRetainedValue(),
+              let sourceIDPointer = TISGetInputSourceProperty(source, kTISPropertyInputSourceID)
+        else {
+            return nil
+        }
+
+        let sourceID = unsafeBitCast(sourceIDPointer, to: CFString.self)
+        return sourceID as String
     }
 }
 

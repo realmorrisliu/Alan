@@ -21,6 +21,8 @@ private enum TerminalSurfaceControllerTests {
         verifiesNativeScrollViewForwardsMouseEvents()
         verifiesInputCommandRouting()
         verifiesTUIKeyboardRoutingKeepsTerminalOwnedKeysInTerminal()
+        verifiesGhosttyKeyEquivalentRedispatchContract()
+        verifiesFocusOnlyClickSuppressionPolicy()
         verifiesTextInputInterpretationPolicyPreservesIMEMarkedText()
         verifiesPointerRoutingFollowsTerminalMouseModes()
         verifiesPointerButtonMappingMatchesGhostty()
@@ -277,6 +279,143 @@ private enum TerminalSurfaceControllerTests {
             )
         )
         expect(commandT == .newTerminalTab, "command-t must remain a native workspace shortcut")
+    }
+
+    private static func verifiesGhosttyKeyEquivalentRedispatchContract() {
+        let adapter = AlanTerminalKeyEquivalentAdapter()
+
+        let terminalBinding = AlanTerminalKeyEquivalentInput(
+            characters: "\u{1B}",
+            charactersIgnoringModifiers: "\u{1B}",
+            modifiers: [],
+            keyCode: 53,
+            timestamp: 10,
+            isRepeat: false
+        )
+        expect(
+            adapter.routeKeyEquivalent(
+                terminalBinding,
+                isFocused: true,
+                isTerminalBinding: true
+            ) == .sendOriginal,
+            "Ghostty terminal bindings must be sent immediately through keyDown"
+        )
+
+        let controlSlash = AlanTerminalKeyEquivalentInput(
+            characters: "\u{1F}",
+            charactersIgnoringModifiers: "/",
+            modifiers: [.control],
+            keyCode: 44,
+            timestamp: 11,
+            isRepeat: false
+        )
+        expect(
+            adapter.routeKeyEquivalent(
+                controlSlash,
+                isFocused: true,
+                isTerminalBinding: false
+            ) == .sendEquivalent("_"),
+            "control-slash must be normalized to control-underscore like Ghostty"
+        )
+
+        let commandPeriod = AlanTerminalKeyEquivalentInput(
+            characters: ".",
+            charactersIgnoringModifiers: ".",
+            modifiers: [.command],
+            keyCode: 47,
+            timestamp: 12,
+            isRepeat: false
+        )
+        expect(
+            adapter.routeKeyEquivalent(
+                commandPeriod,
+                isFocused: true,
+                isTerminalBinding: false
+            ) == .deferToResponder,
+            "unhandled command/control equivalents must first defer to AppKit"
+        )
+        expect(
+            adapter.shouldRedispatchDoCommand(currentEventTimestamp: 12),
+            "doCommand must redispatch the same key-equivalent event"
+        )
+        expect(
+            adapter.routeKeyEquivalent(
+                commandPeriod,
+                isFocused: true,
+                isTerminalBinding: false
+            ) == .sendEquivalent("."),
+            "redispatched command/control equivalents must be delivered once to the terminal"
+        )
+        expect(
+            !adapter.shouldRedispatchDoCommand(currentEventTimestamp: 12),
+            "redispatch state must clear after the equivalent is delivered"
+        )
+
+        let syntheticCommand = AlanTerminalKeyEquivalentInput(
+            characters: ".",
+            charactersIgnoringModifiers: ".",
+            modifiers: [.command],
+            keyCode: 47,
+            timestamp: 0,
+            isRepeat: false
+        )
+        expect(
+            adapter.routeKeyEquivalent(
+                syntheticCommand,
+                isFocused: true,
+                isTerminalBinding: false
+            ) == .deferToResponder,
+            "synthetic zero-timestamp AppKit events must not enter the terminal redispatch loop"
+        )
+        expect(
+            !adapter.shouldRedispatchDoCommand(currentEventTimestamp: 0),
+            "zero-timestamp events must not arm doCommand redispatch"
+        )
+    }
+
+    private static func verifiesFocusOnlyClickSuppressionPolicy() {
+        let adapter = AlanTerminalFocusClickAdapter()
+
+        expect(
+            adapter.routeLeftMouseDown(
+                hitOwnsTerminal: true,
+                commandSurfaceVisible: false,
+                isFirstResponder: false,
+                appIsActive: true,
+                windowIsKey: true
+            ) == .focusOnly,
+            "active-window clicks into an unfocused terminal split must only transfer focus"
+        )
+        expect(
+            adapter.consumeSuppressedLeftMouseUp(),
+            "focus-only mouse down must suppress the matching left mouse up"
+        )
+        expect(
+            !adapter.consumeSuppressedLeftMouseUp(),
+            "left mouse-up suppression must be one-shot"
+        )
+
+        expect(
+            adapter.routeLeftMouseDown(
+                hitOwnsTerminal: true,
+                commandSurfaceVisible: false,
+                isFirstResponder: true,
+                appIsActive: true,
+                windowIsKey: true
+            ) == .deliverToTerminal,
+            "clicks in the focused terminal must still reach Vim mouse mode"
+        )
+
+        expect(
+            adapter.routeLeftMouseDown(
+                hitOwnsTerminal: true,
+                commandSurfaceVisible: false,
+                isFirstResponder: false,
+                appIsActive: false,
+                windowIsKey: false
+            ) == .focusAndDeliver,
+            "inactive-window activation clicks must continue through AppKit"
+        )
     }
 
     private static func verifiesTextInputInterpretationPolicyPreservesIMEMarkedText() {

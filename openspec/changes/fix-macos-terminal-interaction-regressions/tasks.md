@@ -13,6 +13,10 @@
 - [x] 2.3 修复 IME marked text 场景：组合输入态下 Backspace/Ctrl-H 先进入 `interpretKeyEvents` 更新 preedit，并阻止组合态 control 字符删除已提交 terminal 内容。
 - [x] 2.4 保留 command input 可见时的 submit/dismiss/toggle 行为，以及 `Command-T`、`Command-W` 等明确 native workspace shortcut。
 - [x] 2.5 为 fake terminal surface 或 focused shell contract 增加键盘输入验证，覆盖 Vim/TUI 关键按键、IME composing Backspace 和 native command shortcut 非回归。
+- [x] 2.6 按 Ghostty macOS `SurfaceView_AppKit` 补齐 `performKeyEquivalent`/`doCommand` timestamp redispatch，覆盖 `Control-/`、`Control-Return`、普通 Control/Command key equivalent 和 terminal binding。
+- [x] 2.7 补齐 focused terminal 的 local AppKit event monitor：Command keyUp release、active-window focus-only left click suppression、matching mouseUp suppression。
+- [x] 2.8 补齐 modifier event 语义：IME marked text 中不转发 `flagsChanged`，正常路径保留 caps/right-side modifier bits。
+- [x] 2.9 增加 focused tests 或 shell contract，证明 Ghostty-style key-equivalent state machine、focus-only click suppression 和 modifier event 语义不会回退。
 
 ## 3. New Tab Cwd Inheritance
 

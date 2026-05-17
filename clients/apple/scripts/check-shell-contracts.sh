@@ -970,6 +970,26 @@ require_pattern \
 
 require_pattern \
     "clients/apple/alan-macos/TerminalHostView.swift" \
+    "override func performKeyEquivalent\\(with event: NSEvent\\)" \
+    "terminal key equivalents must stay behind the AppKit terminal host boundary"
+
+require_pattern \
+    "clients/apple/alan-macos/TerminalHostView.swift" \
+    "override func doCommand\\(by selector: Selector\\)" \
+    "terminal key-equivalent doCommand redispatch must stay in the AppKit terminal host"
+
+require_pattern \
+    "clients/apple/alan-macos/TerminalHostView.swift" \
+    "NSEvent\\.addLocalMonitorForEvents" \
+    "terminal host must own Ghostty-style local keyUp and focus-click event monitoring"
+
+require_pattern \
+    "clients/apple/alan-macos/TerminalHostView.swift" \
+    "consumeSuppressedLeftMouseUp" \
+    "terminal focus-only split clicks must suppress the matching mouse-up"
+
+require_pattern \
+    "clients/apple/alan-macos/TerminalHostView.swift" \
     "func insertText\\(_ string: Any, replacementRange: NSRange\\)" \
     "terminal IME text insertion must remain owned by the AppKit terminal host"
 

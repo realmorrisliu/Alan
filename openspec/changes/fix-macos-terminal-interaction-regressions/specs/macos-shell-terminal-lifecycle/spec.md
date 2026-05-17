@@ -29,6 +29,30 @@ app-reserved `Command` shortcut owns that key.
 - **WHEN** alan's command input is visible while a terminal pane is focused
 - **THEN** command-input keys such as submit, dismiss, and command-input toggle are handled by that surface before terminal delivery
 
+#### Scenario: AppKit key equivalent is re-dispatched to terminal
+- **WHEN** AppKit routes a focused terminal Control or Command key through `performKeyEquivalent`
+- **AND** the key is not a visible command-surface key or explicit app/workspace shortcut
+- **THEN** alan preserves Ghostty's key-equivalent state machine and allows AppKit to continue to `doCommand`
+- **AND** `doCommand` re-dispatches the same event back through the terminal host
+- **AND** the re-dispatched event is delivered to the terminal runtime exactly once
+
+#### Scenario: Control slash is encoded like Ghostty
+- **WHEN** a focused terminal pane receives `Control-/`
+- **THEN** alan converts the key-equivalent text to `Control-_` before terminal delivery
+- **AND** the event does not become an AppKit beep or an unresolved native command
+
+#### Scenario: Focus-only split click is not injected into Vim
+- **WHEN** the app and window are already active
+- **AND** the user clicks a terminal split pane that is selected in the shell model but is not the AppKit first responder
+- **THEN** alan focuses that terminal host and consumes the focus-transfer mouse down
+- **AND** the matching left mouse up is suppressed
+- **AND** Vim mouse mode does not receive a stray click from the focus transfer
+
+#### Scenario: Modifier changes follow Ghostty semantics
+- **WHEN** modifier keys change while IME marked text is active
+- **THEN** alan does not forward the modifier transition to the terminal runtime
+- **AND** outside IME composition alan preserves caps-lock and right-side modifier bits when building Ghostty key events
+
 ### Requirement: Shell child exit drives pane lifecycle
 The macOS shell host SHALL treat terminal child-process exit as a lifecycle
 event for the owning pane rather than as a request to clear, refresh, or

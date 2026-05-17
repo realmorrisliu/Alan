@@ -339,6 +339,132 @@ final class AlanTerminalInputAdapter {
 
 }
 
+struct AlanTerminalKeyEquivalentInput: Equatable {
+    let characters: String?
+    let charactersIgnoringModifiers: String?
+    let modifiers: AlanTerminalKeyModifiers
+    let keyCode: UInt16
+    let timestamp: TimeInterval
+    let isRepeat: Bool
+}
+
+enum AlanTerminalKeyEquivalentRoutingDecision: Equatable {
+    case sendOriginal
+    case sendEquivalent(String)
+    case deferToResponder
+}
+
+@MainActor
+final class AlanTerminalKeyEquivalentAdapter {
+    private var lastPerformKeyEvent: TimeInterval?
+
+    func routeKeyEquivalent(
+        _ input: AlanTerminalKeyEquivalentInput,
+        isFocused: Bool,
+        isTerminalBinding: Bool
+    ) -> AlanTerminalKeyEquivalentRoutingDecision {
+        guard isFocused else {
+            clearPendingRedispatch()
+            return .deferToResponder
+        }
+
+        if isTerminalBinding {
+            clearPendingRedispatch()
+            return .sendOriginal
+        }
+
+        let equivalent: String
+        switch input.charactersIgnoringModifiers {
+        case "\r":
+            guard input.modifiers.contains(.control) else { return .deferToResponder }
+            equivalent = "\r"
+        case "/":
+            guard input.modifiers.contains(.control),
+                  input.modifiers.isDisjoint(with: [.shift, .option, .command])
+            else {
+                return .deferToResponder
+            }
+            equivalent = "_"
+        default:
+            guard input.timestamp != 0 else { return .deferToResponder }
+
+            guard input.modifiers.contains(.command) || input.modifiers.contains(.control) else {
+                clearPendingRedispatch()
+                return .deferToResponder
+            }
+
+            if let lastPerformKeyEvent {
+                self.lastPerformKeyEvent = nil
+                if lastPerformKeyEvent == input.timestamp {
+                    return .sendEquivalent(input.characters ?? "")
+                }
+            }
+
+            lastPerformKeyEvent = input.timestamp
+            return .deferToResponder
+        }
+
+        clearPendingRedispatch()
+        return .sendEquivalent(equivalent)
+    }
+
+    func shouldRedispatchDoCommand(currentEventTimestamp: TimeInterval) -> Bool {
+        guard currentEventTimestamp != 0 else { return false }
+        return lastPerformKeyEvent == currentEventTimestamp
+    }
+
+    func clearPendingRedispatch() {
+        lastPerformKeyEvent = nil
+    }
+}
+
+enum AlanTerminalLeftMouseDownRoutingDecision: Equatable {
+    case ignored
+    case deliverToTerminal
+    case focusOnly
+    case focusAndDeliver
+}
+
+@MainActor
+final class AlanTerminalFocusClickAdapter {
+    private var suppressNextLeftMouseUp = false
+
+    func routeLeftMouseDown(
+        hitOwnsTerminal: Bool,
+        commandSurfaceVisible: Bool,
+        isFirstResponder: Bool,
+        appIsActive: Bool,
+        windowIsKey: Bool
+    ) -> AlanTerminalLeftMouseDownRoutingDecision {
+        suppressNextLeftMouseUp = false
+
+        guard hitOwnsTerminal, !commandSurfaceVisible else {
+            return .ignored
+        }
+
+        guard !isFirstResponder else {
+            return .deliverToTerminal
+        }
+
+        if appIsActive && windowIsKey {
+            suppressNextLeftMouseUp = true
+            return .focusOnly
+        }
+
+        return .focusAndDeliver
+    }
+
+    func consumeSuppressedLeftMouseUp() -> Bool {
+        guard suppressNextLeftMouseUp else { return false }
+        suppressNextLeftMouseUp = false
+        return true
+    }
+
+    func resetSuppression() {
+        suppressNextLeftMouseUp = false
+    }
+}
+
 enum AlanTerminalPointerPhase: Equatable {
     case entered
     case moved
