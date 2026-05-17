@@ -928,6 +928,26 @@ require_pattern \
     "terminalRuntimeRegistry\\.requestFocus\\(for: paneID\\)" \
     "committed sidebar selection must request terminal focus through the runtime registry"
 
+require_pattern \
+    "clients/apple/alan-macos/Views/Shell/ShellSidebarView.swift" \
+    "activityFreshnessNow" \
+    "sidebar activity freshness must be driven by state that can invalidate idle rows"
+
+require_pattern \
+    "clients/apple/alan-macos/Views/Shell/ShellSidebarView.swift" \
+    "task\\(id: activityFreshnessRefreshID\\)" \
+    "sidebar activity freshness must schedule refreshes for stale/expires deadlines"
+
+require_pattern \
+    "clients/apple/alan-macos/Views/Shell/ShellSidebarView.swift" \
+    "onFocusSplitPane: \\{ paneID in" \
+    "sidebar split indicators must preserve direct clicked-pane targeting"
+
+require_pattern \
+    "clients/apple/alan-macos/Views/Shell/ShellSidebarView.swift" \
+    "segmentButton\\(paneID: paneID\\)" \
+    "two-pane sidebar split indicators must render pane-specific actions"
+
 reject_pattern \
     "clients/apple/alan-macos/ShellHostController.swift" \
     "selectedSpaceID = spaceID" \

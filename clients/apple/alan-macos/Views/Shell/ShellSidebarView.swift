@@ -15,6 +15,7 @@ struct ShellSidebarView: View {
     @State private var hoveredSpaceID: String?
     @State private var isCommandLauncherHovered = false
     @State private var tabListScrollOffsetY: CGFloat = 0
+    @State private var activityFreshnessNow = Date()
 
     init(
         host: ShellHostController,
@@ -46,6 +47,9 @@ struct ShellSidebarView: View {
         .scrollDisabled(isTabListScrollDisabled)
         .onChange(of: sourceSpaceID) { _, _ in
             tabListScrollOffsetY = 0
+        }
+        .task(id: activityFreshnessRefreshID) {
+            await scheduleActivityFreshnessRefresh()
         }
     }
 
@@ -430,6 +434,53 @@ struct ShellSidebarView: View {
         "ShellSidebarTabListScroll-\(spaceID ?? "none")"
     }
 
+    private var activityFreshnessRefreshID: String {
+        nextActivityFreshnessExpiry(after: activityFreshnessNow)
+            .map { "\($0.timeIntervalSince1970)" } ?? "none"
+    }
+
+    private func scheduleActivityFreshnessRefresh() async {
+        guard let deadline = nextActivityFreshnessExpiry(after: activityFreshnessNow) else {
+            return
+        }
+
+        let delay = min(max(deadline.timeIntervalSinceNow, 0), 86_400)
+        if delay > 0 {
+            let nanoseconds = UInt64(delay * 1_000_000_000)
+            try? await Task.sleep(nanoseconds: nanoseconds)
+        }
+
+        guard !Task.isCancelled else { return }
+        await MainActor.run {
+            activityFreshnessNow = Date()
+        }
+    }
+
+    private func nextActivityFreshnessExpiry(after now: Date) -> Date? {
+        host.shellState.panes.compactMap { pane in
+            guard let activity = pane.activity else { return nil }
+            return nextActivityFreshnessExpiry(for: activity, after: now)
+        }
+        .min()
+    }
+
+    private func nextActivityFreshnessExpiry(
+        for activity: TerminalActivitySnapshot,
+        after now: Date
+    ) -> Date? {
+        [
+            activity.freshness.staleAt,
+            activity.freshness.expiresAt,
+        ]
+        .compactMap { value in
+            value.flatMap(Self.activityFreshnessFormatter.date(from:))
+        }
+        .filter { $0 > now }
+        .min()
+    }
+
+    private static let activityFreshnessFormatter = ISO8601DateFormatter()
+
     private func space(for spaceID: String?) -> ShellSpace? {
         guard let spaceID else { return host.selectedSpace }
         return host.spaces.first { $0.spaceID == spaceID }
@@ -460,7 +511,7 @@ struct ShellSidebarView: View {
             panes: host.shellState.panes,
             focusedPaneID: host.shellState.focusedPaneID,
             focusedTabID: host.selectedTab?.tabID,
-            now: Date()
+            now: activityFreshnessNow
         )
 
         ShellTabSidebarRow(
@@ -475,6 +526,9 @@ struct ShellSidebarView: View {
             isSelected: isSelected,
             isHovered: isHovered,
             showsCloseAffordance: isHovered,
+            onFocusSplitPane: { paneID in
+                focusPane(paneID, in: tab)
+            },
             onFocusNextSplitPane: { summary in
                 focusNextSplitPane(in: tab, summary: summary)
             },
@@ -903,6 +957,7 @@ private struct ShellTabSidebarRow: View {
     let isSelected: Bool
     let isHovered: Bool
     let showsCloseAffordance: Bool
+    let onFocusSplitPane: (String) -> Void
     let onFocusNextSplitPane: (ShellTabSplitSummary) -> Void
     let onClose: () -> Void
 
@@ -1020,6 +1075,7 @@ private struct ShellTabSidebarRow: View {
         if let splitSummary {
             ShellSplitTopologyIndicator(
                 summary: splitSummary,
+                onFocusSplitPane: onFocusSplitPane,
                 onFocusNextSplitPane: onFocusNextSplitPane
             )
         } else {
@@ -1112,6 +1168,7 @@ private struct ShellSidebarActivityProgressRail: View {
 
 private struct ShellSplitTopologyIndicator: View {
     let summary: ShellTabSplitSummary
+    let onFocusSplitPane: (String) -> Void
     let onFocusNextSplitPane: (ShellTabSplitSummary) -> Void
 
     var body: some View {
@@ -1123,30 +1180,25 @@ private struct ShellSplitTopologyIndicator: View {
     }
 
     private var twoPaneIndicator: some View {
-        let panes = Array(summary.paneIDs.prefix(2).enumerated())
+        let paneIDs = Array(summary.paneIDs.prefix(2))
         let isVertical = summary.direction == .vertical
 
-        return Button {
-            onFocusNextSplitPane(summary)
-        } label: {
-            Group {
-                if isVertical {
-                    HStack(spacing: 2) {
-                        ForEach(panes, id: \.element) { _, paneID in
-                            segmentView(paneID: paneID)
-                        }
+        return Group {
+            if isVertical {
+                HStack(spacing: 2) {
+                    ForEach(paneIDs, id: \.self) { paneID in
+                        segmentButton(paneID: paneID)
                     }
-                } else {
-                    VStack(spacing: 2) {
-                        ForEach(panes, id: \.element) { _, paneID in
-                            segmentView(paneID: paneID)
-                        }
+                }
+            } else {
+                VStack(spacing: 2) {
+                    ForEach(paneIDs, id: \.self) { paneID in
+                        segmentButton(paneID: paneID)
                     }
                 }
             }
-            .frame(width: 22, height: 16)
         }
-        .buttonStyle(.plain)
+        .frame(width: 22, height: 16)
         .help("Focus split pane")
         .accessibilityLabel("Split tab, \(summary.paneCount) panes")
     }
@@ -1171,6 +1223,19 @@ private struct ShellSplitTopologyIndicator: View {
         .buttonStyle(.plain)
         .help("Focus next split pane")
         .accessibilityLabel("Split tab, \(summary.paneCount) panes")
+    }
+
+    private func segmentButton(paneID: String) -> some View {
+        Button {
+            onFocusSplitPane(paneID)
+        } label: {
+            segmentView(paneID: paneID)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(summary.focusedPaneID == paneID ? "Focused split pane" : "Focus split pane")
+        .accessibilityLabel(summary.focusedPaneID == paneID ? "Focused split pane" : "Focus split pane")
     }
 
     private func segmentView(paneID: String) -> some View {
