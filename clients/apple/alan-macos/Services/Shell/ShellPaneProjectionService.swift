@@ -21,13 +21,15 @@ struct ShellPaneProjectionService {
         processExited: Bool,
         binding: ShellAlanBinding?,
         surfaceState: AlanTerminalSurfaceStateSnapshot? = nil,
-        activity: TerminalActivitySnapshot? = nil
+        activity: TerminalActivitySnapshot? = nil,
+        now: Date = .now
     ) -> ShellAttentionState {
         if binding?.pendingYield == true || processExited || surfaceState?.childExited == true {
             return .awaitingUser
         }
 
-        if let activityAttention = activity.flatMap(shellActivityAttention(for:)),
+        let freshActivity = activity?.isFresh(at: now) == true ? activity : nil
+        if let activityAttention = freshActivity.flatMap(shellActivityAttention(for:)),
            Self.attentionRank(for: activityAttention) > Self.attentionRank(for: metadataAttention)
         {
             return activityAttention

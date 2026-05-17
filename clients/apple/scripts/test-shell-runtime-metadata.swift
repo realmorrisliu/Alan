@@ -43,6 +43,7 @@ private enum ShellRuntimeMetadataTests {
         verifiesFocusedCommandFailureDemotesFromSidebarProjection()
         verifiesCommandFailureAcknowledgementSticksAfterFocus()
         verifiesActivityFreshnessPolicies()
+        verifiesStaleActivityDoesNotPromotePaneAttention()
         verifiesPaneTitleActivityAccessoryLabel()
         verifiesActivityNotificationPolicyIsLowNoise()
         verifiesControllerRoutesActivityNotificationsOnce()
@@ -1209,6 +1210,37 @@ private enum ShellRuntimeMetadataTests {
             needsInput.isFresh(at: now.addingTimeInterval(3_600)),
             "needs-input activity must persist until replaced"
         )
+    }
+
+    private static func verifiesStaleActivityDoesNotPromotePaneAttention() {
+        let projection = ShellPaneProjectionService()
+        let now = Date(timeIntervalSince1970: 1_779_008_400)
+        let failure = activity(
+            status: .failed,
+            source: .command,
+            sourceLabel: "Shell",
+            stateLabel: "Command failed 2",
+            updatedAt: "2026-05-17T09:00:00Z",
+            staleAt: "2026-05-17T09:00:30Z"
+        )
+
+        let freshAttention = projection.projectedAttention(
+            metadataAttention: .idle,
+            processExited: false,
+            binding: nil,
+            activity: failure,
+            now: now.addingTimeInterval(10)
+        )
+        let staleAttention = projection.projectedAttention(
+            metadataAttention: .idle,
+            processExited: false,
+            binding: nil,
+            activity: failure,
+            now: now.addingTimeInterval(31)
+        )
+
+        expect(freshAttention == .notable, "fresh failed activity may promote pane attention")
+        expect(staleAttention == .idle, "stale failed activity must not keep pane attention notable")
     }
 
     private static func verifiesPaneTitleActivityAccessoryLabel() {
