@@ -314,6 +314,16 @@ require_pattern \
     "pane.send_text must use the registry delivery result"
 
 require_pattern \
+    "clients/apple/alan-macos/GhosttyLiveHost.swift" \
+    "let isCommandSubmission = isCommandSubmissionText\\(text\\)" \
+    "text-delivered terminal commands must start foreground command duration tracking"
+
+require_pattern \
+    "clients/apple/alan-macos/GhosttyLiveHost.swift" \
+    "private func isCommandSubmissionText\\(_ text: String\\)" \
+    "foreground command detection must include pasted/control text submissions"
+
+require_pattern \
     "clients/apple/alan-macos/TerminalPaneView.swift" \
     "\\.id\\(pane\\.paneID\\)" \
     "terminal host views must be keyed by stable pane identity"

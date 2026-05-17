@@ -124,6 +124,10 @@ final class AlanGhosttyLiveHost: NSObject {
 
     func sendText(_ text: String) {
         guard let surface, !text.isEmpty else { return }
+        let isCommandSubmission = isCommandSubmissionText(text)
+        if isCommandSubmission {
+            markForegroundCommandStarted()
+        }
         text.withCString { cString in
             ghostty_surface_text(surface, cString, UInt(strlen(cString)))
         }
@@ -131,7 +135,7 @@ final class AlanGhosttyLiveHost: NSObject {
         updateMetadata(
             summary: "input committed",
             attention: .active,
-            activeTaskState: text.contains("\n") || text.contains("\r") ? .foregroundCommand : nil
+            activeTaskState: isCommandSubmission ? .foregroundCommand : nil
         )
     }
 
@@ -930,6 +934,10 @@ final class AlanGhosttyLiveHost: NSObject {
     private func isCommandSubmissionKey(_ keyEvent: ghostty_input_key_s) -> Bool {
         keyEvent.action == GHOSTTY_ACTION_PRESS
             && (keyEvent.keycode == KeyCode.returnKey || keyEvent.keycode == KeyCode.keypadEnter)
+    }
+
+    private func isCommandSubmissionText(_ text: String) -> Bool {
+        text.contains("\n") || text.contains("\r")
     }
 
     private func markForegroundCommandStarted() {
