@@ -8,7 +8,7 @@
   progress, command, Alan, and CLI agent states.
 - [x] 1.3 Finalize sidebar row projection details for title, activity-or-context
   fallback, progress rail, leading topology/kind slot, and hover close overlay.
-- [ ] 1.4 Encode default notification policy for focused, visible, background,
+- [x] 1.4 Encode default notification policy for focused, visible, background,
   unfocused, successful, failed, and user-input-required activity.
 - [ ] 1.5 Document Codex as the first CLI coding-agent adapter target unless
   implementation evidence shows another adapter is lower risk.
@@ -65,7 +65,7 @@
   leading slot.
 - [ ] 5.5 Project pane title-bar accessories from pane-local detail: activity,
   worktree/cwd, branch, process, and non-duplicated agent/Alan state.
-- [ ] 5.6 Add low-noise notification routing for user-input-required, error, and
+- [x] 5.6 Add low-noise notification routing for user-input-required, error, and
   long-command-complete events according to the task 1.4 policy.
 - [x] 5.7 Add accessibility labels or values for activity state on pane and tab
   affordances.

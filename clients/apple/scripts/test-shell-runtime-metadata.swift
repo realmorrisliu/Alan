@@ -44,6 +44,8 @@ private enum ShellRuntimeMetadataTests {
         verifiesCommandFailureAcknowledgementSticksAfterFocus()
         verifiesActivityFreshnessPolicies()
         verifiesPaneTitleActivityAccessoryLabel()
+        verifiesActivityNotificationPolicyIsLowNoise()
+        verifiesControllerRoutesActivityNotificationsOnce()
         verifiesTerminalChildExitClosesSplitPane()
         verifiesTerminalChildExitClosesSinglePaneTab()
         verifiesTerminalChildExitCanLeaveEmptyFocusedSpace()
@@ -1225,6 +1227,167 @@ private enum ShellRuntimeMetadataTests {
         )
     }
 
+    private static func verifiesActivityNotificationPolicyIsLowNoise() {
+        let now = Date(timeIntervalSince1970: 1_779_008_400)
+        let testPane = pane(
+            context: context(
+                processState: "running",
+                rendererHealth: "ready",
+                surfaceReadiness: "ready",
+                lastCommandExitCode: nil
+            ),
+            viewport: nil,
+            attention: .idle
+        )
+        let testTab = ShellTab(
+            tabID: "tab_1",
+            kind: .terminal,
+            title: "alan",
+            paneTree: ShellPaneTreeNode(
+                nodeID: "node_pane_1",
+                kind: .pane,
+                direction: nil,
+                paneID: "pane_1",
+                children: nil
+            )
+        )
+
+        let focusedProgress = TerminalActivitySnapshot.progressActivity(percent: 42, now: now)
+        expect(
+            shellActivityNotificationRoute(
+                for: focusedProgress,
+                pane: testPane,
+                tab: testTab,
+                visibility: .focusedVisible,
+                now: now
+            ) == nil,
+            "focused progress must stay visual-only"
+        )
+
+        let agentNeedsInput = activity(
+            status: .needsInput,
+            source: .codex,
+            sourceLabel: "Codex",
+            stateLabel: "Input needed",
+            agent: .init(
+                kind: .codex,
+                safeSessionLabel: "codex",
+                projectLabel: "alan",
+                workingDirectory: "/Users/morris/Developer/alan"
+            )
+        )
+        let needsInputRoute = shellActivityNotificationRoute(
+            for: agentNeedsInput,
+            pane: testPane,
+            tab: testTab,
+            visibility: .background,
+            now: now
+        )
+        expect(needsInputRoute?.kind == .needsInput, "background agent input must be notification-worthy")
+        expect(needsInputRoute?.attention == .awaitingUser, "agent input must mark tab as awaiting user")
+
+        let focusedSuccess = commandActivity(
+            exitCode: 0,
+            durationMilliseconds: 120_000,
+            updatedAt: "2026-05-17T09:00:00Z"
+        )
+        expect(
+            shellActivityNotificationRoute(
+                for: focusedSuccess,
+                pane: testPane,
+                tab: testTab,
+                visibility: .focusedVisible,
+                now: now
+            ) == nil,
+            "focused command success must not send a notification"
+        )
+
+        let shortBackgroundSuccess = commandActivity(
+            exitCode: 0,
+            durationMilliseconds: 5_000,
+            updatedAt: "2026-05-17T09:00:00Z"
+        )
+        expect(
+            shellActivityNotificationRoute(
+                for: shortBackgroundSuccess,
+                pane: testPane,
+                tab: testTab,
+                visibility: .background,
+                now: now
+            ) == nil,
+            "short background command success must remain quiet"
+        )
+
+        let longBackgroundSuccess = commandActivity(
+            exitCode: 0,
+            durationMilliseconds: 120_000,
+            updatedAt: "2026-05-17T09:00:00Z"
+        )
+        let longCommandRoute = shellActivityNotificationRoute(
+            for: longBackgroundSuccess,
+            pane: testPane,
+            tab: testTab,
+            visibility: .background,
+            now: now
+        )
+        expect(longCommandRoute?.kind == .commandCompleted, "long background command completion must route")
+        expect(longCommandRoute?.attention == .notable, "long command completion must mark the tab notable")
+
+        let exited = TerminalActivitySnapshot.processExitedActivity(exitCode: 9, now: now)
+        let exitedRoute = shellActivityNotificationRoute(
+            for: exited,
+            pane: testPane,
+            tab: testTab,
+            visibility: .background,
+            now: now
+        )
+        expect(exitedRoute?.kind == .processExited, "background process exit must route")
+        expect(exitedRoute?.attention == .awaitingUser, "process exit must mark the tab awaiting user")
+    }
+
+    private static func verifiesControllerRoutesActivityNotificationsOnce() {
+        let controller = makeController()
+        _ = controller.openTerminalTab()
+        guard let backgroundPane = controller.shellState.panes.first(where: { $0.paneID != "pane_1" }) else {
+            fail("test setup must create a background pane")
+        }
+        controller.focus(paneID: "pane_1")
+
+        let needsInput = activity(
+            status: .needsInput,
+            source: .codex,
+            sourceLabel: "Codex",
+            stateLabel: "Input needed",
+            agent: .init(
+                kind: .codex,
+                safeSessionLabel: "codex",
+                projectLabel: "alan",
+                workingDirectory: "/Users/morris/Developer/alan"
+            )
+        )
+        controller.updateTerminalMetadata(
+            metadata(title: "codex", cwd: "/repo/app", activity: needsInput),
+            for: backgroundPane.paneID
+        )
+        controller.updateTerminalMetadata(
+            metadata(title: "codex", cwd: "/repo/app", activity: needsInput),
+            for: backgroundPane.paneID
+        )
+
+        expect(
+            controller.activityNotifications.count == 1,
+            "controller must route one notification per activity update"
+        )
+        expect(
+            controller.activityNotifications.first?.kind == .needsInput,
+            "controller notification must preserve the routed activity kind"
+        )
+        expect(
+            controller.shellState.pane(paneID: backgroundPane.paneID)?.attention == .awaitingUser,
+            "notification-worthy agent input must mark its pane awaiting user"
+        )
+    }
+
     private static func verifiesTerminalChildExitClosesSplitPane() {
         let controller = makeController()
         _ = controller.splitPane(paneID: "pane_1", placement: .right)
@@ -1812,6 +1975,8 @@ private enum ShellRuntimeMetadataTests {
         sourceLabel: String,
         stateLabel: String,
         progress: TerminalActivityProgress? = nil,
+        command: TerminalActivityCommandOutcome? = nil,
+        agent: TerminalActivityAgentMetadata? = nil,
         updatedAt: String = "2026-05-17T09:00:00Z",
         staleAt: String? = nil
     ) -> TerminalActivitySnapshot {
@@ -1820,8 +1985,8 @@ private enum ShellRuntimeMetadataTests {
             status: status,
             priority: priority(for: status),
             progress: progress,
-            command: nil,
-            agent: nil,
+            command: command,
+            agent: agent,
             display: TerminalActivityDisplay(
                 sourceLabel: sourceLabel,
                 stateLabel: stateLabel,
@@ -1833,6 +1998,26 @@ private enum ShellRuntimeMetadataTests {
                 staleAt: staleAt,
                 expiresAt: nil
             )
+        )
+    }
+
+    private static func commandActivity(
+        exitCode: Int,
+        durationMilliseconds: Int,
+        updatedAt: String
+    ) -> TerminalActivitySnapshot {
+        let succeeded = exitCode == 0
+        return activity(
+            status: succeeded ? .done : .failed,
+            source: .command,
+            sourceLabel: "Shell",
+            stateLabel: succeeded ? "Command succeeded" : "Command failed \(exitCode)",
+            command: TerminalActivityCommandOutcome(
+                exitCode: exitCode,
+                durationMilliseconds: durationMilliseconds,
+                commandText: nil
+            ),
+            updatedAt: updatedAt
         )
     }
 

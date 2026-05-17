@@ -8,6 +8,30 @@ struct ShellSidebarTabProjection: Equatable {
     let accessibilityActivityLabel: String?
 }
 
+enum ShellActivityNotificationVisibility: String, Equatable {
+    case focusedVisible
+    case visibleUnfocused
+    case background
+}
+
+enum ShellActivityNotificationKind: String, Equatable {
+    case needsInput = "needs_input"
+    case failed
+    case commandCompleted = "command_completed"
+    case processExited = "process_exited"
+}
+
+struct ShellActivityNotificationRoute: Equatable, Identifiable {
+    let id: String
+    let paneID: String
+    let tabID: String
+    let spaceID: String
+    let kind: ShellActivityNotificationKind
+    let title: String
+    let body: String
+    let attention: ShellAttentionState
+}
+
 func shellUserFacingSummary(_ summary: String?) -> String? {
     guard let summary else { return nil }
 
@@ -200,6 +224,98 @@ func shellPaneActivityAccessoryLabel(for pane: ShellPane, now: Date? = nil) -> S
         return activity.source.kind == .command ? nil : activity.display.sourceFirstLabel
     case .needsInput, .failed, .paused, .progress, .running, .bell, .exited:
         return activity.display.sourceFirstLabel
+    }
+}
+
+func shellActivityNotificationKey(
+    for activity: TerminalActivitySnapshot,
+    paneID: String
+) -> String {
+    [
+        paneID,
+        activity.source.kind.rawValue,
+        activity.status.rawValue,
+        activity.freshness.updatedAt,
+    ].joined(separator: ":")
+}
+
+func shellActivityAttention(for activity: TerminalActivitySnapshot) -> ShellAttentionState? {
+    switch activity.status {
+    case .needsInput, .exited:
+        return .awaitingUser
+    case .failed:
+        return .notable
+    case .paused, .progress, .running, .bell, .idle, .done, .stale:
+        return nil
+    }
+}
+
+func shellActivityNotificationRoute(
+    for activity: TerminalActivitySnapshot,
+    pane: ShellPane,
+    tab: ShellTab?,
+    visibility: ShellActivityNotificationVisibility,
+    now: Date? = nil,
+    longCommandThresholdMilliseconds: Int = 60_000
+) -> ShellActivityNotificationRoute? {
+    if let now, !activity.isFresh(at: now) {
+        return nil
+    }
+
+    guard visibility != .focusedVisible else {
+        return nil
+    }
+
+    let kind: ShellActivityNotificationKind
+    let attention: ShellAttentionState
+    switch activity.status {
+    case .needsInput where shellIsCodingAgentActivity(activity):
+        kind = .needsInput
+        attention = .awaitingUser
+    case .failed where shellIsCodingAgentActivity(activity):
+        kind = .failed
+        attention = .notable
+    case .done
+        where activity.source.kind == .command
+            && (activity.command?.durationMilliseconds ?? 0) >= longCommandThresholdMilliseconds,
+        .failed
+        where activity.source.kind == .command
+            && (activity.command?.durationMilliseconds ?? 0) >= longCommandThresholdMilliseconds:
+        kind = .commandCompleted
+        attention = .notable
+    case .exited:
+        kind = .processExited
+        attention = .awaitingUser
+    default:
+        return nil
+    }
+
+    let subject = shellDisplayTitle(
+        rawTitle: tab?.title ?? pane.viewport?.title,
+        workingDirectoryName: pane.context?.workingDirectoryName,
+        cwd: pane.cwd,
+        program: pane.process?.program,
+        launchTarget: pane.resolvedLaunchTarget,
+        fallback: shellFallbackTitle(for: tab?.kind ?? .terminal)
+    )
+    return ShellActivityNotificationRoute(
+        id: shellActivityNotificationKey(for: activity, paneID: pane.paneID),
+        paneID: pane.paneID,
+        tabID: pane.tabID,
+        spaceID: pane.spaceID,
+        kind: kind,
+        title: activity.display.sourceFirstLabel,
+        body: subject,
+        attention: attention
+    )
+}
+
+private func shellIsCodingAgentActivity(_ activity: TerminalActivitySnapshot) -> Bool {
+    switch activity.source.kind {
+    case .codex, .claude, .openCode, .alan:
+        return true
+    case .shell, .progress, .command, .process, .unknown:
+        return false
     }
 }
 

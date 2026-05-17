@@ -20,10 +20,17 @@ struct ShellPaneProjectionService {
         metadataAttention: ShellAttentionState,
         processExited: Bool,
         binding: ShellAlanBinding?,
-        surfaceState: AlanTerminalSurfaceStateSnapshot? = nil
+        surfaceState: AlanTerminalSurfaceStateSnapshot? = nil,
+        activity: TerminalActivitySnapshot? = nil
     ) -> ShellAttentionState {
         if binding?.pendingYield == true || processExited || surfaceState?.childExited == true {
             return .awaitingUser
+        }
+
+        if let activityAttention = activity.flatMap(shellActivityAttention(for:)),
+           Self.attentionRank(for: activityAttention) > Self.attentionRank(for: metadataAttention)
+        {
+            return activityAttention
         }
 
         if surfaceState?.rendererHealth == "failed"
@@ -174,6 +181,19 @@ struct ShellPaneProjectionService {
         }
 
         return metadata.summary ?? fallback
+    }
+
+    private static func attentionRank(for attention: ShellAttentionState) -> Int {
+        switch attention {
+        case .idle:
+            return 0
+        case .active:
+            return 1
+        case .notable:
+            return 2
+        case .awaitingUser:
+            return 3
+        }
     }
 
     private func surfaceReadinessValue(_ readiness: AlanTerminalSurfaceReadiness) -> String {

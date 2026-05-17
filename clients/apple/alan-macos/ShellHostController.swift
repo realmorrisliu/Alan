@@ -129,8 +129,10 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     @Published private(set) var terminalRuntime: TerminalHostRuntimeSnapshot = .placeholder
     @Published private(set) var controlPlaneDiagnostics: [String] = []
     @Published private(set) var commandInputRequestID = 0
+    @Published private(set) var activityNotifications: [ShellActivityNotificationRoute] = []
 
     let terminalRuntimeRegistry: TerminalRuntimeRegistry
+    private var routedActivityNotificationKeys: Set<String> = []
 
     init(
         shellState: ShellStateSnapshot,
@@ -833,6 +835,9 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
                     metadata: runtime.paneMetadata,
                     runtime: runtime
                 )
+                let projectedActivity = runtime.paneMetadata.clearsActivity
+                    ? nil
+                    : (runtime.paneMetadata.activity ?? current.activity)
                 return ShellPane(
                     paneID: current.paneID,
                     tabID: current.tabID,
@@ -844,13 +849,12 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
                         metadataAttention: runtime.paneMetadata.attention,
                         processExited: runtimeProcessExited,
                         binding: projectedBinding,
-                        surfaceState: runtime.surfaceState
+                        surfaceState: runtime.surfaceState,
+                        activity: projectedActivity
                     ),
                     context: projectedContext,
                     viewport: viewport,
-                    activity: runtime.paneMetadata.clearsActivity
-                        ? nil
-                        : (runtime.paneMetadata.activity ?? current.activity),
+                    activity: projectedActivity,
                     alanBinding: projectedBinding
                 )
             }
@@ -902,6 +906,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
                 metadata: metadata,
                 runtime: runtime
             )
+            let projectedActivity = metadata.clearsActivity ? nil : (metadata.activity ?? current.activity)
 
             return ShellPane(
                 paneID: current.paneID,
@@ -914,11 +919,12 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
                     metadataAttention: metadata.attention,
                     processExited: metadataProcessExited,
                     binding: projectedBinding,
-                    surfaceState: runtime.surfaceState
+                    surfaceState: runtime.surfaceState,
+                    activity: projectedActivity
                 ),
                 context: projectedContext,
                 viewport: viewport,
-                activity: metadata.clearsActivity ? nil : (metadata.activity ?? current.activity),
+                activity: projectedActivity,
                 alanBinding: projectedBinding
             )
         }
@@ -1063,8 +1069,59 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
             panes: updatedPanes
         )
         synchronizeSelection()
+        routeActivityNotificationIfNeeded(from: existingPane, to: transformedPane)
         publishControlPlaneState()
         return true
+    }
+
+    private func routeActivityNotificationIfNeeded(
+        from existingPane: ShellPane,
+        to updatedPane: ShellPane
+    ) {
+        guard existingPane.activity != updatedPane.activity,
+              let activity = updatedPane.activity,
+              let tab = shellState.tab(tabID: updatedPane.tabID)
+        else {
+            return
+        }
+
+        let key = shellActivityNotificationKey(for: activity, paneID: updatedPane.paneID)
+        guard !routedActivityNotificationKeys.contains(key),
+              let route = shellActivityNotificationRoute(
+                  for: activity,
+                  pane: updatedPane,
+                  tab: tab,
+                  visibility: activityNotificationVisibility(for: updatedPane),
+                  now: .now
+              )
+        else {
+            return
+        }
+
+        routedActivityNotificationKeys.insert(key)
+        activityNotifications.append(route)
+        if activityNotifications.count > 50 {
+            activityNotifications.removeFirst(activityNotifications.count - 50)
+        }
+    }
+
+    private func activityNotificationVisibility(
+        for pane: ShellPane
+    ) -> ShellActivityNotificationVisibility {
+        let isSelectedSpace = pane.spaceID == selectedSpace?.spaceID
+        let isSelectedTab = pane.tabID == selectedTab?.tabID
+        if isSelectedSpace,
+           isSelectedTab,
+           pane.paneID == shellState.focusedPaneID
+        {
+            return .focusedVisible
+        }
+
+        if isSelectedSpace, isSelectedTab {
+            return .visibleUnfocused
+        }
+
+        return .background
     }
 
     private func rebuildSpaces(
