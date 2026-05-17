@@ -47,6 +47,7 @@ private enum ShellRuntimeMetadataTests {
         verifiesPaneTitleActivityAccessoryLabel()
         verifiesActivityNotificationPolicyIsLowNoise()
         verifiesControllerRoutesActivityNotificationsOnce()
+        verifiesInactiveAppRoutesFocusedPaneNotifications()
         verifiesProcessExitNotificationRoutesBeforeAutoClose()
         verifiesProcessExitRuntimeNotificationRoutesBeforeAutoClose()
         verifiesTerminalChildExitClosesSplitPane()
@@ -1447,6 +1448,36 @@ private enum ShellRuntimeMetadataTests {
         )
     }
 
+    private static func verifiesInactiveAppRoutesFocusedPaneNotifications() {
+        let controller = makeController(appIsActive: false)
+        let needsInput = activity(
+            status: .needsInput,
+            source: .codex,
+            sourceLabel: "Codex",
+            stateLabel: "Input needed",
+            agent: .init(
+                kind: .codex,
+                safeSessionLabel: "codex",
+                projectLabel: "alan",
+                workingDirectory: "/Users/morris/Developer/alan"
+            )
+        )
+
+        controller.updateTerminalMetadata(
+            metadata(title: "codex", cwd: "/repo/app", activity: needsInput),
+            for: "pane_1"
+        )
+
+        expect(
+            controller.activityNotifications.count == 1,
+            "inactive app must route focused pane activity because it is out of view"
+        )
+        expect(
+            controller.activityNotifications.first?.kind == .needsInput,
+            "inactive focused pane notification must preserve the routed activity kind"
+        )
+    }
+
     private static func verifiesProcessExitNotificationRoutesBeforeAutoClose() {
         let controller = makeController()
         _ = controller.openTerminalTab(workingDirectory: "/second")
@@ -1977,7 +2008,8 @@ private enum ShellRuntimeMetadataTests {
         windowID: String = "metadata_test_\(UUID().uuidString)",
         shellState: ShellStateSnapshot? = nil,
         workspaceManifestStore: ShellWorkspaceManifestStore? = nil,
-        workspaceManifest: ShellWorkspaceManifest? = nil
+        workspaceManifest: ShellWorkspaceManifest? = nil,
+        appIsActive: Bool = true
     ) -> ShellHostController {
         let registry = TerminalRuntimeRegistry(runtimeService: FakeAlanTerminalRuntimeService())
         let context = ShellWindowContext.make(
@@ -1992,7 +2024,8 @@ private enum ShellRuntimeMetadataTests {
             persistenceURL: persistenceURL,
             terminalRuntimeRegistry: registry,
             workspaceManifestStore: workspaceManifestStore,
-            workspaceManifest: workspaceManifest
+            workspaceManifest: workspaceManifest,
+            appIsActiveProvider: { appIsActive }
         )
     }
 

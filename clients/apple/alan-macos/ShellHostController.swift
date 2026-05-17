@@ -1,6 +1,7 @@
 import Foundation
 
 #if os(macOS)
+import AppKit
 import SwiftUI
 
 struct ShellAttentionItem: Identifiable, Equatable {
@@ -132,6 +133,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     @Published private(set) var activityNotifications: [ShellActivityNotificationRoute] = []
 
     let terminalRuntimeRegistry: TerminalRuntimeRegistry
+    private let appIsActiveProvider: @MainActor () -> Bool
     private var routedActivityNotificationKeys: Set<String> = []
 
     init(
@@ -141,7 +143,8 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         persistenceURL: URL? = nil,
         terminalRuntimeRegistry: TerminalRuntimeRegistry? = nil,
         workspaceManifestStore: ShellWorkspaceManifestStore? = nil,
-        workspaceManifest: ShellWorkspaceManifest? = nil
+        workspaceManifest: ShellWorkspaceManifest? = nil,
+        appIsActiveProvider: @escaping @MainActor () -> Bool = { NSApp.isActive }
     ) {
         self.fileManager = fileManager
         self.paneProjection = ShellPaneProjectionService(fileManager: fileManager)
@@ -155,6 +158,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         self.workspaceManifestStore = workspaceManifestStore
         self.workspaceManifest = workspaceManifest
         self.clipboardWriter = ShellClipboardWriter()
+        self.appIsActiveProvider = appIsActiveProvider
         self.shellState = shellState
         self.terminalRuntimeRegistry =
             terminalRuntimeRegistry
@@ -1146,6 +1150,9 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     ) -> ShellActivityNotificationVisibility {
         let isSelectedSpace = pane.spaceID == selectedSpace?.spaceID
         let isSelectedTab = pane.tabID == selectedTab?.tabID
+        guard appIsActiveProvider() else {
+            return .background
+        }
         if isSelectedSpace,
            isSelectedTab,
            pane.paneID == shellState.focusedPaneID
