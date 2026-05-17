@@ -56,6 +56,7 @@ enum AlanShellPublishedStateMerger {
             attention: incomingPane.attention,
             context: merge(authoritativeContext: authoritativePane.context, incomingContext: incomingPane.context),
             viewport: merge(authoritativeViewport: authoritativePane.viewport, incomingViewport: incomingPane.viewport),
+            activity: incomingPane.activity ?? authoritativePane.activity,
             alanBinding: incomingPane.alanBinding ?? authoritativePane.alanBinding
         )
     }

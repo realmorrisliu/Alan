@@ -1,6 +1,6 @@
 ## 1. A-Group Refinement Gate
 
-- [ ] 1.1 Audit current terminal metadata sources in `GhosttyLiveHost`,
+- [x] 1.1 Audit current terminal metadata sources in `GhosttyLiveHost`,
   `TerminalHostRuntime`, `TerminalRuntimeService`, `ShellHostController`, and
   `ShellPaneProjectionService`.
 - [ ] 1.2 Finalize normalized activity state names, source kinds, source-first
@@ -15,10 +15,10 @@
 
 ## 2. Activity Model And Projection
 
-- [ ] 2.1 Add pane-scoped terminal activity value types for source, status,
+- [x] 2.1 Add pane-scoped terminal activity value types for source, status,
   priority, progress, command outcome, agent metadata, freshness, timestamps,
   and source-first display labels.
-- [ ] 2.2 Extend terminal metadata snapshots and shell projection paths to carry
+- [x] 2.2 Extend terminal metadata snapshots and shell projection paths to carry
   normalized activity without removing existing title/cwd/attention fields.
 - [ ] 2.3 Add deterministic activity merge and priority logic for concurrent
   progress, command completion, bell, Alan, and agent signals, including
@@ -32,9 +32,9 @@
 
 ## 3. Ghostty And Command Activity Sources
 
-- [ ] 3.1 Map `GHOSTTY_ACTION_PROGRESS_REPORT` into structured activity including
+- [x] 3.1 Map `GHOSTTY_ACTION_PROGRESS_REPORT` into structured activity including
   determinate, indeterminate, paused, error, clear, and stale states.
-- [ ] 3.2 Map `GHOSTTY_ACTION_COMMAND_FINISHED` into command-completion activity
+- [x] 3.2 Map `GHOSTTY_ACTION_COMMAND_FINISHED` into command-completion activity
   with success/failure status and duration when available.
 - [ ] 3.3 Keep bell and child-exit attention compatible with the normalized
   activity model without changing existing terminal overlay semantics.

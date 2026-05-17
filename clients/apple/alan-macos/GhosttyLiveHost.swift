@@ -706,13 +706,18 @@ final class AlanGhosttyLiveHost: NSObject {
             } else {
                 summary = "command failed (\(exitCode))"
             }
+            let activity = exitCode >= 0
+                ? TerminalActivitySnapshot.commandCompletion(exitCode: Int(exitCode), now: .now)
+                : nil
             performOnMain {
                 self.updateMetadata(
                     summary: summary,
                     attention: exitCode == 0 ? .active : .notable,
                     processExited: false,
                     lastCommandExitCode: Int(exitCode),
-                    activeTaskState: .inactive
+                    activeTaskState: .inactive,
+                    activity: activity,
+                    clearActivity: exitCode < 0
                 )
             }
             return true
@@ -720,8 +725,14 @@ final class AlanGhosttyLiveHost: NSObject {
         case GHOSTTY_ACTION_PROGRESS_REPORT:
             let progress = action.action.progress_report
             let summary = progressSummary(progress)
+            let activity = progressActivity(progress)
             performOnMain {
-                self.updateMetadata(summary: summary, attention: .active)
+                self.updateMetadata(
+                    summary: summary,
+                    attention: .active,
+                    activity: activity,
+                    clearActivity: progress.state == GHOSTTY_PROGRESS_STATE_REMOVE
+                )
             }
             return true
 
@@ -796,6 +807,56 @@ final class AlanGhosttyLiveHost: NSObject {
         }
     }
 
+    private func progressActivity(
+        _ progress: ghostty_action_progress_report_s,
+        now: Date = .now
+    ) -> TerminalActivitySnapshot? {
+        switch progress.state {
+        case GHOSTTY_PROGRESS_STATE_REMOVE:
+            return nil
+        case GHOSTTY_PROGRESS_STATE_SET:
+            if progress.progress >= 0 {
+                return TerminalActivitySnapshot.progressActivity(
+                    percent: Int(progress.progress),
+                    now: now
+                )
+            }
+            return TerminalActivitySnapshot.progressActivity(
+                progress: .indeterminate,
+                status: .progress,
+                priority: .active,
+                stateLabel: "Running",
+                now: now
+            )
+        case GHOSTTY_PROGRESS_STATE_ERROR:
+            return TerminalActivitySnapshot.progressActivity(
+                progress: .failed,
+                status: .failed,
+                priority: .notable,
+                stateLabel: "Failed",
+                now: now
+            )
+        case GHOSTTY_PROGRESS_STATE_INDETERMINATE:
+            return TerminalActivitySnapshot.progressActivity(
+                progress: .indeterminate,
+                status: .progress,
+                priority: .active,
+                stateLabel: "Running",
+                now: now
+            )
+        case GHOSTTY_PROGRESS_STATE_PAUSE:
+            return TerminalActivitySnapshot.progressActivity(
+                progress: .paused,
+                status: .paused,
+                priority: .active,
+                stateLabel: "Paused",
+                now: now
+            )
+        default:
+            return nil
+        }
+    }
+
     private func clampedInt(_ value: UInt64) -> Int {
         value > UInt64(Int.max) ? Int.max : Int(value)
     }
@@ -807,7 +868,9 @@ final class AlanGhosttyLiveHost: NSObject {
         attention: ShellAttentionState? = nil,
         processExited: Bool? = nil,
         lastCommandExitCode: Int? = nil,
-        activeTaskState: ShellTabActiveTaskState? = nil
+        activeTaskState: ShellTabActiveTaskState? = nil,
+        activity: TerminalActivitySnapshot? = nil,
+        clearActivity: Bool = false
     ) {
         let nextTitle = title ?? metadata.title
         let nextWorkingDirectory = workingDirectory ?? metadata.workingDirectory
@@ -816,6 +879,7 @@ final class AlanGhosttyLiveHost: NSObject {
         let nextProcessExited = processExited ?? metadata.processExited
         let nextLastCommandExitCode = lastCommandExitCode ?? metadata.lastCommandExitCode
         let nextActiveTaskState = activeTaskState ?? metadata.activeTaskState
+        let nextActivity = clearActivity ? nil : (activity ?? metadata.activity)
 
         guard
             nextTitle != metadata.title
@@ -825,6 +889,7 @@ final class AlanGhosttyLiveHost: NSObject {
                 || nextProcessExited != metadata.processExited
                 || nextLastCommandExitCode != metadata.lastCommandExitCode
                 || nextActiveTaskState != metadata.activeTaskState
+                || nextActivity != metadata.activity
         else {
             return
         }
@@ -837,7 +902,8 @@ final class AlanGhosttyLiveHost: NSObject {
             processExited: nextProcessExited,
             lastCommandExitCode: nextLastCommandExitCode,
             lastUpdatedAt: .now,
-            activeTaskState: nextActiveTaskState
+            activeTaskState: nextActiveTaskState,
+            activity: nextActivity
         )
         metadata = snapshot
         onMetadataChange?(snapshot)

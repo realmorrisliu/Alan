@@ -40,9 +40,36 @@ struct ShellPane: Identifiable, Codable, Equatable {
     let attention: ShellAttentionState
     let context: ShellContextSnapshot?
     let viewport: ShellViewportSnapshot?
+    let activity: TerminalActivitySnapshot?
     let alanBinding: ShellAlanBinding?
 
     var id: String { paneID }
+
+    init(
+        paneID: String,
+        tabID: String,
+        spaceID: String,
+        launchTarget: ShellLaunchTarget?,
+        cwd: String?,
+        process: ShellProcessBinding?,
+        attention: ShellAttentionState,
+        context: ShellContextSnapshot?,
+        viewport: ShellViewportSnapshot?,
+        activity: TerminalActivitySnapshot? = nil,
+        alanBinding: ShellAlanBinding?
+    ) {
+        self.paneID = paneID
+        self.tabID = tabID
+        self.spaceID = spaceID
+        self.launchTarget = launchTarget
+        self.cwd = cwd
+        self.process = process
+        self.attention = attention
+        self.context = context
+        self.viewport = viewport
+        self.activity = activity
+        self.alanBinding = alanBinding
+    }
 
     private enum CodingKeys: String, CodingKey {
         case paneID = "pane_id"
@@ -54,6 +81,7 @@ struct ShellPane: Identifiable, Codable, Equatable {
         case attention
         case context
         case viewport
+        case activity
         case alanBinding = "alan_binding"
     }
 }

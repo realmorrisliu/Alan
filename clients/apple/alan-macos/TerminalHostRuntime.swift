@@ -624,6 +624,7 @@ struct TerminalPaneMetadataSnapshot: Equatable {
     let lastCommandExitCode: Int?
     let lastUpdatedAt: Date?
     let activeTaskState: ShellTabActiveTaskState?
+    let activity: TerminalActivitySnapshot?
 
     init(
         title: String?,
@@ -633,7 +634,8 @@ struct TerminalPaneMetadataSnapshot: Equatable {
         processExited: Bool,
         lastCommandExitCode: Int?,
         lastUpdatedAt: Date?,
-        activeTaskState: ShellTabActiveTaskState? = .inactive
+        activeTaskState: ShellTabActiveTaskState? = .inactive,
+        activity: TerminalActivitySnapshot? = nil
     ) {
         self.title = title
         self.workingDirectory = workingDirectory
@@ -643,6 +645,7 @@ struct TerminalPaneMetadataSnapshot: Equatable {
         self.lastCommandExitCode = lastCommandExitCode
         self.lastUpdatedAt = lastUpdatedAt
         self.activeTaskState = activeTaskState
+        self.activity = activity
     }
 
     static let placeholder = TerminalPaneMetadataSnapshot(
@@ -653,7 +656,8 @@ struct TerminalPaneMetadataSnapshot: Equatable {
         processExited: false,
         lastCommandExitCode: nil,
         lastUpdatedAt: nil,
-        activeTaskState: .inactive
+        activeTaskState: .inactive,
+        activity: nil
     )
 }
 

@@ -171,7 +171,7 @@ restores that instance and its cwd. If Alan must create a new quick terminal, it
 chooses the cwd from the currently focused Alan pane when available, otherwise
 the last quick-terminal cwd, otherwise the user's home directory.
 
-The Peak can be promoted into a normal Alan Space through an `Open in Space`
+The Peak can be promoted into a normal Alan space through an `Open in Space`
 affordance. Promotion moves the current quick-terminal runtime into the selected
 Space as a normal tab, hides the Peak, and clears the global quick slot. Alan
 does not copy the terminal process or display the same runtime simultaneously in

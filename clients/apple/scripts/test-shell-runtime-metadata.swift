@@ -24,6 +24,12 @@ private enum ShellRuntimeMetadataTests {
         verifiesOpeningTerminalTabInheritsFocusedRuntimeCwd()
         verifiesOpeningTerminalTabFallsBackToFocusedPaneSnapshotCwd()
         verifiesOpeningTerminalTabHonorsExplicitCwd()
+        verifiesTerminalActivityProjectsByPaneID()
+        verifiesProgressActivityFactoryUsesSourceFirstDisplay()
+        verifiesCommandCompletionActivityFactory()
+        verifiesTerminalActivitySidebarPriority()
+        verifiesStaleProgressIsNotSidebarWorthy()
+        verifiesSuccessfulCommandIsNotSidebarWorthy()
         verifiesTerminalChildExitClosesSplitPane()
         verifiesTerminalChildExitClosesSinglePaneTab()
         verifiesTerminalChildExitCanLeaveEmptyFocusedSpace()
@@ -461,6 +467,126 @@ private enum ShellRuntimeMetadataTests {
         expect(
             controller.selectedPane?.cwd == "/explicit/cwd",
             "explicit new-tab cwd must override focused pane cwd"
+        )
+    }
+
+    private static func verifiesTerminalActivityProjectsByPaneID() {
+        let controller = makeController()
+        _ = controller.openTerminalTab(workingDirectory: "/background")
+        let activity = progressActivity(
+            percent: 42,
+            updatedAt: "2026-05-17T09:00:00Z",
+            staleAt: "2026-05-17T09:00:15Z"
+        )
+
+        controller.updateTerminalMetadata(
+            metadata(title: "build", cwd: "/repo/app", activity: activity),
+            for: "pane_1"
+        )
+
+        let activePane = controller.pane(paneID: "pane_1")
+        let backgroundPane = controller.pane(paneID: "pane_2")
+        expect(
+            activePane?.activity == activity,
+            "terminal activity metadata must project onto the owning pane"
+        )
+        expect(
+            backgroundPane?.activity == nil,
+            "terminal activity metadata must not leak to other panes"
+        )
+    }
+
+    private static func verifiesTerminalActivitySidebarPriority() {
+        let running = activity(status: .running, source: .shell, sourceLabel: "Shell", stateLabel: "Running")
+        let progress = activity(
+            status: .progress,
+            source: .progress,
+            sourceLabel: "Progress",
+            stateLabel: "42%",
+            progress: .percent(42)
+        )
+        let needsInput = activity(
+            status: .needsInput,
+            source: .codex,
+            sourceLabel: "Codex",
+            stateLabel: "Input needed"
+        )
+
+        expect(
+            TerminalActivitySnapshot.primarySidebarActivity([running, progress]) == progress,
+            "progress must outrank generic running activity"
+        )
+        expect(
+            TerminalActivitySnapshot.primarySidebarActivity([progress, needsInput]) == needsInput,
+            "user-input-required activity must outrank progress"
+        )
+    }
+
+    private static func verifiesProgressActivityFactoryUsesSourceFirstDisplay() {
+        let now = Date(timeIntervalSince1970: 1_779_008_400)
+        let activity = TerminalActivitySnapshot.progressActivity(percent: 42, now: now)
+
+        expect(activity.source.kind == .progress, "progress factory must label source as progress")
+        expect(activity.status == .progress, "determinate progress must use progress status")
+        expect(activity.progress == .percent(42), "determinate progress must carry bounded percent")
+        expect(
+            activity.display.sourceFirstLabel == "Progress · 42%",
+            "progress display copy must be source-first"
+        )
+        expect(
+            activity.freshness.staleAt == "2026-05-17T09:00:15Z",
+            "progress activity must get the default 15 second stale deadline"
+        )
+    }
+
+    private static func verifiesCommandCompletionActivityFactory() {
+        let now = Date(timeIntervalSince1970: 1_779_008_400)
+        let success = TerminalActivitySnapshot.commandCompletion(exitCode: 0, now: now)
+        let failure = TerminalActivitySnapshot.commandCompletion(exitCode: 2, now: now)
+
+        expect(success.status == .done, "zero exit code must produce done status")
+        expect(!success.isSidebarWorthy, "successful commands must not be sidebar-worthy")
+        expect(failure.status == .failed, "non-zero exit code must produce failed status")
+        expect(failure.command?.exitCode == 2, "command completion must preserve exit code")
+        expect(
+            failure.display.sourceFirstLabel == "Shell · Command failed 2",
+            "failed command copy must be source-first"
+        )
+        expect(
+            TerminalActivitySnapshot.primarySidebarActivity([success, failure]) == failure,
+            "failed command completion must outrank successful completion"
+        )
+    }
+
+    private static func verifiesSuccessfulCommandIsNotSidebarWorthy() {
+        let success = activity(
+            status: .done,
+            source: .command,
+            sourceLabel: "Shell",
+            stateLabel: "Command succeeded"
+        )
+
+        expect(
+            TerminalActivitySnapshot.primarySidebarActivity([success]) == nil,
+            "successful command completion must not become sidebar-worthy activity"
+        )
+    }
+
+    private static func verifiesStaleProgressIsNotSidebarWorthy() {
+        let progress = progressActivity(
+            percent: 42,
+            updatedAt: "2026-05-17T09:00:00Z",
+            staleAt: "2026-05-17T09:00:15Z"
+        )
+        let now = Date(timeIntervalSince1970: 1_779_008_416)
+
+        expect(
+            !progress.isFresh(at: now),
+            "progress must become stale after its freshness deadline"
+        )
+        expect(
+            TerminalActivitySnapshot.primarySidebarActivity([progress], now: now) == nil,
+            "stale progress must not remain sidebar-worthy"
         )
     }
 
@@ -1007,7 +1133,8 @@ private enum ShellRuntimeMetadataTests {
         title: String,
         cwd: String = "/Users/morris/Developer/Alan",
         processExited: Bool = false,
-        activeTaskState: ShellTabActiveTaskState? = nil
+        activeTaskState: ShellTabActiveTaskState? = nil,
+        activity: TerminalActivitySnapshot? = nil
     ) -> TerminalPaneMetadataSnapshot {
         TerminalPaneMetadataSnapshot(
             title: title,
@@ -1017,8 +1144,68 @@ private enum ShellRuntimeMetadataTests {
             processExited: processExited,
             lastCommandExitCode: nil,
             lastUpdatedAt: Date(timeIntervalSince1970: 3_000),
-            activeTaskState: activeTaskState
+            activeTaskState: activeTaskState,
+            activity: activity
         )
+    }
+
+    private static func progressActivity(
+        percent: Int,
+        updatedAt: String,
+        staleAt: String
+    ) -> TerminalActivitySnapshot {
+        activity(
+            status: .progress,
+            source: .progress,
+            sourceLabel: "Progress",
+            stateLabel: "\(percent)%",
+            progress: .percent(percent),
+            updatedAt: updatedAt,
+            staleAt: staleAt
+        )
+    }
+
+    private static func activity(
+        status: TerminalActivityStatus,
+        source: TerminalActivitySourceKind,
+        sourceLabel: String,
+        stateLabel: String,
+        progress: TerminalActivityProgress? = nil,
+        updatedAt: String = "2026-05-17T09:00:00Z",
+        staleAt: String? = nil
+    ) -> TerminalActivitySnapshot {
+        TerminalActivitySnapshot(
+            source: .init(kind: source, label: sourceLabel),
+            status: status,
+            priority: priority(for: status),
+            progress: progress,
+            command: nil,
+            agent: nil,
+            display: TerminalActivityDisplay(
+                sourceLabel: sourceLabel,
+                stateLabel: stateLabel,
+                detailLabel: nil,
+                paneHint: nil
+            ),
+            freshness: TerminalActivityFreshness(
+                updatedAt: updatedAt,
+                staleAt: staleAt,
+                expiresAt: nil
+            )
+        )
+    }
+
+    private static func priority(for status: TerminalActivityStatus) -> TerminalActivityPriority {
+        switch status {
+        case .needsInput:
+            return .awaitingUser
+        case .failed, .exited:
+            return .notable
+        case .paused, .progress, .running, .bell:
+            return .active
+        case .idle, .done, .stale:
+            return .passive
+        }
     }
 
     private static func childExitMetadata(
