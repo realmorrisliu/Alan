@@ -387,7 +387,7 @@ struct TerminalActivitySnapshot: Codable, Equatable {
             ),
             freshness: TerminalActivityFreshness(
                 updatedAt: Self.iso8601Formatter.string(from: now),
-                staleAt: succeeded ? nil : Self.iso8601Formatter.string(from: now.addingTimeInterval(30)),
+                staleAt: Self.iso8601Formatter.string(from: now.addingTimeInterval(succeeded ? 8 : 30)),
                 expiresAt: nil
             )
         )

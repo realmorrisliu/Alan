@@ -551,6 +551,14 @@ private enum ShellRuntimeMetadataTests {
 
         expect(success.status == .done, "zero exit code must produce done status")
         expect(!success.isSidebarWorthy, "successful commands must not be sidebar-worthy")
+        expect(
+            success.freshness.staleAt == "2026-05-17T09:00:08Z",
+            "successful command completion must get a short stale deadline"
+        )
+        expect(
+            !success.isFresh(at: now.addingTimeInterval(9)),
+            "successful command completion must become stale after its freshness window"
+        )
         expect(failure.status == .failed, "non-zero exit code must produce failed status")
         expect(failure.command?.exitCode == 2, "command completion must preserve exit code")
         expect(
