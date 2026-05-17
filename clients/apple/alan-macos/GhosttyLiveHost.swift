@@ -941,7 +941,9 @@ final class AlanGhosttyLiveHost: NSObject {
     }
 
     private func markForegroundCommandStarted() {
-        foregroundCommandStartedAt = .now
+        if foregroundCommandStartedAt == nil {
+            foregroundCommandStartedAt = .now
+        }
         updateMetadata(attention: .active, activeTaskState: .foregroundCommand)
     }
 

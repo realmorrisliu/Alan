@@ -324,6 +324,11 @@ require_pattern \
     "foreground command detection must include pasted/control text submissions"
 
 require_pattern \
+    "clients/apple/alan-macos/GhosttyLiveHost.swift" \
+    "if foregroundCommandStartedAt == nil" \
+    "foreground command duration tracking must preserve the original command start time"
+
+require_pattern \
     "clients/apple/alan-macos/TerminalPaneView.swift" \
     "\\.id\\(pane\\.paneID\\)" \
     "terminal host views must be keyed by stable pane identity"
