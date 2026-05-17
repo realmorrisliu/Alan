@@ -32,6 +32,7 @@ private enum ShellRuntimeMetadataTests {
         verifiesStaleProgressIsNotSidebarWorthy()
         verifiesSuccessfulCommandIsNotSidebarWorthy()
         verifiesClearingActivityRemovesPaneActivity()
+        verifiesPublishedStateMergeClearsActivity()
         verifiesTerminalChildExitClosesSplitPane()
         verifiesTerminalChildExitClosesSinglePaneTab()
         verifiesTerminalChildExitCanLeaveEmptyFocusedSpace()
@@ -701,6 +702,34 @@ private enum ShellRuntimeMetadataTests {
         )
     }
 
+    private static func verifiesPublishedStateMergeClearsActivity() {
+        let progress = progressActivity(
+            percent: 42,
+            updatedAt: "2026-05-17T09:00:00Z",
+            staleAt: "2026-05-17T09:00:15Z"
+        )
+        let authoritative = stateWithAlanBinding(
+            windowID: "window_activity_merge",
+            pendingYield: false,
+            activity: progress
+        )
+        let incoming = stateWithAlanBinding(
+            windowID: "window_activity_merge",
+            pendingYield: false,
+            activity: nil
+        )
+
+        let merged = AlanShellPublishedStateMerger.merge(
+            authoritative: authoritative,
+            incoming: incoming
+        )
+
+        expect(
+            merged.pane(paneID: "pane_1")?.activity == nil,
+            "published state merge must allow incoming nil activity to clear stale activity"
+        )
+    }
+
     private static func verifiesTerminalChildExitClosesSplitPane() {
         let controller = makeController()
         _ = controller.splitPane(paneID: "pane_1", placement: .right)
@@ -1355,7 +1384,8 @@ private enum ShellRuntimeMetadataTests {
 
     private static func stateWithAlanBinding(
         windowID: String,
-        pendingYield: Bool
+        pendingYield: Bool,
+        activity: TerminalActivitySnapshot? = nil
     ) -> ShellStateSnapshot {
         let pane = ShellPane(
             paneID: "pane_1",
@@ -1378,6 +1408,7 @@ private enum ShellRuntimeMetadataTests {
                 lastCommandExitCode: nil
             ),
             viewport: nil,
+            activity: activity,
             alanBinding: ShellAlanBinding(
                 sessionID: "session_1",
                 runStatus: pendingYield ? "yielded" : "running",
