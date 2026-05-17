@@ -559,6 +559,11 @@ private enum ShellRuntimeMetadataTests {
         let now = Date(timeIntervalSince1970: 1_779_008_400)
         let success = TerminalActivitySnapshot.commandCompletion(exitCode: 0, now: now)
         let failure = TerminalActivitySnapshot.commandCompletion(exitCode: 2, now: now)
+        let longSuccess = TerminalActivitySnapshot.commandCompletion(
+            exitCode: 0,
+            now: now,
+            durationMilliseconds: 120_000
+        )
 
         expect(success.status == .done, "zero exit code must produce done status")
         expect(!success.isSidebarWorthy, "successful commands must not be sidebar-worthy")
@@ -569,6 +574,10 @@ private enum ShellRuntimeMetadataTests {
         expect(
             !success.isFresh(at: now.addingTimeInterval(9)),
             "successful command completion must become stale after its freshness window"
+        )
+        expect(
+            longSuccess.command?.durationMilliseconds == 120_000,
+            "command completion must preserve measured duration"
         )
         expect(failure.status == .failed, "non-zero exit code must produce failed status")
         expect(failure.command?.exitCode == 2, "command completion must preserve exit code")
@@ -1332,6 +1341,22 @@ private enum ShellRuntimeMetadataTests {
         )
         expect(longCommandRoute?.kind == .commandCompleted, "long background command completion must route")
         expect(longCommandRoute?.attention == .notable, "long command completion must mark the tab notable")
+
+        let realFactoryLongSuccess = TerminalActivitySnapshot.commandCompletion(
+            exitCode: 0,
+            now: now,
+            durationMilliseconds: 120_000
+        )
+        expect(
+            shellActivityNotificationRoute(
+                for: realFactoryLongSuccess,
+                pane: testPane,
+                tab: testTab,
+                visibility: .background,
+                now: now
+            )?.kind == .commandCompleted,
+            "factory-produced long command completion must route"
+        )
 
         let exited = TerminalActivitySnapshot.processExitedActivity(exitCode: 9, now: now)
         let exitedRoute = shellActivityNotificationRoute(

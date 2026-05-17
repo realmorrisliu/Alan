@@ -417,7 +417,11 @@ struct TerminalActivitySnapshot: Codable, Equatable {
         )
     }
 
-    static func commandCompletion(exitCode: Int, now: Date) -> TerminalActivitySnapshot {
+    static func commandCompletion(
+        exitCode: Int,
+        now: Date,
+        durationMilliseconds: Int? = nil
+    ) -> TerminalActivitySnapshot {
         let succeeded = exitCode == 0
         let status: TerminalActivityStatus = succeeded ? .done : .failed
         let priority: TerminalActivityPriority = succeeded ? .passive : .notable
@@ -429,7 +433,7 @@ struct TerminalActivitySnapshot: Codable, Equatable {
             progress: nil,
             command: TerminalActivityCommandOutcome(
                 exitCode: exitCode,
-                durationMilliseconds: nil,
+                durationMilliseconds: durationMilliseconds,
                 commandText: nil
             ),
             agent: nil,

@@ -32,6 +32,7 @@ final class AlanGhosttyLiveHost: NSObject {
     private var metadata = TerminalPaneMetadataSnapshot.placeholder
     private let terminalModeTracker = AlanTerminalModeTracker()
     private var didEmitNonConfirmingCloseRequest = false
+    private var foregroundCommandStartedAt: Date?
 
     private enum KeyCode {
         static let returnKey: UInt32 = 36
@@ -706,6 +707,7 @@ final class AlanGhosttyLiveHost: NSObject {
 
         case GHOSTTY_ACTION_COMMAND_FINISHED:
             let exitCode = action.action.command_finished.exit_code
+            let finishedAt = Date()
             let summary: String
             if exitCode < 0 {
                 summary = "command finished"
@@ -714,10 +716,16 @@ final class AlanGhosttyLiveHost: NSObject {
             } else {
                 summary = "command failed (\(exitCode))"
             }
-            let activity = exitCode >= 0
-                ? TerminalActivitySnapshot.commandCompletion(exitCode: Int(exitCode), now: .now)
-                : nil
             performOnMain {
+                let durationMilliseconds = self.commandDurationMilliseconds(finishedAt: finishedAt)
+                self.foregroundCommandStartedAt = nil
+                let activity = exitCode >= 0
+                    ? TerminalActivitySnapshot.commandCompletion(
+                        exitCode: Int(exitCode),
+                        now: finishedAt,
+                        durationMilliseconds: durationMilliseconds
+                    )
+                    : nil
                 self.updateMetadata(
                     summary: summary,
                     attention: exitCode == 0 ? .active : .notable,
@@ -925,10 +933,19 @@ final class AlanGhosttyLiveHost: NSObject {
     }
 
     private func markForegroundCommandStarted() {
+        foregroundCommandStartedAt = .now
         updateMetadata(attention: .active, activeTaskState: .foregroundCommand)
     }
 
+    private func commandDurationMilliseconds(finishedAt: Date) -> Int? {
+        guard let foregroundCommandStartedAt else { return nil }
+        let duration = finishedAt.timeIntervalSince(foregroundCommandStartedAt)
+        guard duration >= 0 else { return nil }
+        return Int((duration * 1_000).rounded())
+    }
+
     private func resetMetadata() {
+        foregroundCommandStartedAt = nil
         guard metadata != .placeholder else { return }
         metadata = .placeholder
         onMetadataChange?(.placeholder)
