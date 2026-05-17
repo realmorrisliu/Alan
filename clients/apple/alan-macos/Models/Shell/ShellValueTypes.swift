@@ -189,6 +189,12 @@ struct TerminalActivityCommandOutcome: Codable, Equatable {
     let exitCode: Int?
     let durationMilliseconds: Int?
     let commandText: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case exitCode = "exit_code"
+        case durationMilliseconds = "duration_milliseconds"
+        case commandText = "command_text"
+    }
 }
 
 struct TerminalActivityAgentMetadata: Codable, Equatable {
@@ -196,6 +202,13 @@ struct TerminalActivityAgentMetadata: Codable, Equatable {
     let safeSessionLabel: String?
     let projectLabel: String?
     let workingDirectory: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case kind
+        case safeSessionLabel = "safe_session_label"
+        case projectLabel = "project_label"
+        case workingDirectory = "working_directory"
+    }
 }
 
 struct TerminalActivityDisplay: Codable, Equatable {
@@ -212,12 +225,25 @@ struct TerminalActivityDisplay: Codable, Equatable {
             }
             .joined(separator: " · ")
     }
+
+    private enum CodingKeys: String, CodingKey {
+        case sourceLabel = "source_label"
+        case stateLabel = "state_label"
+        case detailLabel = "detail_label"
+        case paneHint = "pane_hint"
+    }
 }
 
 struct TerminalActivityFreshness: Codable, Equatable {
     let updatedAt: String
     let staleAt: String?
     let expiresAt: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case updatedAt = "updated_at"
+        case staleAt = "stale_at"
+        case expiresAt = "expires_at"
+    }
 }
 
 struct TerminalActivitySnapshot: Codable, Equatable {

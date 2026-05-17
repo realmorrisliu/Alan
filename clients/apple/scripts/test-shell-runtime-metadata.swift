@@ -27,6 +27,7 @@ private enum ShellRuntimeMetadataTests {
         verifiesTerminalActivityProjectsByPaneID()
         verifiesProgressActivityFactoryUsesSourceFirstDisplay()
         verifiesCommandCompletionActivityFactory()
+        verifiesTerminalActivityCodableUsesSnakeCase()
         verifiesTerminalActivitySidebarPriority()
         verifiesStaleProgressIsNotSidebarWorthy()
         verifiesSuccessfulCommandIsNotSidebarWorthy()
@@ -557,6 +558,88 @@ private enum ShellRuntimeMetadataTests {
             TerminalActivitySnapshot.primarySidebarActivity([success, failure]) == failure,
             "failed command completion must outrank successful completion"
         )
+    }
+
+    private static func verifiesTerminalActivityCodableUsesSnakeCase() {
+        let activity = TerminalActivitySnapshot(
+            source: TerminalActivitySource(kind: .codex, label: "Codex"),
+            status: .failed,
+            priority: .notable,
+            progress: nil,
+            command: TerminalActivityCommandOutcome(
+                exitCode: 2,
+                durationMilliseconds: 120_000,
+                commandText: "just check"
+            ),
+            agent: TerminalActivityAgentMetadata(
+                kind: .codex,
+                safeSessionLabel: "Codex",
+                projectLabel: "alan",
+                workingDirectory: "/Users/morris/Developer/alan"
+            ),
+            display: TerminalActivityDisplay(
+                sourceLabel: "Codex",
+                stateLabel: "Failed",
+                detailLabel: "just check",
+                paneHint: "1"
+            ),
+            freshness: TerminalActivityFreshness(
+                updatedAt: "2026-05-17T09:00:00Z",
+                staleAt: "2026-05-17T09:00:30Z",
+                expiresAt: "2026-05-17T09:05:00Z"
+            )
+        )
+
+        do {
+            let data = try JSONEncoder().encode(activity)
+            guard
+                let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                let command = root["command"] as? [String: Any],
+                let agent = root["agent"] as? [String: Any],
+                let display = root["display"] as? [String: Any],
+                let freshness = root["freshness"] as? [String: Any]
+            else {
+                fail("activity JSON must encode nested objects")
+            }
+
+            expect(command["exit_code"] as? Int == 2, "command JSON must use exit_code")
+            expect(
+                command["duration_milliseconds"] as? Int == 120_000,
+                "command JSON must use duration_milliseconds"
+            )
+            expect(command["command_text"] as? String == "just check", "command JSON must use command_text")
+            expect(!command.keys.contains("exitCode"), "command JSON must not use camelCase exitCode")
+            expect(
+                agent["safe_session_label"] as? String == "Codex",
+                "agent JSON must use safe_session_label"
+            )
+            expect(agent["project_label"] as? String == "alan", "agent JSON must use project_label")
+            expect(
+                agent["working_directory"] as? String == "/Users/morris/Developer/alan",
+                "agent JSON must use working_directory"
+            )
+            expect(display["source_label"] as? String == "Codex", "display JSON must use source_label")
+            expect(display["state_label"] as? String == "Failed", "display JSON must use state_label")
+            expect(display["detail_label"] as? String == "just check", "display JSON must use detail_label")
+            expect(display["pane_hint"] as? String == "1", "display JSON must use pane_hint")
+            expect(
+                freshness["updated_at"] as? String == "2026-05-17T09:00:00Z",
+                "freshness JSON must use updated_at"
+            )
+            expect(
+                freshness["stale_at"] as? String == "2026-05-17T09:00:30Z",
+                "freshness JSON must use stale_at"
+            )
+            expect(
+                freshness["expires_at"] as? String == "2026-05-17T09:05:00Z",
+                "freshness JSON must use expires_at"
+            )
+
+            let decoded = try JSONDecoder().decode(TerminalActivitySnapshot.self, from: data)
+            expect(decoded == activity, "activity JSON must round-trip through snake_case keys")
+        } catch {
+            fail("activity JSON contract failed: \(error)")
+        }
     }
 
     private static func verifiesSuccessfulCommandIsNotSidebarWorthy() {
