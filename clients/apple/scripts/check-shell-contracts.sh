@@ -939,6 +939,21 @@ require_pattern \
     "sidebar activity freshness must schedule refreshes for stale/expires deadlines"
 
 require_pattern \
+    "clients/apple/alan-macos/TerminalPaneView.swift" \
+    "activityFreshnessNow" \
+    "pane title activity freshness must be driven by state that can invalidate idle title bars"
+
+require_pattern \
+    "clients/apple/alan-macos/TerminalPaneView.swift" \
+    "task\\(id: activityFreshnessRefreshID\\)" \
+    "pane title activity freshness must schedule refreshes for stale/expires deadlines"
+
+require_pattern \
+    "clients/apple/alan-macos/TerminalPaneView.swift" \
+    "shellPaneActivityAccessoryLabel\\(for: pane, now: activityFreshnessNow\\)" \
+    "pane title activity labels must use the state-driven freshness clock"
+
+require_pattern \
     "clients/apple/alan-macos/Views/Shell/ShellSidebarView.swift" \
     "onFocusSplitPane: \\{ paneID in" \
     "sidebar split indicators must preserve direct clicked-pane targeting"

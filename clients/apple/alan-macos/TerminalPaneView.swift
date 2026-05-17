@@ -681,6 +681,7 @@ private struct ShellPaneTitleBarView: View {
     let isSelected: Bool
     let onFocusPane: () -> Void
     let onClosePane: () -> Void
+    @State private var activityFreshnessNow = Date()
 
     var body: some View {
         HStack(spacing: 8) {
@@ -729,12 +730,53 @@ private struct ShellPaneTitleBarView: View {
         }
         .contentShape(Rectangle())
         .onTapGesture(perform: onFocusPane)
+        .task(id: activityFreshnessRefreshID) {
+            await scheduleActivityFreshnessRefresh()
+        }
     }
+
+    private var activityFreshnessRefreshID: String {
+        nextActivityFreshnessExpiry(after: activityFreshnessNow)
+            .map { "\($0.timeIntervalSince1970)" } ?? "none"
+    }
+
+    private func scheduleActivityFreshnessRefresh() async {
+        guard let deadline = nextActivityFreshnessExpiry(after: activityFreshnessNow) else {
+            return
+        }
+
+        let delay = min(max(deadline.timeIntervalSinceNow, 0), 86_400)
+        if delay > 0 {
+            let nanoseconds = UInt64(delay * 1_000_000_000)
+            try? await Task.sleep(nanoseconds: nanoseconds)
+        }
+
+        guard !Task.isCancelled else { return }
+        await MainActor.run {
+            activityFreshnessNow = Date()
+        }
+    }
+
+    private func nextActivityFreshnessExpiry(after now: Date) -> Date? {
+        guard let activity = pane.activity else { return nil }
+
+        return [
+            activity.freshness.staleAt,
+            activity.freshness.expiresAt,
+        ]
+        .compactMap { value in
+            value.flatMap(Self.activityFreshnessFormatter.date(from:))
+        }
+        .filter { $0 > now }
+        .min()
+    }
+
+    private static let activityFreshnessFormatter = ISO8601DateFormatter()
 
     private var accessories: [ShellPaneTitleBarAccessory] {
         var items: [ShellPaneTitleBarAccessory] = []
 
-        if let activityLabel = shellPaneActivityAccessoryLabel(for: pane, now: Date()) {
+        if let activityLabel = shellPaneActivityAccessoryLabel(for: pane, now: activityFreshnessNow) {
             items.append(
                 ShellPaneTitleBarAccessory(
                     id: "activity",
