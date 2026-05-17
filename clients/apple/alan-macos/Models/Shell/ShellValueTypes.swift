@@ -153,6 +153,19 @@ enum TerminalActivityPriority: String, Codable, Equatable, CaseIterable {
     case active
     case notable
     case awaitingUser = "awaiting_user"
+
+    var sidebarPriorityRank: Int {
+        switch self {
+        case .awaitingUser:
+            return 40
+        case .notable:
+            return 30
+        case .active:
+            return 20
+        case .passive:
+            return 10
+        }
+    }
 }
 
 enum TerminalActivityProgressKind: String, Codable, Equatable, CaseIterable {
@@ -259,6 +272,20 @@ struct TerminalActivitySnapshot: Codable, Equatable {
     let freshness: TerminalActivityFreshness
 
     var isSidebarWorthy: Bool {
+        isSidebarWorthy(at: nil, owningTabFocused: false)
+    }
+
+    func isSidebarWorthy(at now: Date?, owningTabFocused: Bool = false) -> Bool {
+        if let now, !isFresh(at: now) {
+            return false
+        }
+        if owningTabFocused,
+           source.kind == .command,
+           status == .failed
+        {
+            return false
+        }
+
         switch status {
         case .needsInput, .failed, .paused, .progress, .running, .bell, .exited:
             return true
@@ -302,6 +329,24 @@ struct TerminalActivitySnapshot: Codable, Equatable {
         return true
     }
 
+    func withPaneHint(_ paneHint: String?) -> TerminalActivitySnapshot {
+        TerminalActivitySnapshot(
+            source: source,
+            status: status,
+            priority: priority,
+            progress: progress,
+            command: command,
+            agent: agent,
+            display: TerminalActivityDisplay(
+                sourceLabel: display.sourceLabel,
+                stateLabel: display.stateLabel,
+                detailLabel: display.detailLabel,
+                paneHint: paneHint
+            ),
+            freshness: freshness
+        )
+    }
+
     static func primarySidebarActivity(
         _ activities: [TerminalActivitySnapshot]
     ) -> TerminalActivitySnapshot? {
@@ -314,11 +359,17 @@ struct TerminalActivitySnapshot: Codable, Equatable {
     ) -> TerminalActivitySnapshot? {
         activities
             .filter { activity in
-                activity.isSidebarWorthy && now.map(activity.isFresh(at:)) != false
+                activity.isSidebarWorthy(at: now)
             }
             .max { lhs, rhs in
                 if lhs.sidebarPriorityRank == rhs.sidebarPriorityRank {
-                    return lhs.freshness.updatedAt < rhs.freshness.updatedAt
+                    if lhs.priority.sidebarPriorityRank == rhs.priority.sidebarPriorityRank {
+                        if lhs.freshness.updatedAt == rhs.freshness.updatedAt {
+                            return lhs.source.kind.rawValue < rhs.source.kind.rawValue
+                        }
+                        return lhs.freshness.updatedAt < rhs.freshness.updatedAt
+                    }
+                    return lhs.priority.sidebarPriorityRank < rhs.priority.sidebarPriorityRank
                 }
                 return lhs.sidebarPriorityRank < rhs.sidebarPriorityRank
             }
@@ -388,6 +439,55 @@ struct TerminalActivitySnapshot: Codable, Equatable {
             freshness: TerminalActivityFreshness(
                 updatedAt: Self.iso8601Formatter.string(from: now),
                 staleAt: Self.iso8601Formatter.string(from: now.addingTimeInterval(succeeded ? 8 : 30)),
+                expiresAt: nil
+            )
+        )
+    }
+
+    static func bellActivity(now: Date) -> TerminalActivitySnapshot {
+        TerminalActivitySnapshot(
+            source: TerminalActivitySource(kind: .shell, label: "Shell"),
+            status: .bell,
+            priority: .active,
+            progress: nil,
+            command: nil,
+            agent: nil,
+            display: TerminalActivityDisplay(
+                sourceLabel: "Shell",
+                stateLabel: "Bell",
+                detailLabel: nil,
+                paneHint: nil
+            ),
+            freshness: TerminalActivityFreshness(
+                updatedAt: Self.iso8601Formatter.string(from: now),
+                staleAt: nil,
+                expiresAt: Self.iso8601Formatter.string(from: now.addingTimeInterval(8))
+            )
+        )
+    }
+
+    static func processExitedActivity(exitCode: Int?, now: Date) -> TerminalActivitySnapshot {
+        let stateLabel = exitCode.map { "Exited \($0)" } ?? "Exited"
+        return TerminalActivitySnapshot(
+            source: TerminalActivitySource(kind: .process, label: "Process"),
+            status: .exited,
+            priority: .notable,
+            progress: nil,
+            command: TerminalActivityCommandOutcome(
+                exitCode: exitCode,
+                durationMilliseconds: nil,
+                commandText: nil
+            ),
+            agent: nil,
+            display: TerminalActivityDisplay(
+                sourceLabel: "Process",
+                stateLabel: stateLabel,
+                detailLabel: nil,
+                paneHint: nil
+            ),
+            freshness: TerminalActivityFreshness(
+                updatedAt: Self.iso8601Formatter.string(from: now),
+                staleAt: nil,
                 expiresAt: nil
             )
         )

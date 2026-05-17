@@ -3,10 +3,10 @@
 - [x] 1.1 Audit current terminal metadata sources in `GhosttyLiveHost`,
   `TerminalHostRuntime`, `TerminalRuntimeService`, `ShellHostController`, and
   `ShellPaneProjectionService`.
-- [ ] 1.2 Finalize normalized activity state names, source kinds, source-first
+- [x] 1.2 Finalize normalized activity state names, source kinds, source-first
   display labels, priority order, freshness rules, and user-facing labels for
   progress, command, Alan, and CLI agent states.
-- [ ] 1.3 Finalize sidebar row projection details for title, activity-or-context
+- [x] 1.3 Finalize sidebar row projection details for title, activity-or-context
   fallback, progress rail, leading topology/kind slot, and hover close overlay.
 - [ ] 1.4 Encode default notification policy for focused, visible, background,
   unfocused, successful, failed, and user-input-required activity.
@@ -20,13 +20,13 @@
   and source-first display labels.
 - [x] 2.2 Extend terminal metadata snapshots and shell projection paths to carry
   normalized activity without removing existing title/cwd/attention fields.
-- [ ] 2.3 Add deterministic activity merge and priority logic for concurrent
+- [x] 2.3 Add deterministic activity merge and priority logic for concurrent
   progress, command completion, bell, Alan, and agent signals, including
   tab-level highest-priority activity selection.
-- [ ] 2.4 Add unit/script coverage for activity merge order, stale progress,
+- [x] 2.4 Add unit/script coverage for activity merge order, stale progress,
   focused successful command completion exclusion from sidebar activity,
   progress-over-running priority, and user-input-required priority.
-- [ ] 2.5 Add freshness coverage for progress stale/clear, command failure
+- [x] 2.5 Add freshness coverage for progress stale/clear, command failure
   demotion after focus or timeout, brief bell, persistent exited state, and
   persistent needs-input/error until replaced.
 
@@ -36,9 +36,9 @@
   determinate, indeterminate, paused, error, clear, and stale states.
 - [x] 3.2 Map `GHOSTTY_ACTION_COMMAND_FINISHED` into command-completion activity
   with success/failure status and duration when available.
-- [ ] 3.3 Keep bell and child-exit attention compatible with the normalized
+- [x] 3.3 Keep bell and child-exit attention compatible with the normalized
   activity model without changing existing terminal overlay semantics.
-- [ ] 3.4 Add focused tests for progress update, progress clear, command success,
+- [x] 3.4 Add focused tests for progress update, progress clear, command success,
   command failure, and stale-progress timeout behavior.
 
 ## 4. CLI Coding-Agent Activity
@@ -54,20 +54,20 @@
 
 ## 5. Activity UI And Notifications
 
-- [ ] 5.1 Render normalized activity in pane title-bar accessories without
+- [x] 5.1 Render normalized activity in pane title-bar accessories without
   resizing pane title bars or terminal canvases.
-- [ ] 5.2 Refactor sidebar tab rows to show a leading topology/kind slot, title
+- [x] 5.2 Refactor sidebar tab rows to show a leading topology/kind slot, title
   line, activity-or-worktree/branch secondary line, optional same-source
   progress rail, and hover-only close overlay.
-- [ ] 5.3 Move split topology into the leading slot for split tabs and make
+- [x] 5.3 Move split topology into the leading slot for split tabs and make
   activation cycle focus through panes in stable order.
-- [ ] 5.4 Keep single-pane tabs on semantic kind or supported agent icons in the
+- [x] 5.4 Keep single-pane tabs on semantic kind or supported agent icons in the
   leading slot.
 - [ ] 5.5 Project pane title-bar accessories from pane-local detail: activity,
   worktree/cwd, branch, process, and non-duplicated agent/Alan state.
 - [ ] 5.6 Add low-noise notification routing for user-input-required, error, and
   long-command-complete events according to the task 1.4 policy.
-- [ ] 5.7 Add accessibility labels or values for activity state on pane and tab
+- [x] 5.7 Add accessibility labels or values for activity state on pane and tab
   affordances.
 - [ ] 5.8 Add visual review evidence for focused progress, background agent
   needs-input, command failure, cleared activity showing worktree/branch

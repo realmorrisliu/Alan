@@ -734,6 +734,19 @@ private struct ShellPaneTitleBarView: View {
     private var accessories: [ShellPaneTitleBarAccessory] {
         var items: [ShellPaneTitleBarAccessory] = []
 
+        if let activityLabel = shellPaneActivityAccessoryLabel(for: pane) {
+            items.append(
+                ShellPaneTitleBarAccessory(
+                    id: "activity",
+                    icon: activityIcon,
+                    title: activityLabel,
+                    help: activityLabel,
+                    tint: activityTint,
+                    maxWidth: 140
+                )
+            )
+        }
+
         if let status = shellTerminalStatusSummary(for: pane) {
             items.append(
                 ShellPaneTitleBarAccessory(
@@ -759,7 +772,9 @@ private struct ShellPaneTitleBarView: View {
             )
         }
 
-        if let binding = pane.alanBinding {
+        if let binding = pane.alanBinding,
+           pane.activity?.source.kind != .alan
+        {
             let bindingTitle = binding.pendingYield ? "Input" : shellVisibleLabel(binding.runStatus)
             items.append(
                 ShellPaneTitleBarAccessory(
@@ -774,6 +789,40 @@ private struct ShellPaneTitleBarView: View {
         }
 
         return items
+    }
+
+    private var activityIcon: String {
+        switch pane.activity?.status {
+        case .needsInput:
+            return "person.crop.circle.badge.exclamationmark"
+        case .failed:
+            return "exclamationmark.triangle"
+        case .paused:
+            return "pause.circle"
+        case .progress:
+            return "progress.indicator"
+        case .running:
+            return "play.circle"
+        case .bell:
+            return "bell"
+        case .exited:
+            return "rectangle.portrait.and.arrow.right"
+        case .done:
+            return "checkmark.circle"
+        case .idle, .stale, nil:
+            return "info.circle"
+        }
+    }
+
+    private var activityTint: Color {
+        switch pane.activity?.priority {
+        case .awaitingUser, .notable:
+            return ShellPalette.attention
+        case .active:
+            return ShellPalette.accent
+        case .passive, nil:
+            return ShellPalette.mutedInk
+        }
     }
 
     private var statusIcon: String {

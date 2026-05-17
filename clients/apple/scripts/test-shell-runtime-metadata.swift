@@ -35,6 +35,12 @@ private enum ShellRuntimeMetadataTests {
         verifiesClearingActivityRemovesPaneActivity()
         verifiesPublishedStateMergeClearsActivity()
         verifiesPaneRebuildMutationsPreserveActivity()
+        verifiesTabSidebarActivityProjectionUsesHighestPriorityPane()
+        verifiesTabSidebarProjectionFallsBackToRepositoryBranch()
+        verifiesSidebarProgressRailBelongsToDisplayedActivity()
+        verifiesFocusedCommandFailureDemotesFromSidebarProjection()
+        verifiesActivityFreshnessPolicies()
+        verifiesPaneTitleActivityAccessoryLabel()
         verifiesTerminalChildExitClosesSplitPane()
         verifiesTerminalChildExitClosesSinglePaneTab()
         verifiesTerminalChildExitCanLeaveEmptyFocusedSpace()
@@ -800,6 +806,236 @@ private enum ShellRuntimeMetadataTests {
         )
     }
 
+    private static func verifiesTabSidebarActivityProjectionUsesHighestPriorityPane() {
+        let controller = makeController()
+        _ = controller.splitPane(paneID: "pane_1", placement: .right)
+        let now = Date(timeIntervalSince1970: 1_779_008_400)
+        let progress = progressActivity(
+            percent: 42,
+            updatedAt: "2026-05-17T09:00:00Z",
+            staleAt: "2026-05-17T09:00:15Z"
+        )
+        let needsInput = activity(
+            status: .needsInput,
+            source: .codex,
+            sourceLabel: "Codex",
+            stateLabel: "Input needed",
+            updatedAt: "2026-05-17T09:00:01Z"
+        )
+
+        controller.updateTerminalMetadata(
+            metadata(title: "build", cwd: "/repo/app", activity: progress),
+            for: "pane_1"
+        )
+        controller.updateTerminalMetadata(
+            metadata(title: "codex", cwd: "/repo/app", activity: needsInput),
+            for: "pane_2"
+        )
+
+        guard let tab = controller.shellState.tab(tabID: "tab_main") else {
+            fail("test setup must keep the split tab")
+        }
+
+        let projection = shellSidebarTabProjection(
+            for: tab,
+            panes: controller.shellState.panes,
+            focusedPaneID: "pane_1",
+            focusedTabID: "tab_other",
+            now: now
+        )
+
+        expect(projection.activity?.status == .needsInput, "tab activity must pick the most actionable pane")
+        expect(
+            projection.secondaryLine == "Pane 2 · Codex · Input needed",
+            "background pane activity must include a short pane hint"
+        )
+        expect(projection.progress == nil, "non-progress displayed activity must not inherit another pane progress")
+    }
+
+    private static func verifiesTabSidebarProjectionFallsBackToRepositoryBranch() {
+        let tab = ShellTab(
+            tabID: "tab_1",
+            kind: .terminal,
+            title: nil,
+            paneTree: ShellPaneTreeNode(
+                nodeID: "node_pane_1",
+                kind: .pane,
+                direction: nil,
+                paneID: "pane_1",
+                children: nil
+            )
+        )
+        let testPane = pane(
+            context: context(
+                workingDirectoryName: "src",
+                repositoryRoot: "/Users/morris/Developer/alan",
+                gitBranch: "main",
+                processState: "running",
+                rendererHealth: "ready",
+                surfaceReadiness: "ready",
+                lastCommandExitCode: nil
+            ),
+            viewport: nil,
+            cwd: "/Users/morris/Developer/alan/crates/runtime",
+            attention: .idle
+        )
+
+        let projection = shellSidebarTabProjection(
+            for: tab,
+            panes: [testPane],
+            focusedPaneID: "pane_1",
+            focusedTabID: "tab_1",
+            now: nil
+        )
+
+        expect(projection.activity == nil, "idle panes must not produce tab activity")
+        expect(
+            projection.secondaryLine == "alan · main",
+            "sidebar context fallback must prefer repository/worktree leaf plus branch"
+        )
+    }
+
+    private static func verifiesSidebarProgressRailBelongsToDisplayedActivity() {
+        let controller = makeController()
+        _ = controller.splitPane(paneID: "pane_1", placement: .right)
+        let now = Date(timeIntervalSince1970: 1_779_008_400)
+        let progress = progressActivity(
+            percent: 64,
+            updatedAt: "2026-05-17T09:00:00Z",
+            staleAt: "2026-05-17T09:00:15Z"
+        )
+        let failed = activity(
+            status: .failed,
+            source: .codex,
+            sourceLabel: "Codex",
+            stateLabel: "Error",
+            updatedAt: "2026-05-17T09:00:01Z"
+        )
+
+        controller.updateTerminalMetadata(
+            metadata(title: "build", cwd: "/repo/app", activity: progress),
+            for: "pane_1"
+        )
+        controller.updateTerminalMetadata(
+            metadata(title: "codex", cwd: "/repo/app", activity: failed),
+            for: "pane_2"
+        )
+
+        guard let tab = controller.shellState.tab(tabID: "tab_main") else {
+            fail("test setup must keep the split tab")
+        }
+
+        let failedProjection = shellSidebarTabProjection(
+            for: tab,
+            panes: controller.shellState.panes,
+            focusedPaneID: "pane_1",
+            focusedTabID: "tab_other",
+            now: now
+        )
+        expect(failedProjection.secondaryLine == "Pane 2 · Codex · Error", "failed activity must outrank progress")
+        expect(failedProjection.progress == nil, "progress rail must not be shown for a different pane's progress")
+
+        controller.updateTerminalMetadata(
+            metadata(title: "codex", cwd: "/repo/app", clearsActivity: true),
+            for: "pane_2"
+        )
+        let progressProjection = shellSidebarTabProjection(
+            for: tab,
+            panes: controller.shellState.panes,
+            focusedPaneID: "pane_1",
+            focusedTabID: "tab_other",
+            now: now
+        )
+        expect(progressProjection.secondaryLine == "Progress · 64%", "progress activity must become visible after failure clears")
+        expect(progressProjection.progress == .percent(64), "progress rail must use the displayed activity progress")
+    }
+
+    private static func verifiesFocusedCommandFailureDemotesFromSidebarProjection() {
+        let controller = makeController()
+        let now = Date(timeIntervalSince1970: 1_779_008_400)
+        let failure = TerminalActivitySnapshot.commandCompletion(exitCode: 2, now: now)
+        controller.updateTerminalMetadata(
+            metadata(title: "fish", cwd: "/Users/morris/Developer/alan", activity: failure),
+            for: "pane_1"
+        )
+
+        guard let tab = controller.shellState.tab(tabID: "tab_main") else {
+            fail("test setup must keep the tab")
+        }
+
+        let focusedProjection = shellSidebarTabProjection(
+            for: tab,
+            panes: controller.shellState.panes,
+            focusedPaneID: "pane_1",
+            focusedTabID: "tab_main",
+            now: now
+        )
+        expect(focusedProjection.activity == nil, "focused command failure may demote from sidebar activity")
+
+        let backgroundProjection = shellSidebarTabProjection(
+            for: tab,
+            panes: controller.shellState.panes,
+            focusedPaneID: "pane_1",
+            focusedTabID: "tab_other",
+            now: now
+        )
+        expect(
+            backgroundProjection.secondaryLine == "Shell · Command failed 2",
+            "background command failure must remain sidebar-worthy"
+        )
+    }
+
+    private static func verifiesActivityFreshnessPolicies() {
+        let now = Date(timeIntervalSince1970: 1_779_008_400)
+        let bell = TerminalActivitySnapshot.bellActivity(now: now)
+        let exited = TerminalActivitySnapshot.processExitedActivity(exitCode: 2, now: now)
+        let needsInput = activity(
+            status: .needsInput,
+            source: .codex,
+            sourceLabel: "Codex",
+            stateLabel: "Input needed"
+        )
+
+        expect(
+            bell.isFresh(at: now.addingTimeInterval(7)),
+            "bell activity must remain briefly visible"
+        )
+        expect(
+            !bell.isFresh(at: now.addingTimeInterval(9)),
+            "bell activity must expire after the brief visibility window"
+        )
+        expect(
+            exited.isFresh(at: now.addingTimeInterval(3_600)),
+            "process-exited activity must persist until the pane is closed or replaced"
+        )
+        expect(
+            needsInput.isFresh(at: now.addingTimeInterval(3_600)),
+            "needs-input activity must persist until replaced"
+        )
+    }
+
+    private static func verifiesPaneTitleActivityAccessoryLabel() {
+        let paneWithProgress = pane(
+            context: context(
+                processState: "running",
+                rendererHealth: "ready",
+                surfaceReadiness: "ready",
+                lastCommandExitCode: nil
+            ),
+            viewport: nil,
+            attention: .idle,
+            activity: TerminalActivitySnapshot.progressActivity(
+                percent: 42,
+                now: Date(timeIntervalSince1970: 1_779_008_400)
+            )
+        )
+
+        expect(
+            shellPaneActivityAccessoryLabel(for: paneWithProgress) == "Progress · 42%",
+            "pane title activity accessory must expose source-first activity copy"
+        )
+    }
+
     private static func verifiesTerminalChildExitClosesSplitPane() {
         let controller = makeController()
         _ = controller.splitPane(paneID: "pane_1", placement: .right)
@@ -1297,7 +1533,8 @@ private enum ShellRuntimeMetadataTests {
         cwd: String? = "/Users/morris/Developer/Alan",
         launchTarget: ShellLaunchTarget = .shell,
         process: ShellProcessBinding? = ShellProcessBinding(program: "fish", argvPreview: nil),
-        attention: ShellAttentionState
+        attention: ShellAttentionState,
+        activity: TerminalActivitySnapshot? = nil
     ) -> ShellPane {
         ShellPane(
             paneID: "pane_1",
@@ -1309,12 +1546,15 @@ private enum ShellRuntimeMetadataTests {
             attention: attention,
             context: context,
             viewport: viewport,
+            activity: activity,
             alanBinding: nil
         )
     }
 
     private static func context(
         workingDirectoryName: String? = "alan",
+        repositoryRoot: String? = nil,
+        gitBranch: String? = nil,
         processState: String,
         rendererHealth: String,
         surfaceReadiness: String,
@@ -1322,8 +1562,8 @@ private enum ShellRuntimeMetadataTests {
     ) -> ShellContextSnapshot {
         ShellContextSnapshot(
             workingDirectoryName: workingDirectoryName,
-            repositoryRoot: nil,
-            gitBranch: nil,
+            repositoryRoot: repositoryRoot,
+            gitBranch: gitBranch,
             controlPath: nil,
             alanBindingFile: nil,
             launchStrategy: nil,
