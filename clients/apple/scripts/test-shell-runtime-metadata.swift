@@ -46,6 +46,8 @@ private enum ShellRuntimeMetadataTests {
         verifiesPaneTitleActivityAccessoryLabel()
         verifiesActivityNotificationPolicyIsLowNoise()
         verifiesControllerRoutesActivityNotificationsOnce()
+        verifiesProcessExitNotificationRoutesBeforeAutoClose()
+        verifiesProcessExitRuntimeNotificationRoutesBeforeAutoClose()
         verifiesTerminalChildExitClosesSplitPane()
         verifiesTerminalChildExitClosesSinglePaneTab()
         verifiesTerminalChildExitCanLeaveEmptyFocusedSpace()
@@ -1413,6 +1415,100 @@ private enum ShellRuntimeMetadataTests {
         )
     }
 
+    private static func verifiesProcessExitNotificationRoutesBeforeAutoClose() {
+        let controller = makeController()
+        _ = controller.openTerminalTab(workingDirectory: "/second")
+        controller.focus(paneID: "pane_1")
+
+        let processExitActivity = TerminalActivitySnapshot.processExitedActivity(
+            exitCode: 0,
+            now: Date(timeIntervalSince1970: 1_779_008_400)
+        )
+
+        controller.updateTerminalMetadata(
+            childExitMetadata(title: "fish", exitCode: 0, activity: processExitActivity),
+            for: "pane_2"
+        )
+
+        expect(controller.pane(paneID: "pane_2") == nil, "child exit must still close the pane")
+        expect(
+            controller.activityNotifications.count == 1,
+            "process-exit activity must route before auto-close removes the pane"
+        )
+        expect(
+            controller.activityNotifications.first?.kind == .processExited,
+            "auto-closed process exit must preserve the notification kind"
+        )
+        expect(
+            controller.activityNotifications.first?.paneID == "pane_2",
+            "auto-closed process exit notification must point at the exiting pane"
+        )
+    }
+
+    private static func verifiesProcessExitRuntimeNotificationRoutesBeforeAutoClose() {
+        let controller = makeController()
+        _ = controller.openTerminalTab(workingDirectory: "/second")
+        controller.focus(paneID: "pane_1")
+        guard let exitingPane = controller.pane(paneID: "pane_2") else {
+            fail("test setup must create a background pane")
+        }
+
+        let processExitActivity = TerminalActivitySnapshot.processExitedActivity(
+            exitCode: 130,
+            now: Date(timeIntervalSince1970: 1_779_008_400)
+        )
+
+        controller.updateTerminalRuntime(
+            TerminalHostRuntimeSnapshot(
+                stage: .windowAttached,
+                paneID: exitingPane.paneID,
+                tabID: exitingPane.tabID,
+                logicalSize: .zero,
+                backingSize: .zero,
+                displayName: "Studio Display",
+                displayID: "display_1",
+                attachedWindowTitle: "alan",
+                isFocused: false,
+                renderer: TerminalRendererSnapshot(
+                    kind: .ghosttyLive,
+                    phase: .surfaceReady,
+                    summary: "surface ready",
+                    detail: nil,
+                    failureReason: nil,
+                    recentEvents: []
+                ),
+                paneMetadata: childExitMetadata(
+                    title: "fish",
+                    exitCode: 130,
+                    activity: processExitActivity
+                ),
+                surfaceState: AlanTerminalSurfaceStateSnapshot(
+                    readiness: .unready(reason: .childExited),
+                    terminalMode: .normalBuffer,
+                    scrollback: .empty,
+                    search: nil,
+                    readonly: false,
+                    secureInput: false,
+                    inputReady: false,
+                    rendererHealth: "surface_ready",
+                    childExited: true,
+                    lastUpdatedAt: Date(timeIntervalSince1970: 2_001)
+                ),
+                lastUpdatedAt: Date(timeIntervalSince1970: 2_002)
+            )
+        )
+
+        expect(controller.pane(paneID: "pane_2") == nil, "runtime child exit must still close the pane")
+        expect(
+            controller.activityNotifications.count == 1,
+            "runtime process-exit activity must route before auto-close removes the pane"
+        )
+        expect(
+            controller.activityNotifications.first?.kind == .processExited,
+            "runtime auto-closed process exit must preserve the notification kind"
+        )
+    }
+
     private static func verifiesTerminalChildExitClosesSplitPane() {
         let controller = makeController()
         _ = controller.splitPane(paneID: "pane_1", placement: .right)
@@ -2062,7 +2158,8 @@ private enum ShellRuntimeMetadataTests {
     private static func childExitMetadata(
         title: String,
         cwd: String = "/Users/morris/Developer/Alan",
-        exitCode: Int
+        exitCode: Int,
+        activity: TerminalActivitySnapshot? = nil
     ) -> TerminalPaneMetadataSnapshot {
         TerminalPaneMetadataSnapshot(
             title: title,
@@ -2072,7 +2169,8 @@ private enum ShellRuntimeMetadataTests {
             processExited: true,
             lastCommandExitCode: exitCode,
             lastUpdatedAt: Date(timeIntervalSince1970: 3_100),
-            activeTaskState: .inactive
+            activeTaskState: .inactive,
+            activity: activity
         )
     }
 

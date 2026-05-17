@@ -809,6 +809,12 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
                 processExited: runtimeProcessExited,
                 for: paneID
             )
+            let projectedActivity = runtime.paneMetadata.clearsActivity
+                ? nil
+                : (runtime.paneMetadata.activity ?? pane.activity)
+            if runtimeProcessExited {
+                routeActivityNotificationIfNeeded(from: pane, nextActivity: projectedActivity)
+            }
             if closePaneAfterChildExitIfNeeded(paneID: paneID, processExited: runtimeProcessExited) {
                 return
             }
@@ -835,9 +841,6 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
                     metadata: runtime.paneMetadata,
                     runtime: runtime
                 )
-                let projectedActivity = runtime.paneMetadata.clearsActivity
-                    ? nil
-                    : (runtime.paneMetadata.activity ?? current.activity)
                 return ShellPane(
                     paneID: current.paneID,
                     tabID: current.tabID,
@@ -877,6 +880,10 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
             processExited: metadataProcessExited,
             for: paneID
         )
+        let projectedActivity = metadata.clearsActivity ? nil : (metadata.activity ?? pane.activity)
+        if metadataProcessExited {
+            routeActivityNotificationIfNeeded(from: pane, nextActivity: projectedActivity)
+        }
         if closePaneAfterChildExitIfNeeded(paneID: paneID, processExited: metadataProcessExited) {
             return
         }
@@ -906,7 +913,6 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
                 metadata: metadata,
                 runtime: runtime
             )
-            let projectedActivity = metadata.clearsActivity ? nil : (metadata.activity ?? current.activity)
 
             return ShellPane(
                 paneID: current.paneID,
@@ -1076,6 +1082,24 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
 
     private func routeActivityNotificationIfNeeded(
         from existingPane: ShellPane,
+        nextActivity: TerminalActivitySnapshot?
+    ) {
+        guard existingPane.activity != nextActivity,
+              let activity = nextActivity,
+              let tab = shellState.tab(tabID: existingPane.tabID)
+        else {
+            return
+        }
+
+        routeActivityNotificationIfNeeded(
+            activity: activity,
+            pane: existingPane,
+            tab: tab
+        )
+    }
+
+    private func routeActivityNotificationIfNeeded(
+        from existingPane: ShellPane,
         to updatedPane: ShellPane
     ) {
         guard existingPane.activity != updatedPane.activity,
@@ -1085,13 +1109,25 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
             return
         }
 
-        let key = shellActivityNotificationKey(for: activity, paneID: updatedPane.paneID)
+        routeActivityNotificationIfNeeded(
+            activity: activity,
+            pane: updatedPane,
+            tab: tab
+        )
+    }
+
+    private func routeActivityNotificationIfNeeded(
+        activity: TerminalActivitySnapshot,
+        pane: ShellPane,
+        tab: ShellTab
+    ) {
+        let key = shellActivityNotificationKey(for: activity, paneID: pane.paneID)
         guard !routedActivityNotificationKeys.contains(key),
               let route = shellActivityNotificationRoute(
                   for: activity,
-                  pane: updatedPane,
+                  pane: pane,
                   tab: tab,
-                  visibility: activityNotificationVisibility(for: updatedPane),
+                  visibility: activityNotificationVisibility(for: pane),
                   now: .now
               )
         else {
