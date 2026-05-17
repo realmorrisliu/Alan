@@ -329,6 +329,26 @@ require_pattern \
     "foreground command duration tracking must preserve the original command start time"
 
 require_pattern \
+    "clients/apple/alan-macos/GhosttyLiveHost.swift" \
+    "private var queuedForegroundCommandSubmissions = 0" \
+    "foreground command duration tracking must retain queued pasted command submissions"
+
+require_pattern \
+    "clients/apple/alan-macos/GhosttyLiveHost.swift" \
+    "private func commandSubmissionCount\\(in text: String\\)" \
+    "foreground command duration tracking must count newline-delimited pasted commands"
+
+require_pattern \
+    "clients/apple/alan-macos/GhosttyLiveHost.swift" \
+    "advanceForegroundCommandTracking" \
+    "foreground command duration tracking must re-arm after queued command completion"
+
+require_pattern \
+    "clients/apple/alan-macos/GhosttyLiveHost.swift" \
+    "hasQueuedForegroundCommand \\? \\.foregroundCommand : \\.inactive" \
+    "queued pasted commands must keep tab activity protected until the final completion"
+
+require_pattern \
     "clients/apple/alan-macos/TerminalPaneView.swift" \
     "\\.id\\(pane\\.paneID\\)" \
     "terminal host views must be keyed by stable pane identity"
