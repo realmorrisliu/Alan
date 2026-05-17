@@ -313,14 +313,15 @@ reintroduce hard-coded visual effects.
 
 ### Requirement: Branding and project identity checks run with Apple validation
 Apple-client validation SHALL include focused checks that protect the canonical
-`alan` product brand, `alan for macOS` platform label, and `alan-macos`
+`Alan` product brand, `Alan for macOS` platform label, and `alan-macos`
 engineering identity.
 
 #### Scenario: Brand scan runs
 - **WHEN** Apple-client validation runs for a branding or project rename change
 - **THEN** it scans active Apple source, scripts, docs, project metadata, and
-  active OpenSpec changes for non-allowlisted `Alan`, `AlanNative`,
-  `Alan Shell`, `alanterm`, and `dev.alan.native` occurrences
+  active OpenSpec changes for non-allowlisted `AlanNative`, `Alan Shell`,
+  `alanterm`, `dev.alan.native`, `alan.app`, `alan for macOS`, and lowercase
+  generated app metadata occurrences
 - **AND** it reports the expected canonical replacement for each violation
 
 #### Scenario: Renamed Xcode build runs
@@ -328,11 +329,103 @@ engineering identity.
 - **THEN** the documented Xcode build command uses
   `clients/apple/alan-macos.xcodeproj`, scheme `alan-macos`, configuration
   `Debug`, destination `platform=macOS`, and the shared derived-data path
-- **AND** the build produces `alan.app`
+- **AND** the build produces `Alan.app`
 
 #### Scenario: Focused scripts are updated
 - **WHEN** focused Apple shell scripts are run after the rename
 - **THEN** they read source files from `clients/apple/alan-macos`
 - **AND** script defaults such as bundle identifiers, capture helpers, and
-  architecture checks use the new app identity instead of `AlanNative` or
+  architecture checks use the current app identity instead of `AlanNative` or
   `dev.alan.native`
+
+### Requirement: Workspace persistence verification covers Tab lifecycle
+Changes to macOS shell workspace persistence SHALL include focused verification for manifest startup, Space retention, Pinned Tab restore snapshots, Unpinned Tab TTL retirement, and active-task retirement protection.
+
+#### Scenario: Manifest startup behavior is tested
+- **WHEN** workspace persistence changes are implemented
+- **THEN** focused tests cover missing manifest default creation and corrupt manifest quarantine with fresh default startup
+
+#### Scenario: Space retention is tested
+- **WHEN** tab close or lifecycle retirement can leave a Space without Tabs
+- **THEN** focused tests or manual notes verify the Space remains visible and selected with an empty workspace state
+
+#### Scenario: Pinned Tab restore is tested
+- **WHEN** Pinned Tab persistence is implemented
+- **THEN** focused tests cover single-pane cwd restoration, split layout restoration, and the fact that post-pin transient split/cwd changes do not update the pin snapshot without an explicit update-pin action
+
+#### Scenario: Unpinned Tab TTL is tested
+- **WHEN** Unpinned Tab lifecycle pruning is implemented
+- **THEN** focused tests cover retained Tabs inside the 12 hour TTL, retired inactive Tabs after the TTL, and selection repair when the selected Tab is retired
+
+#### Scenario: Active tasks are tested
+- **WHEN** terminal-aware active-task metadata is used for pruning
+- **THEN** focused tests cover foreground command protection, alan pending/yield protection, and idle shell eligibility for retirement
+
+### Requirement: Sidebar interaction refinement has focused verification
+The Apple client SHALL include focused automated checks or documented manual
+verification for sidebar selection/focus convergence, sidebar-local space pager
+behavior, and coordinated sidebar/window-chrome motion when those interactions
+are changed.
+
+#### Scenario: Sidebar selection convergence tested
+- **WHEN** sidebar tab or space selection behavior changes
+- **THEN** focused tests verify that selecting a tab or space updates shell focused pane, selected tab, selected space, and terminal runtime focus consistently
+- **AND** tests or contract checks cover the case where runtime metadata arrives immediately after selection without reverting to the previous tab
+
+#### Scenario: Sidebar-local space pager gesture tested
+- **WHEN** horizontal space swipe behavior changes
+- **THEN** focused tests cover undecided-axis buffering, horizontal intent lock, vertical scroll pass-through, stable five-page rendering around the source space, one-page-plus-overdrag drag clamping, edge resistance, commit threshold, cancel threshold, phaseful release, phase-less idle release, and fast flick velocity commit
+- **AND** verification confirms only the sidebar active-space header and tab list move during the gesture
+- **AND** verification confirms the command input, bottom space switcher, sidebar chrome, traffic lights, and workspace terminal surface remain fixed during the gesture
+
+#### Scenario: Pinned sidebar motion reviewed
+- **WHEN** pinned sidebar collapse or expansion behavior changes
+- **THEN** maintainers can inspect automated invariants, screenshots, or manual notes showing that the sidebar surface, workspace inset, titlebar controls, and standard macOS traffic-light controls move as one coordinated transition
+- **AND** verification covers the revealed-floating-sidebar to pinned-sidebar morph and confirms there is no intermediate hidden/offscreen/duplicated sidebar frame
+- **AND** focused checks or contract checks confirm the presentation model, not independent pinned/floating booleans alone, drives the sidebar surface and window chrome values used during that morph
+
+#### Scenario: Floating sidebar chrome reviewed
+- **WHEN** collapsed floating-sidebar reveal or hide behavior changes
+- **THEN** focused checks or manual notes verify narrow edge hover, window-level hover retention, stable terminal workspace geometry, native traffic-light behavior, and no visible traffic-light jump from the non-floating corner
+- **AND** verification covers a visible-frame-zoomed window where the pointer moves through the left window resize frame without causing the revealed floating sidebar to auto-hide
+- **AND** verification confirms that native window resizing still works from the left resize frame
+
+### Requirement: Release installation replaces the debug app runner
+The Apple client build/test contract SHALL treat release-shaped installation as
+the supported local app workflow. The repository MUST NOT require or preserve a
+`just app` workflow that force-kills and relaunches the macOS app.
+
+#### Scenario: Local app workflow is validated
+- **WHEN** Apple client workflow checks inspect the justfile and app scripts
+- **THEN** they verify `just install` is the documented local app installation path
+- **AND** they verify the justfile does not expose a recipe named `app`
+- **AND** they verify the justfile does not expose a replacement debug app runner recipe for the same force-rebuild-and-launch workflow
+
+#### Scenario: Legacy debug runner is removed
+- **WHEN** Apple client contract checks inspect app runner scripts
+- **THEN** they do not require `clients/apple/scripts/run-alan-debug-app.sh` as the supported app workflow
+- **AND** they fail if a default local app workflow kills a running `Alan.app` process and immediately relaunches it
+
+### Requirement: Release packaging has focused validation
+The Apple client SHALL provide focused validation for the release app package,
+embedded CLI/TUI binaries, Developer ID signatures, and publication readiness
+when distribution packaging changes.
+
+#### Scenario: Release app layout is checked
+- **WHEN** release packaging implementation is ready for review
+- **THEN** focused checks verify `Alan.app` was built in Release configuration
+- **AND** focused checks verify embedded `Contents/Resources/bin/alan` and `Contents/Resources/bin/alan-tui` exist and are executable
+- **AND** focused checks verify the embedded binaries are the release binaries from the current build
+- **AND** focused checks verify the package manifest SHA-256 values are recorded after embedded binary signing and match the delivered embedded binaries
+
+#### Scenario: Signatures are checked
+- **WHEN** release packaging implementation is ready for review
+- **THEN** focused checks verify the embedded CLI and TUI are signed with the configured Developer ID Application identity
+- **AND** focused checks verify the embedded TUI includes the hardened-runtime entitlement required by its standalone runtime
+- **AND** focused checks verify the app bundle is signed after embedded binaries are in place
+- **AND** focused checks fail if ad-hoc signatures are used for local install or release artifacts
+
+#### Scenario: Publication readiness is checked
+- **WHEN** an artifact is intended for Homebrew cask or direct public download
+- **THEN** focused checks verify notarization and stapling completed successfully
+- **AND** focused checks verify the cask metadata links the embedded CLI and TUI from the installed app bundle

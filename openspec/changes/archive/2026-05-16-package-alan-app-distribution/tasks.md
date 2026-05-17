@@ -49,17 +49,17 @@
 
 ## 6. Verification
 
-Local note: full signed assembly/install verification is pending because the
-current keychain reports no valid Developer ID signing identities.
+Local note: 2026-05-17 user confirmed the complete local signing flow can finish
+with complete signing and notarization credentials.
 
 - [x] 6.1 Run `just --list` and verify it includes `install` but not `app` or `app-debug-run`.
-- [ ] 6.1a Run `just release-check` with complete local signing and notarization credentials.
-- [ ] 6.2 Run the release assembly validation with a Developer ID signing identity configured.
-- [ ] 6.3 Run `just install` and verify it installs the signed app plus PATH symlinks without killing or launching `Alan.app`.
+- [x] 6.1a Run `just release-check` with complete local signing and notarization credentials.
+- [x] 6.2 Run the release assembly validation with a Developer ID signing identity configured.
+- [x] 6.3 Run `just install` and verify it installs the signed app plus PATH symlinks without killing or launching `Alan.app`.
 - [x] 6.4 Verify direct app command-line tool install behavior for missing CLI/TUI entries, existing Homebrew links in any detected prefix, non-alan-owned target files, and no `~/.alan/bin` writes.
 - [x] 6.5 Run focused Apple checks including `clients/apple/scripts/check-shell-contracts.sh`, the direct installer test, and a macOS target build.
 - [x] 6.6 Validate Homebrew cask metadata locally against the generated release artifact or template.
-- [ ] 6.7 Run release app package/signature validation against a signed assembled app.
+- [x] 6.7 Run release app package/signature validation against a signed assembled app.
 - [x] 6.8 Run `openspec validate package-alan-app-distribution --strict` after spec or implementation changes.
 - [x] 6.9 Run `openspec validate --all --strict` before opening or updating a PR.
 
@@ -67,6 +67,6 @@ current keychain reports no valid Developer ID signing identities.
 
 - [x] 7.1 Keep `proposal.md`, `design.md`, `tasks.md`, and delta specs aligned if implementation discoveries change the distribution contract.
 - [x] 7.2 Prepare PR notes that call out the breaking removal of `just app` and the Developer ID signing requirement.
-- [ ] 7.3 Before archiving, sync accepted `alan-app-distribution` requirements into `openspec/specs/alan-app-distribution/spec.md`.
-- [ ] 7.4 Before archiving, sync accepted `macos-shell-build-test-contract` delta requirements into `openspec/specs/macos-shell-build-test-contract/spec.md`.
-- [ ] 7.5 Before archiving, validate the full OpenSpec tree and confirm the release packaging docs match the implemented scripts.
+- [x] 7.3 Before archiving, sync accepted `alan-app-distribution` requirements into `openspec/specs/alan-app-distribution/spec.md`.
+- [x] 7.4 Before archiving, sync accepted `macos-shell-build-test-contract` delta requirements into `openspec/specs/macos-shell-build-test-contract/spec.md`.
+- [x] 7.5 Before archiving, validate the full OpenSpec tree and confirm the release packaging docs match the implemented scripts.

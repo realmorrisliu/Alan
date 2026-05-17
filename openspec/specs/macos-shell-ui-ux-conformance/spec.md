@@ -35,15 +35,27 @@ hover, while keeping the terminal workspace stable.
 - **WHEN** the pointer moves from the edge hot zone onto the floating sidebar panel or collapsed titlebar controls
 - **THEN** the floating panel remains revealed until the pointer leaves those related surfaces
 
+#### Scenario: Window-edge hover retention
+- **WHEN** the sidebar is collapsed, the floating panel is revealed, and the pointer crosses from the edge hot zone or floating panel into the left window resize frame
+- **THEN** alan treats that pointer position as part of the collapsed-sidebar reveal neighborhood and keeps the floating panel revealed
+- **AND** alan does not schedule a hide merely because AppKit has switched the cursor or hit-test state to a window-resize affordance
+- **AND** native window resizing remains available if the user presses and drags in the resize frame
+
+#### Scenario: Visible-frame zoom edge retention
+- **WHEN** the shell window has been double-click zoomed to the current screen's visible work area and its left edge is flush with the usable screen boundary
+- **AND** the sidebar is collapsed and revealed from the left edge
+- **THEN** moving the pointer along the left edge or through the resize-cursor strip does not cause the floating sidebar to auto-hide while the pointer remains in the window-level reveal neighborhood
+
 #### Scenario: Floating panel owns traffic lights
 - **WHEN** the sidebar is collapsed and the floating panel is hidden
 - **THEN** the standard macOS traffic-light controls are hidden with the sidebar surface instead of remaining on the bare window corner
 - **AND WHEN** the floating sidebar panel is revealed
-- **THEN** the standard macOS traffic-light controls reappear on that floating sidebar surface without appearing ahead of the panel reveal timing or changing terminal workspace geometry
+- **THEN** the standard macOS traffic-light controls reappear on that floating sidebar surface without appearing ahead of the panel reveal timing, jumping from the non-floating corner, or changing terminal workspace geometry
 
 #### Scenario: Floating panel motion
 - **WHEN** reduced motion is disabled
 - **THEN** the floating sidebar panel enters with a short spring-like leading-edge reveal and exits with a faster low-emphasis hide animation
+- **AND** the standard macOS traffic-light controls and lightweight sidebar titlebar controls move with the visible floating surface instead of snapping after the panel has moved
 
 #### Scenario: Reduced motion respected
 - **WHEN** reduced motion is enabled
@@ -619,25 +631,59 @@ interaction state rather than decorate every translucent control.
 - **THEN** micro indicators, compact controls, rows, floating inputs, primary surfaces, collapsed panels, and semantic pill inputs use the shared shell radius roles instead of local one-off values
 
 ### Requirement: Visible macOS app copy follows product brand identity
-The default macOS app UI SHALL render the public product brand as `alan` and
-SHALL use `alan for macOS` only where platform distinction is useful.
+The default macOS app UI SHALL render the public product brand as `Alan` and
+SHALL use `Alan for macOS` only where platform distinction is useful.
 
 #### Scenario: App chrome is visible
 - **WHEN** the Dock name, app menu, window title, toolbar labels, command
   palette labels, sidebar buttons, help text, or accessibility labels name the
   product
-- **THEN** they use lowercase `alan`
-- **AND** they do not use `Alan`, `AlanNative`, `alanterm`, or `Alan Shell` as
-  visible product names
+- **THEN** they use `Alan`
+- **AND** they do not use lowercase `alan`, `AlanNative`, `alanterm`, or
+  `Alan Shell` as visible product names
 
 #### Scenario: Terminal app category is visible
 - **WHEN** the UI or docs explain the native app's category
 - **THEN** they call it a terminal emulator or terminal workspace
 - **AND** they do not call the product a shell
 
-#### Scenario: Shell is a technical command namespace
-- **WHEN** a debug-only surface, script, or CLI-oriented help message refers to
-  the `alan shell` namespace
-- **THEN** it presents that phrase as literal command syntax or control-plane
-  implementation language
-- **AND** the default product UI remains `alan`, not `alan shell`
+### Requirement: Pinned sidebar motion is continuous and coordinated
+Pinned sidebar collapse and expansion SHALL be represented as a coordinated
+motion of the sidebar surface, workspace inset, lightweight sidebar titlebar
+controls, and standard macOS traffic-light controls rather than as independent
+insertions, removals, or frame jumps.
+
+The shell SHALL derive pinned, collapsed, floating, and floating-to-pinned
+sidebar presentation from one presentation model so the visible sidebar surface
+and window chrome share one transition state.
+
+#### Scenario: Sidebar collapses
+- **WHEN** the user hides the pinned sidebar and reduced motion is disabled
+- **THEN** the sidebar surface moves or narrows out with a short, crisp animation
+- **AND** the terminal workspace adjusts its leading inset continuously with the sidebar motion
+- **AND** lightweight sidebar titlebar controls and standard macOS traffic-light controls move with the same visual timing instead of jumping to their final positions
+
+#### Scenario: Sidebar expands
+- **WHEN** the user pins or expands the sidebar and reduced motion is disabled
+- **THEN** the sidebar surface, terminal workspace inset, lightweight sidebar titlebar controls, and standard macOS traffic-light controls move together with a short, non-dragging animation
+- **AND** the expanded state settles without delayed toolbar drift or terminal content relayout after the visual motion has completed
+
+#### Scenario: Revealed floating sidebar pins without hiding first
+- **WHEN** the sidebar is collapsed, the floating sidebar panel is revealed, and the user chooses Pin Sidebar from that visible panel
+- **THEN** alan morphs the visible floating surface into the pinned sidebar position instead of first hiding the floating panel and then expanding a separate pinned surface
+- **AND** no rendered frame shows the sidebar absent, offscreen, or duplicated between the floating panel and pinned surface
+- **AND** the terminal workspace inset opens continuously during the morph rather than jumping after the panel disappears
+
+#### Scenario: Unified presentation owns chrome during pin morph
+- **WHEN** a revealed floating sidebar is pinning into the pinned layout
+- **THEN** the lightweight titlebar controls and standard macOS traffic-light controls follow the same interpolated sidebar surface origin
+- **AND** traffic lights remain native AppKit controls rather than SwiftUI replicas
+- **AND** the final pinned state clears transient floating reveal state only after the visible morph has settled
+
+#### Scenario: Reduced motion collapse
+- **WHEN** reduced motion is enabled and the pinned sidebar is hidden or shown
+- **THEN** alan avoids springy movement while still applying one coherent final layout for sidebar surface, workspace inset, titlebar controls, and traffic-light controls
+
+#### Scenario: Native traffic-light behavior preserved
+- **WHEN** sidebar or titlebar chrome moves during pinned or floating sidebar transitions
+- **THEN** alan continues using the standard macOS traffic-light controls for close, minimize, and zoom behavior rather than drawing custom replacements

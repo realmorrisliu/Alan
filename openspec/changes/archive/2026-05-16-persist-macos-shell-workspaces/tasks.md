@@ -38,4 +38,4 @@
 - [x] 5.6 Run the macOS app build or document the exact local dependency blocker.
 - [x] 5.7 Validate `persist-macos-shell-workspaces` with `openspec validate persist-macos-shell-workspaces --strict`.
 - [x] 5.8 Run `openspec validate --all --strict` and `git diff --check`.
-- [ ] 5.9 After implementation is merged, sync accepted requirements into `openspec/specs/` and prepare archive-readiness notes.
+- [x] 5.9 After implementation is merged, sync accepted requirements into `openspec/specs/` and prepare archive-readiness notes.
