@@ -47,6 +47,7 @@ private enum ShellRuntimeMetadataTests {
         verifiesPaneTitleActivityAccessoryLabel()
         verifiesActivityNotificationPolicyIsLowNoise()
         verifiesControllerRoutesActivityNotificationsOnce()
+        verifiesControllerRoutesDistinctActivityPayloadsInSameSecond()
         verifiesInactiveAppRoutesFocusedPaneNotifications()
         verifiesProcessExitNotificationRoutesBeforeAutoClose()
         verifiesProcessExitRuntimeNotificationRoutesBeforeAutoClose()
@@ -1448,6 +1449,62 @@ private enum ShellRuntimeMetadataTests {
         )
     }
 
+    private static func verifiesControllerRoutesDistinctActivityPayloadsInSameSecond() {
+        let controller = makeController()
+        _ = controller.openTerminalTab()
+        guard let backgroundPane = controller.shellState.panes.first(where: { $0.paneID != "pane_1" }) else {
+            fail("test setup must create a background pane")
+        }
+        controller.focus(paneID: "pane_1")
+
+        let firstNeedsInput = activity(
+            status: .needsInput,
+            source: .codex,
+            sourceLabel: "Codex",
+            stateLabel: "Input needed",
+            detailLabel: "Review plan",
+            agent: .init(
+                kind: .codex,
+                safeSessionLabel: "codex",
+                projectLabel: "alan",
+                workingDirectory: "/Users/morris/Developer/alan"
+            ),
+            updatedAt: "2026-05-17T09:00:00Z"
+        )
+        let secondNeedsInput = activity(
+            status: .needsInput,
+            source: .codex,
+            sourceLabel: "Codex",
+            stateLabel: "Input needed",
+            detailLabel: "Approve changes",
+            agent: .init(
+                kind: .codex,
+                safeSessionLabel: "codex",
+                projectLabel: "alan",
+                workingDirectory: "/Users/morris/Developer/alan"
+            ),
+            updatedAt: "2026-05-17T09:00:00Z"
+        )
+
+        controller.updateTerminalMetadata(
+            metadata(title: "codex", cwd: "/repo/app", activity: firstNeedsInput),
+            for: backgroundPane.paneID
+        )
+        controller.updateTerminalMetadata(
+            metadata(title: "codex", cwd: "/repo/app", activity: secondNeedsInput),
+            for: backgroundPane.paneID
+        )
+
+        expect(
+            controller.activityNotifications.count == 2,
+            "distinct same-second activity payloads must each route a notification"
+        )
+        expect(
+            controller.activityNotifications.first?.id != controller.activityNotifications.last?.id,
+            "notification ids must include a payload discriminator beyond the second-level timestamp"
+        )
+    }
+
     private static func verifiesInactiveAppRoutesFocusedPaneNotifications() {
         let controller = makeController(appIsActive: false)
         let needsInput = activity(
@@ -2160,6 +2217,7 @@ private enum ShellRuntimeMetadataTests {
         source: TerminalActivitySourceKind,
         sourceLabel: String,
         stateLabel: String,
+        detailLabel: String? = nil,
         progress: TerminalActivityProgress? = nil,
         command: TerminalActivityCommandOutcome? = nil,
         agent: TerminalActivityAgentMetadata? = nil,
@@ -2176,7 +2234,7 @@ private enum ShellRuntimeMetadataTests {
             display: TerminalActivityDisplay(
                 sourceLabel: sourceLabel,
                 stateLabel: stateLabel,
-                detailLabel: nil,
+                detailLabel: detailLabel,
                 paneHint: nil
             ),
             freshness: TerminalActivityFreshness(

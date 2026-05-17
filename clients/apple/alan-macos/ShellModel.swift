@@ -236,7 +236,26 @@ func shellActivityNotificationKey(
         activity.source.kind.rawValue,
         activity.status.rawValue,
         activity.freshness.updatedAt,
+        shellActivityNotificationPayloadDiscriminator(for: activity),
     ].joined(separator: ":")
+}
+
+private func shellActivityNotificationPayloadDiscriminator(
+    for activity: TerminalActivitySnapshot
+) -> String {
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.sortedKeys]
+    if let data = try? encoder.encode(activity) {
+        return data.base64EncodedString()
+    }
+
+    return [
+        activity.source.label ?? "",
+        activity.priority.rawValue,
+        activity.display.sourceFirstLabel,
+        activity.freshness.staleAt ?? "",
+        activity.freshness.expiresAt ?? "",
+    ].joined(separator: "|")
 }
 
 func shellActivityAttention(for activity: TerminalActivitySnapshot) -> ShellAttentionState? {
