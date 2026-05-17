@@ -33,6 +33,7 @@ private enum ShellRuntimeMetadataTests {
         verifiesSuccessfulCommandIsNotSidebarWorthy()
         verifiesClearingActivityRemovesPaneActivity()
         verifiesPublishedStateMergeClearsActivity()
+        verifiesPaneRebuildMutationsPreserveActivity()
         verifiesTerminalChildExitClosesSplitPane()
         verifiesTerminalChildExitClosesSinglePaneTab()
         verifiesTerminalChildExitCanLeaveEmptyFocusedSpace()
@@ -727,6 +728,53 @@ private enum ShellRuntimeMetadataTests {
         expect(
             merged.pane(paneID: "pane_1")?.activity == nil,
             "published state merge must allow incoming nil activity to clear stale activity"
+        )
+    }
+
+    private static func verifiesPaneRebuildMutationsPreserveActivity() {
+        let controller = makeController()
+        let progress = progressActivity(
+            percent: 42,
+            updatedAt: "2026-05-17T09:00:00Z",
+            staleAt: "2026-05-17T09:00:15Z"
+        )
+
+        controller.updateTerminalMetadata(
+            metadata(title: "build", cwd: "/repo/app", activity: progress),
+            for: "pane_1"
+        )
+        expect(
+            controller.pane(paneID: "pane_1")?.activity == progress,
+            "test setup must project progress activity before pane rebuilds"
+        )
+
+        _ = controller.setAttention(.notable, for: "pane_1")
+        expect(
+            controller.pane(paneID: "pane_1")?.activity == progress,
+            "attention-only pane rebuild must preserve terminal activity"
+        )
+
+        guard let targetTabID = controller.openTerminalTab(workingDirectory: "/target") else {
+            fail("test setup must create a target tab")
+        }
+        expect(
+            controller.movePane(paneID: "pane_1", toTab: targetTabID, direction: .vertical),
+            "test setup must move pane into target tab"
+        )
+        expect(
+            controller.pane(paneID: "pane_1")?.activity == progress,
+            "pane move rebuild must preserve terminal activity"
+        )
+
+        switch controller.liftPaneToTab(paneID: "pane_1") {
+        case .lifted:
+            break
+        case .paneNotFound, .lastPane:
+            fail("test setup must lift moved pane into a new tab")
+        }
+        expect(
+            controller.pane(paneID: "pane_1")?.activity == progress,
+            "pane lift rebuild must preserve terminal activity"
         )
     }
 

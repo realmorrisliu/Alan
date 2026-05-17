@@ -597,6 +597,7 @@ extension ShellStateSnapshot {
                     visibleExcerpt: current.viewport?.visibleExcerpt,
                     lastActivityAt: formatter.string(from: now)
                 ),
+                activity: current.activity,
                 alanBinding: current.alanBinding
             )
         }
@@ -713,6 +714,7 @@ extension ShellStateSnapshot {
                     visibleExcerpt: current.viewport?.visibleExcerpt,
                     lastActivityAt: formatter.string(from: now)
                 ),
+                activity: current.activity,
                 alanBinding: current.alanBinding
             )
         }
@@ -750,6 +752,7 @@ extension ShellStateSnapshot {
                 attention: attention,
                 context: current.context,
                 viewport: current.viewport,
+                activity: current.activity,
                 alanBinding: current.alanBinding
             )
         }
