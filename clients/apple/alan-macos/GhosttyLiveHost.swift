@@ -890,6 +890,7 @@ final class AlanGhosttyLiveHost: NSObject {
                 || nextLastCommandExitCode != metadata.lastCommandExitCode
                 || nextActiveTaskState != metadata.activeTaskState
                 || nextActivity != metadata.activity
+                || clearActivity
         else {
             return
         }
@@ -903,7 +904,8 @@ final class AlanGhosttyLiveHost: NSObject {
             lastCommandExitCode: nextLastCommandExitCode,
             lastUpdatedAt: .now,
             activeTaskState: nextActiveTaskState,
-            activity: nextActivity
+            activity: nextActivity,
+            clearsActivity: clearActivity
         )
         metadata = snapshot
         onMetadataChange?(snapshot)

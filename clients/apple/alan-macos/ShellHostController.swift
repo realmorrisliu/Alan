@@ -848,7 +848,9 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
                     ),
                     context: projectedContext,
                     viewport: viewport,
-                    activity: runtime.paneMetadata.activity ?? current.activity,
+                    activity: runtime.paneMetadata.clearsActivity
+                        ? nil
+                        : (runtime.paneMetadata.activity ?? current.activity),
                     alanBinding: projectedBinding
                 )
             }
@@ -916,7 +918,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
                 ),
                 context: projectedContext,
                 viewport: viewport,
-                activity: metadata.activity ?? current.activity,
+                activity: metadata.clearsActivity ? nil : (metadata.activity ?? current.activity),
                 alanBinding: projectedBinding
             )
         }

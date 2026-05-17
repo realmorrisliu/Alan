@@ -30,6 +30,7 @@ private enum ShellRuntimeMetadataTests {
         verifiesTerminalActivitySidebarPriority()
         verifiesStaleProgressIsNotSidebarWorthy()
         verifiesSuccessfulCommandIsNotSidebarWorthy()
+        verifiesClearingActivityRemovesPaneActivity()
         verifiesTerminalChildExitClosesSplitPane()
         verifiesTerminalChildExitClosesSinglePaneTab()
         verifiesTerminalChildExitCanLeaveEmptyFocusedSpace()
@@ -590,6 +591,33 @@ private enum ShellRuntimeMetadataTests {
         )
     }
 
+    private static func verifiesClearingActivityRemovesPaneActivity() {
+        let controller = makeController()
+        let progress = progressActivity(
+            percent: 64,
+            updatedAt: "2026-05-17T09:00:00Z",
+            staleAt: "2026-05-17T09:00:15Z"
+        )
+
+        controller.updateTerminalMetadata(
+            metadata(title: "build", cwd: "/repo/app", activity: progress),
+            for: "pane_1"
+        )
+        expect(
+            controller.shellState.pane(paneID: "pane_1")?.activity == progress,
+            "test setup must project progress activity"
+        )
+
+        controller.updateTerminalMetadata(
+            metadata(title: "build", cwd: "/repo/app", clearsActivity: true),
+            for: "pane_1"
+        )
+        expect(
+            controller.shellState.pane(paneID: "pane_1")?.activity == nil,
+            "clear metadata must remove stale pane activity"
+        )
+    }
+
     private static func verifiesTerminalChildExitClosesSplitPane() {
         let controller = makeController()
         _ = controller.splitPane(paneID: "pane_1", placement: .right)
@@ -1134,7 +1162,8 @@ private enum ShellRuntimeMetadataTests {
         cwd: String = "/Users/morris/Developer/Alan",
         processExited: Bool = false,
         activeTaskState: ShellTabActiveTaskState? = nil,
-        activity: TerminalActivitySnapshot? = nil
+        activity: TerminalActivitySnapshot? = nil,
+        clearsActivity: Bool = false
     ) -> TerminalPaneMetadataSnapshot {
         TerminalPaneMetadataSnapshot(
             title: title,
@@ -1145,7 +1174,8 @@ private enum ShellRuntimeMetadataTests {
             lastCommandExitCode: nil,
             lastUpdatedAt: Date(timeIntervalSince1970: 3_000),
             activeTaskState: activeTaskState,
-            activity: activity
+            activity: activity,
+            clearsActivity: clearsActivity
         )
     }
 
