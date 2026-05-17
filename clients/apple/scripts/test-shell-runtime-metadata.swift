@@ -37,6 +37,7 @@ private enum ShellRuntimeMetadataTests {
         verifiesPaneRebuildMutationsPreserveActivity()
         verifiesTabSidebarActivityProjectionUsesHighestPriorityPane()
         verifiesTabSidebarProjectionFallsBackToRepositoryBranch()
+        verifiesTabSidebarProjectionPreservesTerminalStatusBeforeContext()
         verifiesSidebarProgressRailBelongsToDisplayedActivity()
         verifiesFocusedCommandFailureDemotesFromSidebarProjection()
         verifiesActivityFreshnessPolicies()
@@ -892,6 +893,73 @@ private enum ShellRuntimeMetadataTests {
         expect(
             projection.secondaryLine == "alan · main",
             "sidebar context fallback must prefer repository/worktree leaf plus branch"
+        )
+    }
+
+    private static func verifiesTabSidebarProjectionPreservesTerminalStatusBeforeContext() {
+        let tab = ShellTab(
+            tabID: "tab_1",
+            kind: .terminal,
+            title: nil,
+            paneTree: ShellPaneTreeNode(
+                nodeID: "node_pane_1",
+                kind: .pane,
+                direction: nil,
+                paneID: "pane_1",
+                children: nil
+            )
+        )
+        let failedRenderer = pane(
+            context: context(
+                workingDirectoryName: "src",
+                repositoryRoot: "/Users/morris/Developer/alan",
+                gitBranch: "main",
+                processState: "running",
+                rendererHealth: "failed",
+                surfaceReadiness: "renderer_failed",
+                lastCommandExitCode: nil
+            ),
+            viewport: nil,
+            cwd: "/Users/morris/Developer/alan/crates/runtime",
+            attention: .notable
+        )
+        let startingPane = pane(
+            context: context(
+                workingDirectoryName: "src",
+                repositoryRoot: "/Users/morris/Developer/alan",
+                gitBranch: "main",
+                processState: "running",
+                rendererHealth: "ready",
+                surfaceReadiness: "input_not_ready",
+                lastCommandExitCode: nil
+            ),
+            viewport: nil,
+            cwd: "/Users/morris/Developer/alan/crates/runtime",
+            attention: .idle
+        )
+
+        let failedProjection = shellSidebarTabProjection(
+            for: tab,
+            panes: [failedRenderer],
+            focusedPaneID: "pane_1",
+            focusedTabID: "tab_1",
+            now: nil
+        )
+        let startingProjection = shellSidebarTabProjection(
+            for: tab,
+            panes: [startingPane],
+            focusedPaneID: "pane_1",
+            focusedTabID: "tab_1",
+            now: nil
+        )
+
+        expect(
+            failedProjection.secondaryLine == "Renderer failed",
+            "sidebar fallback must preserve renderer failures before repository context"
+        )
+        expect(
+            startingProjection.secondaryLine == "Starting",
+            "sidebar fallback must preserve startup/input readiness before repository context"
         )
     }
 

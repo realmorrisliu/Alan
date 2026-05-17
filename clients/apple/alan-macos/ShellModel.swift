@@ -233,7 +233,8 @@ func shellSidebarTabProjection(
         )
     }
 
-    let fallback = primaryPane.flatMap { shellSidebarContextLine(for: $0, title: title) }
+    let fallback = primaryPane.flatMap(shellTerminalStatusSummary(for:))
+        ?? primaryPane.flatMap { shellSidebarContextLine(for: $0, title: title) }
         ?? shellFallbackTitle(for: tab.kind)
     return ShellSidebarTabProjection(
         title: title,
