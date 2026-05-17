@@ -15,13 +15,19 @@ func shellUserFacingSummary(_ summary: String?) -> String? {
     guard !trimmed.isEmpty else { return nil }
 
     let internalOnlySummaries = [
+        "command finished",
+        "command succeeded",
         "title updated",
         "input committed",
+        "terminal bell",
         "terminal rendering",
         "window attached",
     ]
 
-    if internalOnlySummaries.contains(trimmed.lowercased()) {
+    let lowercasedSummary = trimmed.lowercased()
+    if internalOnlySummaries.contains(lowercasedSummary)
+        || lowercasedSummary.hasPrefix("command failed")
+    {
         return nil
     }
 
@@ -57,9 +63,11 @@ func shellTerminalStatusSummary(for pane: ShellPane) -> String? {
 
     switch pane.attention {
     case .awaitingUser:
-        return shellUserFacingSummary(pane.viewport?.summary) ?? "Needs attention"
+        guard let rawSummary = pane.viewport?.summary else { return "Needs attention" }
+        return shellUserFacingSummary(rawSummary)
     case .notable:
-        return shellUserFacingSummary(pane.viewport?.summary) ?? "Terminal bell"
+        guard let rawSummary = pane.viewport?.summary else { return "Terminal bell" }
+        return shellUserFacingSummary(rawSummary)
     case .active, .idle:
         return nil
     }

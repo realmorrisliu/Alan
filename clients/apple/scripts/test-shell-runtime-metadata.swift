@@ -38,6 +38,7 @@ private enum ShellRuntimeMetadataTests {
         verifiesTabSidebarActivityProjectionUsesHighestPriorityPane()
         verifiesTabSidebarProjectionFallsBackToRepositoryBranch()
         verifiesTabSidebarProjectionPreservesTerminalStatusBeforeContext()
+        verifiesTabSidebarProjectionDoesNotResurrectStaleCommandFailure()
         verifiesSidebarProgressRailBelongsToDisplayedActivity()
         verifiesFocusedCommandFailureDemotesFromSidebarProjection()
         verifiesActivityFreshnessPolicies()
@@ -960,6 +961,63 @@ private enum ShellRuntimeMetadataTests {
         expect(
             startingProjection.secondaryLine == "Starting",
             "sidebar fallback must preserve startup/input readiness before repository context"
+        )
+    }
+
+    private static func verifiesTabSidebarProjectionDoesNotResurrectStaleCommandFailure() {
+        let tab = ShellTab(
+            tabID: "tab_1",
+            kind: .terminal,
+            title: nil,
+            paneTree: ShellPaneTreeNode(
+                nodeID: "node_pane_1",
+                kind: .pane,
+                direction: nil,
+                paneID: "pane_1",
+                children: nil
+            )
+        )
+        let staleFailure = activity(
+            status: .failed,
+            source: .command,
+            sourceLabel: "Shell",
+            stateLabel: "Command failed 2",
+            updatedAt: "2026-05-17T09:00:00Z",
+            staleAt: "2026-05-17T09:00:30Z"
+        )
+        let testPane = pane(
+            context: context(
+                workingDirectoryName: "src",
+                repositoryRoot: "/Users/morris/Developer/alan",
+                gitBranch: "main",
+                processState: "running",
+                rendererHealth: "ready",
+                surfaceReadiness: "ready",
+                lastCommandExitCode: 2
+            ),
+            viewport: ShellViewportSnapshot(
+                title: "fish",
+                summary: "command failed (2)",
+                visibleExcerpt: nil,
+                lastActivityAt: nil
+            ),
+            cwd: "/Users/morris/Developer/alan/crates/runtime",
+            attention: .notable,
+            activity: staleFailure
+        )
+
+        let projection = shellSidebarTabProjection(
+            for: tab,
+            panes: [testPane],
+            focusedPaneID: "pane_1",
+            focusedTabID: "tab_1",
+            now: Date(timeIntervalSince1970: 1_779_008_431)
+        )
+
+        expect(projection.activity == nil, "stale command failure must not remain sidebar activity")
+        expect(
+            projection.secondaryLine == "alan · main",
+            "stale command failure summary must not hide repository context"
         )
     }
 
