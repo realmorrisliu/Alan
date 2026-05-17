@@ -305,7 +305,7 @@ struct TerminalActivitySnapshot: Codable, Equatable {
     static func primarySidebarActivity(
         _ activities: [TerminalActivitySnapshot]
     ) -> TerminalActivitySnapshot? {
-        primarySidebarActivity(activities, now: nil)
+        primarySidebarActivity(activities, now: Date())
     }
 
     static func primarySidebarActivity(

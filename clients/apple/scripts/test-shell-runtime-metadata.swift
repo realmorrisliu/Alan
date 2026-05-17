@@ -30,6 +30,7 @@ private enum ShellRuntimeMetadataTests {
         verifiesTerminalActivityCodableUsesSnakeCase()
         verifiesTerminalActivitySidebarPriority()
         verifiesStaleProgressIsNotSidebarWorthy()
+        verifiesDefaultSidebarActivitySelectionHonorsFreshness()
         verifiesSuccessfulCommandIsNotSidebarWorthy()
         verifiesClearingActivityRemovesPaneActivity()
         verifiesPublishedStateMergeClearsActivity()
@@ -557,7 +558,7 @@ private enum ShellRuntimeMetadataTests {
             "failed command copy must be source-first"
         )
         expect(
-            TerminalActivitySnapshot.primarySidebarActivity([success, failure]) == failure,
+            TerminalActivitySnapshot.primarySidebarActivity([success, failure], now: now) == failure,
             "failed command completion must outrank successful completion"
         )
     }
@@ -673,6 +674,19 @@ private enum ShellRuntimeMetadataTests {
         expect(
             TerminalActivitySnapshot.primarySidebarActivity([progress], now: now) == nil,
             "stale progress must not remain sidebar-worthy"
+        )
+    }
+
+    private static func verifiesDefaultSidebarActivitySelectionHonorsFreshness() {
+        let staleProgress = progressActivity(
+            percent: 42,
+            updatedAt: "2000-01-01T00:00:00Z",
+            staleAt: "2000-01-01T00:00:15Z"
+        )
+
+        expect(
+            TerminalActivitySnapshot.primarySidebarActivity([staleProgress]) == nil,
+            "default sidebar activity selection must reject stale activity"
         )
     }
 
