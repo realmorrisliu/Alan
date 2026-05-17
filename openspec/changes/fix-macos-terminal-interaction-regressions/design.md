@@ -49,12 +49,21 @@
 
    键盘路由可用 fake surface 捕获 normalized key/text delivery；cwd 和 close mutation 可用 shell model/controller 脚本验证；Vim 的真实快捷键和 macOS responder-chain 行为需要运行 app 手工确认，因为问题本身发生在 AppKit/Ghostty 交界。
 
+5. **Vim/TUI 输入要复用 Ghostty 的 AppKit responder contract，而不是只扩展 `keyDown`。**
+
+   Ghostty macOS 的关键点是 `performKeyEquivalent -> doCommand -> keyDown` 的闭环：Command/Control 组合键会先进入 `performKeyEquivalent`，如果不是 app/menu 已消费的 binding，则记录当前 event timestamp 并让 AppKit 继续；当 AppKit 把同一个事件转成 `doCommand` 时，surface 再把当前 event 送回事件系统，第二次 `performKeyEquivalent` 看到相同 timestamp 后才合成 terminal key event。Alan 需要在 `TerminalHostView` 内保留这套 timestamp state，覆盖 `Control-/ -> Control-_`、`Control-Return`、普通 Control 组合键和 Ghostty terminal binding。`keyDown` 仍负责 IME `interpretKeyEvents`、preedit 同步和最终 `ghostty_surface_key` 发送。
+
+   同一契约还包括两个焦点边界：Command-modified `keyUp` 可能不会走普通 responder chain，所以 focused terminal host 需要用 local event monitor 补发 release；已激活窗口中点击未 focused split pane 时，第一次 left mouse down 只切换 terminal focus，不能同时把 click 注入 Vim mouse mode。Modifier `flagsChanged` 也应和 Ghostty 一样在 marked text 存在时不发 terminal modifier，并保留 caps/right-side modifier bits。
+
+   备选方案是在 `routeKey` 中继续追加 `Ctrl-*` 白名单。这个方案无法覆盖 AppKit 先调用 `performKeyEquivalent`/`doCommand` 的路径，也无法解释为什么 fake adapter 测试通过但真实 Vim 仍失败。
+
 ## Risks / Trade-offs
 
 - [Risk] 放宽 terminal input ownership 可能让部分 workspace 快捷键在 terminal focused 时不再触发。→ 保留显式 app-reserved Command shortcuts，并用测试覆盖 command input 和 terminal binding 的优先级。
 - [Risk] cwd 继承如果只看 stale pane snapshot，`cd` 后新建 tab 仍可能回到旧目录。→ controller 必须优先读取 runtime metadata，再 fallback 到 `ShellPane.cwd`。
 - [Risk] child exit 自动关闭 pane/tab 可能误关正在展示退出信息的任务。→ 只对 shell child exited 的 terminal lifecycle 信号生效；如果关闭会违反 final-pane 保护，则进入明确 exited state。
 - [Risk] 真实 Vim 行为很难完全自动化。→ 自动化覆盖 key routing contract，手工验证记录覆盖 `vim`/`nvim` 的实际交互。
+- [Risk] local event monitor 可能在多个 pane host 间重复观察事件。→ monitor 只在 hit-tested owning host 或 focused host 上消费事件，并在 teardown 时移除。
 
 ## Migration Plan
 
