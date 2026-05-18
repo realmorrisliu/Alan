@@ -152,6 +152,44 @@ extension ShellStateSnapshot {
         return try focusingPane(targetPaneID)
     }
 
+    func applyingAgentActivity(
+        _ activity: TerminalActivitySnapshot,
+        to paneID: String,
+        workingDirectory: String?
+    ) throws -> ShellStateMutationResult {
+        guard let targetPane = pane(paneID: paneID) else {
+            throw ShellStateMutationError.paneNotFound
+        }
+
+        let updatedPanes = panes.map { current in
+            guard current.paneID == paneID else { return current }
+            return ShellPane(
+                paneID: current.paneID,
+                tabID: current.tabID,
+                spaceID: current.spaceID,
+                launchTarget: current.launchTarget,
+                cwd: workingDirectory ?? current.cwd,
+                process: current.process,
+                attention: current.attention,
+                context: current.context,
+                viewport: current.viewport,
+                activity: activity,
+                alanBinding: current.alanBinding
+            )
+        }
+        let nextSpaces = rebuildingAttention(in: spaces, panes: updatedPanes)
+        return ShellStateMutationResult(
+            state: replacing(
+                spaces: nextSpaces,
+                panes: updatedPanes,
+                focusedPaneID: focusedPaneID
+            ),
+            spaceID: targetPane.spaceID,
+            tabID: targetPane.tabID,
+            paneID: targetPane.paneID
+        )
+    }
+
     func creatingSpace(
         launchTarget: ShellLaunchTarget,
         title: String?,

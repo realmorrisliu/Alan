@@ -474,6 +474,58 @@ extension ShellHostController {
                 errorMessage: delivery.errorMessage
             )
 
+        case .agentActivity:
+            guard let paneID = command.paneID else {
+                return response(
+                    requestID: command.requestID,
+                    applied: false,
+                    errorCode: "pane_required",
+                    errorMessage: "pane_id is required."
+                )
+            }
+            guard let targetPane = pane(paneID: paneID) else {
+                return response(
+                    requestID: command.requestID,
+                    applied: false,
+                    paneID: paneID,
+                    errorCode: "pane_not_found",
+                    errorMessage: "The requested pane does not exist."
+                )
+            }
+            guard let event = command.agentActivityEvent,
+                  let activity = TerminalAgentActivityAdapter.activity(from: event)
+            else {
+                return response(
+                    requestID: command.requestID,
+                    applied: false,
+                    paneID: paneID,
+                    errorCode: "invalid_agent_activity",
+                    errorMessage: "agent_kind and a supported agent_status are required."
+                )
+            }
+
+            updateTerminalMetadata(
+                TerminalPaneMetadataSnapshot(
+                    title: nil,
+                    workingDirectory: event.workingDirectory,
+                    summary: nil,
+                    attention: .idle,
+                    processExited: false,
+                    lastCommandExitCode: nil,
+                    lastUpdatedAt: Date(),
+                    activeTaskState: nil,
+                    activity: activity
+                ),
+                for: paneID
+            )
+            return response(
+                requestID: command.requestID,
+                applied: true,
+                spaceID: targetPane.spaceID,
+                tabID: targetPane.tabID,
+                paneID: paneID
+            )
+
         case .attentionInbox:
             return response(
                 requestID: command.requestID,
