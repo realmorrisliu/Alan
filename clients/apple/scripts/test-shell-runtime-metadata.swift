@@ -32,6 +32,10 @@ private enum ShellRuntimeMetadataTests {
         verifiesStaleProgressIsNotSidebarWorthy()
         verifiesDefaultSidebarActivitySelectionHonorsFreshness()
         verifiesSuccessfulCommandIsNotSidebarWorthy()
+        verifiesCodexAgentActivityAdapterMapsSupportedStates()
+        verifiesAgentActivityAdapterSanitizesDefaultUIPayload()
+        verifiesAgentActivityAdapterRejectsMalformedPayloadAndFallsBackForUnsupportedAgent()
+        verifiesAgentActivityControlCommandProjectsOntoPane()
         verifiesClearingActivityRemovesPaneActivity()
         verifiesPublishedStateMergeClearsActivity()
         verifiesPaneRebuildMutationsPreserveActivity()
@@ -45,6 +49,8 @@ private enum ShellRuntimeMetadataTests {
         verifiesActivityFreshnessPolicies()
         verifiesActivityAttentionIsReadTimeOnly()
         verifiesPaneTitleActivityAccessoryLabel()
+        verifiesPaneTitleDetailProjectionIncludesContextBranchAndProcess()
+        verifiesPaneTitleDetailProjectionAvoidsDuplicateAgentAndAlan()
         verifiesActivityNotificationPolicyIsLowNoise()
         verifiesControllerRoutesActivityNotificationsOnce()
         verifiesControllerRoutesDistinctActivityPayloadsInSameSecond()
@@ -558,6 +564,162 @@ private enum ShellRuntimeMetadataTests {
             activity.freshness.staleAt == "2026-05-17T09:00:15Z",
             "progress activity must get the default 15 second stale deadline"
         )
+    }
+
+    private static func verifiesCodexAgentActivityAdapterMapsSupportedStates() {
+        let now = Date(timeIntervalSince1970: 1_779_008_400)
+        let updatedAt = "2026-05-17T09:00:00Z"
+        let running = TerminalAgentActivityAdapter.activity(
+            from: TerminalAgentActivityEvent(
+                agentKind: "codex",
+                status: "running",
+                sessionLabel: nil,
+                projectLabel: "alan",
+                workingDirectory: "/Users/morris/Developer/alan",
+                detail: nil,
+                updatedAt: updatedAt
+            ),
+            now: now
+        )
+        let needsInput = TerminalAgentActivityAdapter.activity(
+            from: TerminalAgentActivityEvent(
+                agentKind: "codex",
+                status: "approval_required",
+                sessionLabel: nil,
+                projectLabel: "alan",
+                workingDirectory: "/Users/morris/Developer/alan",
+                detail: nil,
+                updatedAt: updatedAt
+            ),
+            now: now
+        )
+        let complete = TerminalAgentActivityAdapter.activity(
+            from: TerminalAgentActivityEvent(
+                agentKind: "codex",
+                status: "completed",
+                sessionLabel: nil,
+                projectLabel: "alan",
+                workingDirectory: "/Users/morris/Developer/alan",
+                detail: nil,
+                updatedAt: updatedAt
+            ),
+            now: now
+        )
+        let failed = TerminalAgentActivityAdapter.activity(
+            from: TerminalAgentActivityEvent(
+                agentKind: "codex",
+                status: "error",
+                sessionLabel: nil,
+                projectLabel: "alan",
+                workingDirectory: "/Users/morris/Developer/alan",
+                detail: nil,
+                updatedAt: updatedAt
+            ),
+            now: now
+        )
+
+        expect(running?.source.kind == .codex, "Codex running activity must keep codex as source")
+        expect(running?.status == .running, "Codex running event must map to running")
+        expect(running?.display.sourceFirstLabel == "Codex · Running", "Codex running copy must be source-first")
+        expect(running?.freshness.staleAt == "2026-05-17T09:01:30Z", "running agent activity must have a bounded stale window")
+        expect(needsInput?.status == .needsInput, "Codex approval-required event must map to needs-input")
+        expect(needsInput?.priority == .awaitingUser, "Codex needs-input event must be awaiting-user priority")
+        expect(needsInput?.freshness.staleAt == nil, "Codex needs-input must persist until replaced")
+        expect(complete?.status == .done, "Codex completed event must map to done")
+        expect(complete?.freshness.expiresAt == "2026-05-17T09:00:08Z", "Codex done activity must be brief")
+        expect(failed?.status == .failed, "Codex error event must map to failed")
+        expect(failed?.display.sourceFirstLabel == "Codex · Error", "Codex error copy must hide implementation names")
+        expect(failed?.freshness.staleAt == nil, "Codex error must persist until replaced")
+    }
+
+    private static func verifiesAgentActivityAdapterSanitizesDefaultUIPayload() {
+        let activity = TerminalAgentActivityAdapter.activity(
+            from: TerminalAgentActivityEvent(
+                agentKind: "codex",
+                status: "needs_input",
+                sessionLabel: "session-1234567890abcdef1234567890",
+                projectLabel: "alan\nworkspace",
+                workingDirectory: "/Users/morris/Developer/alan",
+                detail: #"{"event":"codex.status","session_id":"session-1234567890abcdef1234567890"}"#,
+                updatedAt: "2026-05-17T09:00:00Z"
+            ),
+            now: Date(timeIntervalSince1970: 1_779_008_400)
+        )
+
+        expect(activity?.agent?.safeSessionLabel == nil, "agent adapter must not expose raw session ids")
+        expect(activity?.agent?.projectLabel == "alan workspace", "agent adapter must collapse control characters in labels")
+        expect(activity?.display.detailLabel == nil, "agent adapter must not expose raw hook payloads in default UI detail")
+        if let activity {
+            do {
+                let data = try JSONEncoder().encode(activity)
+                let json = String(data: data, encoding: .utf8) ?? ""
+                expect(!json.contains("codex.status"), "serialized activity must not retain raw hook event names")
+                expect(!json.contains("1234567890abcdef"), "serialized activity must not retain raw session ids")
+            } catch {
+                fail("agent activity JSON encode failed: \(error)")
+            }
+        } else {
+            fail("valid Codex needs-input activity should adapt")
+        }
+    }
+
+    private static func verifiesAgentActivityAdapterRejectsMalformedPayloadAndFallsBackForUnsupportedAgent() {
+        let malformed = TerminalAgentActivityAdapter.activity(
+            from: TerminalAgentActivityEvent(
+                agentKind: "codex",
+                status: "tool_call_delta",
+                sessionLabel: nil,
+                projectLabel: nil,
+                workingDirectory: nil,
+                detail: nil,
+                updatedAt: "2026-05-17T09:00:00Z"
+            ),
+            now: Date(timeIntervalSince1970: 1_779_008_400)
+        )
+        let unsupported = TerminalAgentActivityAdapter.activity(
+            from: TerminalAgentActivityEvent(
+                agentKind: "future-agent",
+                status: "running",
+                sessionLabel: nil,
+                projectLabel: "alan",
+                workingDirectory: "/Users/morris/Developer/alan",
+                detail: nil,
+                updatedAt: "2026-05-17T09:00:00Z"
+            ),
+            now: Date(timeIntervalSince1970: 1_779_008_400)
+        )
+
+        expect(malformed == nil, "unknown implementation event names must not create precise activity")
+        expect(unsupported?.source.kind == .unknown, "unsupported agents must fall back to unknown source")
+        expect(unsupported?.display.sourceFirstLabel == "Agent · Running", "unsupported agents must use generic UI copy")
+    }
+
+    private static func verifiesAgentActivityControlCommandProjectsOntoPane() {
+        let controller = makeController(appIsActive: false)
+        let json = """
+        {
+          "request_id": "agent-activity-1",
+          "command": "agent.activity",
+          "pane_id": "pane_1",
+          "agent_kind": "codex",
+          "agent_status": "needs_input",
+          "session_label": "session-1234567890abcdef1234567890",
+          "project_label": "alan",
+          "working_directory": "/Users/morris/Developer/alan",
+          "detail": "{\\"event\\":\\"codex.status\\"}",
+          "updated_at": "2026-05-17T09:00:00Z"
+        }
+        """
+        let command = decodeControlCommand(json)
+        let response = controller.handleControlPlaneCommand(command)
+        let paneActivity = controller.pane(paneID: "pane_1")?.activity
+
+        expect(response.applied == true, "agent activity command must be applied")
+        expect(response.paneID == "pane_1", "agent activity command must identify the updated pane")
+        expect(paneActivity?.source.kind == .codex, "agent activity command must project Codex source onto pane")
+        expect(paneActivity?.status == .needsInput, "agent activity command must project needs-input status")
+        expect(paneActivity?.agent?.safeSessionLabel == nil, "control command projection must not expose raw session ids")
+        expect(controller.activityNotifications.first?.kind == .needsInput, "agent command must reuse low-noise notification routing")
     }
 
     private static func verifiesCommandCompletionActivityFactory() {
@@ -1309,6 +1471,112 @@ private enum ShellRuntimeMetadataTests {
             shellPaneActivityAccessoryLabel(for: paneWithProgress, now: now.addingTimeInterval(16)) == nil,
             "pane title activity accessory must hide stale progress"
         )
+    }
+
+    private static func verifiesPaneTitleDetailProjectionIncludesContextBranchAndProcess() {
+        let testPane = pane(
+            context: context(
+                workingDirectoryName: "alan",
+                repositoryRoot: "/Users/morris/Developer/alan",
+                gitBranch: "main",
+                processState: "running",
+                rendererHealth: "ready",
+                surfaceReadiness: "ready",
+                lastCommandExitCode: nil
+            ),
+            viewport: nil,
+            cwd: "/Users/morris/Developer/alan",
+            process: ShellProcessBinding(program: "fish", argvPreview: nil),
+            attention: .idle
+        )
+        let details = shellPaneTitleBarDetailProjection(
+            for: testPane,
+            title: "Terminal",
+            now: Date(timeIntervalSince1970: 1_779_008_400)
+        )
+
+        expect(
+            details.map(\.id) == ["worktree", "branch", "process"],
+            "pane title details must expose non-redundant worktree, branch, and process"
+        )
+        expect(details.map(\.title) == ["alan", "main", "fish"], "pane title details must use compact labels")
+    }
+
+    private static func verifiesPaneTitleDetailProjectionAvoidsDuplicateAgentAndAlan() {
+        let codexActivity = activity(
+            status: .running,
+            source: .codex,
+            sourceLabel: "Codex",
+            stateLabel: "Running",
+            agent: TerminalActivityAgentMetadata(
+                kind: .codex,
+                safeSessionLabel: nil,
+                projectLabel: "alan",
+                workingDirectory: "/Users/morris/Developer/alan"
+            )
+        )
+        let codexPane = pane(
+            context: context(
+                workingDirectoryName: "alan",
+                repositoryRoot: "/Users/morris/Developer/alan",
+                gitBranch: "main",
+                processState: "running",
+                rendererHealth: "ready",
+                surfaceReadiness: "ready",
+                lastCommandExitCode: nil
+            ),
+            viewport: nil,
+            cwd: "/Users/morris/Developer/alan",
+            process: ShellProcessBinding(program: "codex", argvPreview: ["codex"]),
+            attention: .idle,
+            activity: codexActivity
+        )
+        let codexDetails = shellPaneTitleBarDetailProjection(
+            for: codexPane,
+            title: "alan",
+            now: Date(timeIntervalSince1970: 1_779_008_400)
+        )
+        expect(codexDetails.map(\.id) == ["activity", "branch"], "Codex activity must not duplicate process")
+
+        let alanActivity = activity(
+            status: .running,
+            source: .alan,
+            sourceLabel: "alan",
+            stateLabel: "Running"
+        )
+        let alanPane = ShellPane(
+            paneID: "pane_1",
+            tabID: "tab_1",
+            spaceID: "space_1",
+            launchTarget: .alan,
+            cwd: "/Users/morris/Developer/alan",
+            process: ShellProcessBinding(program: "alan", argvPreview: ["alan", "chat"]),
+            attention: .active,
+            context: context(
+                workingDirectoryName: "alan",
+                repositoryRoot: nil,
+                gitBranch: nil,
+                processState: "running",
+                rendererHealth: "ready",
+                surfaceReadiness: "ready",
+                lastCommandExitCode: nil
+            ),
+            viewport: nil,
+            activity: alanActivity,
+            alanBinding: ShellAlanBinding(
+                sessionID: "session_1",
+                runStatus: "running",
+                pendingYield: false,
+                source: "test",
+                lastProjectedAt: nil
+            )
+        )
+        let alanDetails = shellPaneTitleBarDetailProjection(
+            for: alanPane,
+            title: "alan",
+            now: Date(timeIntervalSince1970: 1_779_008_400)
+        )
+        expect(alanDetails.map(\.id) == ["activity"], "alan activity must not duplicate alan binding or process")
     }
 
     private static func verifiesActivityNotificationPolicyIsLowNoise() {
@@ -2426,6 +2694,15 @@ private enum ShellRuntimeMetadataTests {
 
     private static func activeTask(in url: URL) -> ShellTabActiveTaskState? {
         decodeManifest(at: url)?.spaces.first?.tabs.first?.activeTask
+    }
+
+    private static func decodeControlCommand(_ json: String) -> AlanShellControlCommand {
+        do {
+            let data = Data(json.utf8)
+            return try JSONDecoder().decode(AlanShellControlCommand.self, from: data)
+        } catch {
+            fail("failed to decode control command fixture: \(error)")
+        }
     }
 
     private static func expect(

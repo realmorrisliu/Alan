@@ -351,7 +351,7 @@ final class AlanShellSocketServer {
     }
 
     func handleLocally(_ command: AlanShellControlCommand) -> AlanShellControlResponse? {
-        guard !command.command.allocatesPaneID else { return nil }
+        guard !command.command.requiresHostHandler else { return nil }
 
         let localResult: AlanShellLocalCommandResult? = {
             stateLock.lock()
@@ -397,9 +397,9 @@ final class AlanShellSocketServer {
 }
 
 private extension AlanShellControlCommandKind {
-    var allocatesPaneID: Bool {
+    var requiresHostHandler: Bool {
         switch self {
-        case .spaceCreate, .spaceOpenAlan, .tabOpen, .paneSplit:
+        case .spaceCreate, .spaceOpenAlan, .tabOpen, .paneSplit, .agentActivity:
             return true
         default:
             return false

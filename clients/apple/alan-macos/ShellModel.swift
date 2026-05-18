@@ -32,6 +32,12 @@ struct ShellActivityNotificationRoute: Equatable, Identifiable {
     let attention: ShellAttentionState
 }
 
+struct ShellPaneTitleBarDetailProjection: Equatable, Identifiable {
+    let id: String
+    let title: String
+    let help: String
+}
+
 func shellUserFacingSummary(_ summary: String?) -> String? {
     guard let summary else { return nil }
 
@@ -225,6 +231,159 @@ func shellPaneActivityAccessoryLabel(for pane: ShellPane, now: Date? = nil) -> S
     case .needsInput, .failed, .paused, .progress, .running, .bell, .exited:
         return activity.display.sourceFirstLabel
     }
+}
+
+func shellPaneStatusAccessoryLabel(for pane: ShellPane, now: Date? = nil) -> String? {
+    guard let status = shellTerminalStatusSummary(for: pane, now: now) else { return nil }
+    if shellEffectiveAttention(for: pane, now: now) == .notable,
+       status == "Terminal bell"
+    {
+        return nil
+    }
+    return status
+}
+
+func shellPaneTitleBarDetailProjection(
+    for pane: ShellPane,
+    title: String,
+    now: Date? = nil
+) -> [ShellPaneTitleBarDetailProjection] {
+    var items: [ShellPaneTitleBarDetailProjection] = []
+
+    if let activityLabel = shellPaneActivityAccessoryLabel(for: pane, now: now) {
+        items.append(
+            ShellPaneTitleBarDetailProjection(
+                id: "activity",
+                title: activityLabel,
+                help: activityLabel
+            )
+        )
+    }
+
+    if let status = shellPaneStatusAccessoryLabel(for: pane, now: now) {
+        items.append(
+            ShellPaneTitleBarDetailProjection(
+                id: "status",
+                title: status,
+                help: status
+            )
+        )
+    }
+
+    if let context = shellPaneContextAccessoryProjection(for: pane, title: title) {
+        items.append(context)
+    }
+
+    if let branch = shellPaneBranchAccessoryProjection(for: pane, title: title) {
+        items.append(branch)
+    }
+
+    if let process = shellPaneProcessAccessoryProjection(for: pane, title: title) {
+        items.append(process)
+    }
+
+    if let alan = shellPaneAlanAccessoryProjection(for: pane) {
+        items.append(alan)
+    }
+
+    return items
+}
+
+private func shellPaneContextAccessoryProjection(
+    for pane: ShellPane,
+    title: String
+) -> ShellPaneTitleBarDetailProjection? {
+    let repositoryLabel = shellPathLeaf(pane.context?.repositoryRoot)
+    let cwdLabel = shellPathLeaf(pane.cwd)
+        ?? shellVisibleLabel(pane.context?.workingDirectoryName)
+    guard let label = repositoryLabel ?? cwdLabel,
+          !shellLabelsMatch(label, title)
+    else {
+        return nil
+    }
+
+    return ShellPaneTitleBarDetailProjection(
+        id: repositoryLabel == nil ? "cwd" : "worktree",
+        title: label,
+        help: repositoryLabel == nil ? "Directory \(label)" : "Worktree \(label)"
+    )
+}
+
+private func shellPaneBranchAccessoryProjection(
+    for pane: ShellPane,
+    title: String
+) -> ShellPaneTitleBarDetailProjection? {
+    guard let branch = shellVisibleLabel(pane.context?.gitBranch),
+          !shellLabelsMatch(branch, title)
+    else {
+        return nil
+    }
+
+    return ShellPaneTitleBarDetailProjection(
+        id: "branch",
+        title: branch,
+        help: "Git branch \(branch)"
+    )
+}
+
+private func shellPaneProcessAccessoryProjection(
+    for pane: ShellPane,
+    title: String
+) -> ShellPaneTitleBarDetailProjection? {
+    guard let program = shellVisibleLabel(pane.process?.program),
+          !shellLabelsMatch(program, title),
+          !shellProcessDuplicatesAgentOrAlan(program, pane: pane)
+    else {
+        return nil
+    }
+
+    return ShellPaneTitleBarDetailProjection(
+        id: "process",
+        title: program,
+        help: "Process \(program)"
+    )
+}
+
+private func shellPaneAlanAccessoryProjection(for pane: ShellPane) -> ShellPaneTitleBarDetailProjection? {
+    guard let binding = pane.alanBinding,
+          pane.activity?.source.kind != .alan
+    else {
+        return nil
+    }
+
+    let title = binding.pendingYield ? "Input" : shellVisibleLabel(binding.runStatus)
+    guard let title else { return nil }
+    return ShellPaneTitleBarDetailProjection(
+        id: "alan",
+        title: title,
+        help: "alan \(binding.runStatus)"
+    )
+}
+
+private func shellProcessDuplicatesAgentOrAlan(_ program: String, pane: ShellPane) -> Bool {
+    let lowercasedProgram = program.lowercased()
+    if pane.alanBinding != nil || pane.resolvedLaunchTarget == .alan {
+        return lowercasedProgram.contains("alan")
+    }
+
+    guard let activity = pane.activity else { return false }
+    switch activity.source.kind {
+    case .codex:
+        return lowercasedProgram.contains("codex")
+    case .claude:
+        return lowercasedProgram.contains("claude")
+    case .openCode:
+        return lowercasedProgram.contains("opencode") || lowercasedProgram.contains("open-code")
+    case .alan:
+        return lowercasedProgram.contains("alan")
+    case .shell, .progress, .command, .process, .unknown:
+        return false
+    }
+}
+
+private func shellLabelsMatch(_ lhs: String, _ rhs: String) -> Bool {
+    lhs.trimmingCharacters(in: .whitespacesAndNewlines)
+        .caseInsensitiveCompare(rhs.trimmingCharacters(in: .whitespacesAndNewlines)) == .orderedSame
 }
 
 func shellActivityNotificationKey(

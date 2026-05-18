@@ -17,6 +17,7 @@ enum AlanShellControlCommandKind: String, Codable {
     case paneMove = "pane.move"
     case paneFocus = "pane.focus"
     case paneSendText = "pane.send_text"
+    case agentActivity = "agent.activity"
     case attentionInbox = "attention.inbox"
     case attentionSet = "attention.set"
     case routingCandidates = "routing.candidates"
@@ -34,6 +35,13 @@ struct AlanShellControlCommand: Codable {
     let cwd: String?
     let text: String?
     let attention: ShellAttentionState?
+    let agentKind: String?
+    let agentStatus: String?
+    let sessionLabel: String?
+    let projectLabel: String?
+    let workingDirectory: String?
+    let detail: String?
+    let updatedAt: String?
     let afterEventID: String?
     let limit: Int?
 
@@ -48,8 +56,30 @@ struct AlanShellControlCommand: Codable {
         case cwd
         case text
         case attention
+        case agentKind = "agent_kind"
+        case agentStatus = "agent_status"
+        case sessionLabel = "session_label"
+        case projectLabel = "project_label"
+        case workingDirectory = "working_directory"
+        case detail
+        case updatedAt = "updated_at"
         case afterEventID = "after_event_id"
         case limit
+    }
+}
+
+extension AlanShellControlCommand {
+    var agentActivityEvent: TerminalAgentActivityEvent? {
+        guard let agentKind, let agentStatus else { return nil }
+        return TerminalAgentActivityEvent(
+            agentKind: agentKind,
+            status: agentStatus,
+            sessionLabel: sessionLabel,
+            projectLabel: projectLabel,
+            workingDirectory: workingDirectory ?? cwd,
+            detail: detail,
+            updatedAt: updatedAt
+        )
     }
 }
 

@@ -774,63 +774,20 @@ private struct ShellPaneTitleBarView: View {
     private static let activityFreshnessFormatter = ISO8601DateFormatter()
 
     private var accessories: [ShellPaneTitleBarAccessory] {
-        var items: [ShellPaneTitleBarAccessory] = []
-
-        if let activityLabel = shellPaneActivityAccessoryLabel(for: pane, now: activityFreshnessNow) {
-            items.append(
-                ShellPaneTitleBarAccessory(
-                    id: "activity",
-                    icon: activityIcon,
-                    title: activityLabel,
-                    help: activityLabel,
-                    tint: activityTint,
-                    maxWidth: 140
-                )
+        shellPaneTitleBarDetailProjection(
+            for: pane,
+            title: title,
+            now: activityFreshnessNow
+        ).map { projection in
+            ShellPaneTitleBarAccessory(
+                id: projection.id,
+                icon: accessoryIcon(for: projection.id),
+                title: projection.title,
+                help: projection.help,
+                tint: accessoryTint(for: projection.id),
+                maxWidth: accessoryMaxWidth(for: projection.id)
             )
         }
-
-        if let status = shellTerminalStatusSummary(for: pane, now: activityFreshnessNow) {
-            items.append(
-                ShellPaneTitleBarAccessory(
-                    id: "status",
-                    icon: statusIcon,
-                    title: statusTitle(status),
-                    help: status,
-                    tint: statusTint
-                )
-            )
-        }
-
-        if let branch = shellVisibleLabel(pane.context?.gitBranch) {
-            items.append(
-                ShellPaneTitleBarAccessory(
-                    id: "branch",
-                    icon: "point.topleft.down.curvedto.point.bottomright.up",
-                    title: branch,
-                    help: "Git branch \(branch)",
-                    tint: ShellPalette.mutedInk,
-                    maxWidth: 120
-                )
-            )
-        }
-
-        if let binding = pane.alanBinding,
-           pane.activity?.source.kind != .alan
-        {
-            let bindingTitle = binding.pendingYield ? "Input" : shellVisibleLabel(binding.runStatus)
-            items.append(
-                ShellPaneTitleBarAccessory(
-                    id: "alan",
-                    icon: "sparkles",
-                    title: bindingTitle,
-                    help: "alan \(binding.runStatus)",
-                    tint: ShellPalette.accent,
-                    maxWidth: 72
-                )
-            )
-        }
-
-        return items
     }
 
     private var activityIcon: String {
@@ -897,13 +854,49 @@ private struct ShellPaneTitleBarView: View {
         return ShellPalette.mutedInk
     }
 
-    private func statusTitle(_ status: String) -> String? {
-        if shellEffectiveAttention(for: pane, now: activityFreshnessNow) == .notable,
-           status == "Terminal bell"
-        {
+    private func accessoryIcon(for id: String) -> String {
+        switch id {
+        case "activity":
+            return activityIcon
+        case "status":
+            return statusIcon
+        case "worktree", "cwd":
+            return "folder"
+        case "branch":
+            return "point.topleft.down.curvedto.point.bottomright.up"
+        case "process":
+            return "terminal"
+        case "alan":
+            return "sparkles"
+        default:
+            return "info.circle"
+        }
+    }
+
+    private func accessoryTint(for id: String) -> Color {
+        switch id {
+        case "activity":
+            return activityTint
+        case "status":
+            return statusTint
+        case "alan":
+            return ShellPalette.accent
+        default:
+            return ShellPalette.mutedInk
+        }
+    }
+
+    private func accessoryMaxWidth(for id: String) -> CGFloat? {
+        switch id {
+        case "activity":
+            return 140
+        case "branch", "worktree", "cwd":
+            return 120
+        case "process", "alan":
+            return 72
+        default:
             return nil
         }
-        return status
     }
 }
 

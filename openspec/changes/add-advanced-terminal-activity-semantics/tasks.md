@@ -10,7 +10,7 @@
   fallback, progress rail, leading topology/kind slot, and hover close overlay.
 - [x] 1.4 Encode default notification policy for focused, visible, background,
   unfocused, successful, failed, and user-input-required activity.
-- [ ] 1.5 Document Codex as the first CLI coding-agent adapter target unless
+- [x] 1.5 Document Codex as the first CLI coding-agent adapter target unless
   implementation evidence shows another adapter is lower risk.
 
 ## 2. Activity Model And Projection
@@ -43,13 +43,13 @@
 
 ## 4. CLI Coding-Agent Activity
 
-- [ ] 4.1 Add a small adapter boundary for reliable CLI agent events and unknown
+- [x] 4.1 Add a small adapter boundary for reliable CLI agent events and unknown
   agent fallback state.
-- [ ] 4.2 Implement the Codex adapter slice from task 1.5, or update the draft
+- [x] 4.2 Implement the Codex adapter slice from task 1.5, or update the draft
   with evidence if another first adapter is selected.
-- [ ] 4.3 Sanitize agent event payloads so default UI never exposes raw hook
+- [x] 4.3 Sanitize agent event payloads so default UI never exposes raw hook
   payloads, raw session IDs, or implementation event names.
-- [ ] 4.4 Add tests for supported agent running, needs-input, complete, error,
+- [x] 4.4 Add tests for supported agent running, needs-input, complete, error,
   malformed payload, and unsupported-agent fallback.
 
 ## 5. Activity UI And Notifications
@@ -63,13 +63,13 @@
   activation cycle focus through panes in stable order.
 - [x] 5.4 Keep single-pane tabs on semantic kind or supported agent icons in the
   leading slot.
-- [ ] 5.5 Project pane title-bar accessories from pane-local detail: activity,
+- [x] 5.5 Project pane title-bar accessories from pane-local detail: activity,
   worktree/cwd, branch, process, and non-duplicated agent/Alan state.
 - [x] 5.6 Add low-noise notification routing for user-input-required, error, and
   long-command-complete events according to the task 1.4 policy.
 - [x] 5.7 Add accessibility labels or values for activity state on pane and tab
   affordances.
-- [ ] 5.8 Add visual review evidence for focused progress, background agent
+- [x] 5.8 Add visual review evidence for focused progress, background agent
   needs-input, command failure, cleared activity showing worktree/branch
   fallback, split leading topology, and hover close overlay.
 
@@ -112,13 +112,13 @@
 
 ## 8. Verification And Archive Readiness
 
-- [ ] 8.1 Run focused Swift script tests for activity model, projection, Ghostty
+- [x] 8.1 Run focused Swift script tests for activity model, projection, Ghostty
   source mapping, and CLI agent adapters.
-- [ ] 8.2 Run `bash clients/apple/scripts/check-shell-contracts.sh`.
-- [ ] 8.3 Run the relevant macOS app build command for the touched Apple client
+- [x] 8.2 Run `bash clients/apple/scripts/check-shell-contracts.sh`.
+- [x] 8.3 Run the relevant macOS app build command for the touched Apple client
   targets.
-- [ ] 8.4 Run `git diff --check`.
-- [ ] 8.5 Run `openspec validate add-advanced-terminal-activity-semantics --type
+- [x] 8.4 Run `git diff --check`.
+- [x] 8.5 Run `openspec validate add-advanced-terminal-activity-semantics --type
   change --strict --json`.
-- [ ] 8.6 Run `openspec validate --all --strict --json`.
+- [x] 8.6 Run `openspec validate --all --strict --json`.
 - [ ] 8.7 Sync accepted delta requirements into `openspec/specs/` before archive.

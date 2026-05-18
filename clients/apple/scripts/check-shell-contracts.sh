@@ -995,8 +995,13 @@ require_pattern \
 
 require_pattern \
     "clients/apple/alan-macos/TerminalPaneView.swift" \
-    "shellPaneActivityAccessoryLabel\\(for: pane, now: activityFreshnessNow\\)" \
-    "pane title activity labels must use the state-driven freshness clock"
+    "shellPaneTitleBarDetailProjection\\(" \
+    "pane title detail projection must use the state-driven freshness clock"
+
+require_pattern \
+    "clients/apple/alan-macos/TerminalPaneView.swift" \
+    "now: activityFreshnessNow" \
+    "pane title detail projection must pass the state-driven freshness clock"
 
 require_pattern \
     "clients/apple/alan-macos/Views/Shell/ShellSidebarView.swift" \
