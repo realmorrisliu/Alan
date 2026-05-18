@@ -728,6 +728,7 @@ private struct ShellPaneTitleBarView: View {
         }
         .padding(.leading, ShellPaneTitleBarMetrics.horizontalLeadingPadding)
         .padding(.trailing, ShellPaneTitleBarMetrics.horizontalTrailingPadding)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .frame(height: ShellPaneTitleBarMetrics.height)
         .background(ShellPalette.terminal)
         .contentShape(Rectangle())

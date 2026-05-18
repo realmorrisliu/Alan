@@ -11,3 +11,4 @@
 
 - `/private/tmp` no longer contains top-level `alan*` build directories after cleanup.
 - Visual verification for the light-mode focused title, split-pane integration, and narrow accessory fallback is intentionally pending user relaunch/restart of Alan. Temporary debug launches plus Computer Use are not treated as valid evidence for this UI change.
+- Review follow-up restored the title bar's full-width background and focus hit area while keeping fit-content responsive content inside the row.

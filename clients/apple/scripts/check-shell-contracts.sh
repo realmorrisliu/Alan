@@ -98,11 +98,51 @@ reject_keydown_programmatic_text_delivery() {
     fi
 }
 
+require_title_bar_full_width_hit_area() {
+    local file="$REPO_ROOT/clients/apple/alan-macos/TerminalPaneView.swift"
+
+    if ! awk '
+        /private struct ShellPaneTitleBarView: View/ {
+            in_view = 1
+        }
+
+        in_view && /var body: some View/ {
+            in_body = 1
+        }
+
+        in_body && /ViewThatFits\(in: \.horizontal\)/ {
+            saw_responsive_layout = 1
+        }
+
+        in_body && /frame\(maxWidth: \.infinity, alignment: \.leading\)/ {
+            saw_full_width_frame = 1
+        }
+
+        in_body && /background\(ShellPalette\.terminal\)/ {
+            if (saw_responsive_layout && saw_full_width_frame) {
+                found = 1
+            }
+        }
+
+        in_body && /private func titleBarContent/ {
+            in_body = 0
+        }
+
+        END {
+            exit found ? 0 : 1
+        }
+    ' "$file"; then
+        printf 'error: pane title-bar background and focus hit area must span full pane width\n' >&2
+        exit 1
+    fi
+}
+
 "$SCRIPT_DIR/setup-local-ghosttykit.sh" --check >/dev/null
 "$SCRIPT_DIR/check-architecture-maintainability.sh" >/dev/null
 reject_active_shell_radius_drift
 reject_ghosttykit_umbrella_modulemap
 reject_keydown_programmatic_text_delivery
+require_title_bar_full_width_hit_area
 
 require_pattern \
     "clients/apple/alan-macos/TerminalRuntimeRegistry.swift" \
