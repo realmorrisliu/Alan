@@ -41,6 +41,7 @@ private enum ShellRuntimeMetadataTests {
         verifiesTabSidebarProjectionDoesNotResurrectStaleCommandFailure()
         verifiesSidebarProgressRailBelongsToDisplayedActivity()
         verifiesFocusedCommandFailureDemotesFromSidebarProjection()
+        verifiesCommandFailureAcknowledgementSticksAfterFocus()
         verifiesActivityFreshnessPolicies()
         verifiesPaneTitleActivityAccessoryLabel()
         verifiesTerminalChildExitClosesSplitPane()
@@ -1108,6 +1109,63 @@ private enum ShellRuntimeMetadataTests {
         expect(
             backgroundProjection.secondaryLine == "Shell · Command failed 2",
             "background command failure must remain sidebar-worthy"
+        )
+    }
+
+    private static func verifiesCommandFailureAcknowledgementSticksAfterFocus() {
+        let controller = makeController()
+        _ = controller.openTerminalTab()
+        let now = Date(timeIntervalSince1970: 1_779_008_400)
+        let failure = TerminalActivitySnapshot.commandCompletion(exitCode: 2, now: now)
+
+        controller.updateTerminalMetadata(
+            metadata(title: "fish", cwd: "/Users/morris/Developer/alan", activity: failure),
+            for: "pane_1"
+        )
+
+        guard let backgroundTab = controller.shellState.tab(tabID: "tab_main") else {
+            fail("test setup must keep the background tab")
+        }
+        let unacknowledgedProjection = shellSidebarTabProjection(
+            for: backgroundTab,
+            panes: controller.shellState.panes,
+            focusedPaneID: "pane_2",
+            focusedTabID: "tab_2",
+            now: now
+        )
+        expect(
+            unacknowledgedProjection.secondaryLine == "Shell · Command failed 2",
+            "background command failure must remain visible before focus acknowledgement"
+        )
+
+        controller.focus(paneID: "pane_1")
+        expect(
+            controller.pane(paneID: "pane_1")?.activity == nil,
+            "focusing the command-failure tab must acknowledge and clear the retained activity"
+        )
+        expect(
+            controller.pane(paneID: "pane_1")?.attention != .notable,
+            "acknowledged focused command failure must stop keeping the pane notable"
+        )
+
+        controller.focus(paneID: "pane_2")
+        guard let acknowledgedTab = controller.shellState.tab(tabID: "tab_main") else {
+            fail("test setup must keep the acknowledged tab")
+        }
+        let acknowledgedProjection = shellSidebarTabProjection(
+            for: acknowledgedTab,
+            panes: controller.shellState.panes,
+            focusedPaneID: "pane_2",
+            focusedTabID: "tab_2",
+            now: now.addingTimeInterval(1)
+        )
+        expect(
+            acknowledgedProjection.activity == nil,
+            "acknowledged command failure must not become sidebar-worthy again after switching away"
+        )
+        expect(
+            acknowledgedProjection.secondaryLine != "Shell · Command failed 2",
+            "acknowledged command failure must fall back to tab context instead of resurfacing"
         )
     }
 

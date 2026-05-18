@@ -271,6 +271,10 @@ struct TerminalActivitySnapshot: Codable, Equatable {
     let display: TerminalActivityDisplay
     let freshness: TerminalActivityFreshness
 
+    var isCommandFailure: Bool {
+        source.kind == .command && status == .failed
+    }
+
     var isSidebarWorthy: Bool {
         isSidebarWorthy(at: nil, owningTabFocused: false)
     }
@@ -280,8 +284,7 @@ struct TerminalActivitySnapshot: Codable, Equatable {
             return false
         }
         if owningTabFocused,
-           source.kind == .command,
-           status == .failed
+           isCommandFailure
         {
             return false
         }
