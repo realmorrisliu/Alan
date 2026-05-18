@@ -1058,6 +1058,7 @@ private struct ShellTabSidebarRow: View {
         .buttonStyle(.plain)
         .opacity(showsCloseButton ? 1 : 0)
         .allowsHitTesting(showsCloseButton)
+        .accessibilityHidden(!showsCloseButton)
         .help("Close tab")
         .accessibilityLabel("Close tab")
         .onHover { isHovering in

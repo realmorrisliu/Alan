@@ -1169,6 +1169,11 @@ require_pattern \
     "complexCountOverlay" \
     "complex split indicators must overlay count on the pane-shaped topology base"
 
+require_pattern \
+    "clients/apple/alan-macos/Views/Shell/ShellSidebarView.swift" \
+    "accessibilityHidden\\(!showsCloseButton\\)" \
+    "hidden sidebar close buttons must not remain exposed to accessibility"
+
 reject_pattern \
     "clients/apple/alan-macos/Views/Shell/ShellSidebarView.swift" \
     "rectangle\\.split\\.3x1" \
