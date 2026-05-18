@@ -1431,9 +1431,13 @@ private struct ShellPaneTopologyIndicator: View {
 
                 Text("\(summary.paneCount)")
                     .font(.system(size: 8.5, weight: .bold, design: .monospaced))
-                    .foregroundStyle(isSelected ? ShellPalette.sidebarInk : ShellPalette.sidebarInk.opacity(0.76))
+                    .foregroundStyle(complexCountForeground)
             }
         }
+    }
+
+    private var complexCountForeground: Color {
+        isSelected ? Color.white.opacity(0.92) : ShellPalette.sidebarInk.opacity(0.76)
     }
 
     private func segmentButton(paneID: String) -> some View {
