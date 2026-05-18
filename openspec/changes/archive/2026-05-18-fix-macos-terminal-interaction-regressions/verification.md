@@ -42,9 +42,9 @@
   - The previous `GhosttyKit` umbrella-header warnings did not reappear.
   - Xcode still printed CoreSimulator/cache/log-permission warnings from the local toolchain environment; simulator device support was not required for this macOS build.
 
-## Manual Verification Pending
+## Manual Verification
 
-用户将自行验证当前运行中的 alan app：
+2026-05-18: 用户确认当前运行中的 alan app 里 Vim/nvim 路径已经 OK。
 
 - 手工 Vim smoke 具体步骤：
   - 在 focused Alan terminal pane 中运行 `vim /tmp/alan-vim-input-smoke.txt`。
