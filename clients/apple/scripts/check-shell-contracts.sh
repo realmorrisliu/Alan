@@ -137,12 +137,75 @@ require_title_bar_full_width_hit_area() {
     fi
 }
 
+require_pane_title_bar_trailing_close() {
+    local file="$REPO_ROOT/clients/apple/alan-macos/TerminalPaneView.swift"
+
+    if ! awk '
+        /private func titleBarContent\(presentation: ShellPaneTitleBarPresentation\) -> some View/ {
+            in_content = 1
+        }
+
+        in_content && /Spacer\(minLength: 0\)/ {
+            saw_spacer = 1
+        }
+
+        in_content && /closeButton/ {
+            saw_close = 1
+            if (saw_spacer) {
+                found = 1
+            }
+        }
+
+        in_content && /^    private var titleView/ {
+            in_content = 0
+        }
+
+        END {
+            exit found ? 0 : 1
+        }
+    ' "$file"; then
+        printf 'error: pane title-bar close button must stay pinned to the trailing edge\n' >&2
+        exit 1
+    fi
+}
+
+require_active_complex_split_count_contrast() {
+    local file="$REPO_ROOT/clients/apple/alan-macos/Views/Shell/ShellSidebarView.swift"
+
+    if ! awk '
+        /private var complexCountOverlay: some View/ {
+            in_overlay = 1
+        }
+
+        in_overlay && /foregroundStyle\(complexCountForeground\)/ {
+            overlay_uses_helper = 1
+        }
+
+        in_overlay && /^    private func segmentButton/ {
+            in_overlay = 0
+        }
+
+        /private var complexCountForeground: Color/ {
+            has_helper = 1
+        }
+
+        END {
+            exit overlay_uses_helper && has_helper ? 0 : 1
+        }
+    ' "$file"; then
+        printf 'error: active complex split indicator count must use a light foreground on selected accent fill\n' >&2
+        exit 1
+    fi
+}
+
 "$SCRIPT_DIR/setup-local-ghosttykit.sh" --check >/dev/null
 "$SCRIPT_DIR/check-architecture-maintainability.sh" >/dev/null
 reject_active_shell_radius_drift
 reject_ghosttykit_umbrella_modulemap
 reject_keydown_programmatic_text_delivery
 require_title_bar_full_width_hit_area
+require_pane_title_bar_trailing_close
+require_active_complex_split_count_contrast
 
 require_pattern \
     "clients/apple/alan-macos/TerminalRuntimeRegistry.swift" \

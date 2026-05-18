@@ -756,6 +756,8 @@ private struct ShellPaneTitleBarView: View {
                 .fixedSize(horizontal: true, vertical: true)
             }
 
+            Spacer(minLength: 0)
+
             closeButton
         }
     }
