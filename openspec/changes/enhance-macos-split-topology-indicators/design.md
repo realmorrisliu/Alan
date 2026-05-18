@@ -1,7 +1,7 @@
 ## Context
 
-The macOS sidebar already treats split tabs as first-class tab rows: a multi-pane
-terminal tab uses a compact leading topology indicator instead of a generic
+The macOS sidebar treats terminal pane topology as a first-class tab-row signal:
+terminal tabs use a compact leading topology indicator instead of a generic
 terminal icon. The current contract covers one pane, two-pane split direction,
 and a generic complex case. That leaves common layouts such as three columns,
 three rows, or main-pane-plus-stack visually collapsed into the same generic
@@ -16,6 +16,7 @@ It should explain topology, not become a miniature pane manager.
 **Goals:**
 
 - Classify visible pane trees into a small user-facing topology vocabulary.
+- Render single-pane terminal tabs with a compact single-pane topology indicator.
 - Render common 3-pane layouts, including left/middle/right and top/middle/bottom.
 - Render common 4-pane layouts only when they remain legible at tab-row size.
 - Render unrecognized or high-pane-count layouts as a single-pane base shape with

@@ -30,6 +30,8 @@
 
 - Selected and unselected indicators keep the existing 22 by 18 point footprint
   and reuse the existing sidebar material container.
+- Single-pane terminal tabs render the compact single-pane topology base instead
+  of falling back to a generic terminal icon.
 - Three-column and four-column layouts render as equal compact vertical segments.
 - Three-row and four-row layouts render as equal compact horizontal segments.
 - Main-stack layouts keep the main pane as the larger segment and render the

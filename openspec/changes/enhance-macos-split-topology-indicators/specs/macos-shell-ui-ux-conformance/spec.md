@@ -2,14 +2,14 @@
 
 ### Requirement: Split tabs expose compact topology
 The default macOS sidebar SHALL show a compact split topology indicator on tab
-rows whose active tab contains multiple terminal panes. The indicator SHALL
-communicate pane count, common split topology, and the currently focused pane
-when that topology can be mapped to visible pane segments, without attempting to
-render exact split ratios or arbitrary tree nesting in the tab row.
+rows whose active tab contains at least one visible terminal pane. The indicator
+SHALL communicate pane count, common split topology, and the currently focused
+pane when that topology can be mapped to visible pane segments, without
+attempting to render exact split ratios or arbitrary tree nesting in the tab row.
 
 #### Scenario: Single-pane tab row
 - **WHEN** a tab contains one terminal pane
-- **THEN** the tab row does not show a split topology indicator
+- **THEN** the tab row shows a compact single-pane topology indicator with stable width
 
 #### Scenario: Two-pane tab row
 - **WHEN** a tab contains two visible terminal panes

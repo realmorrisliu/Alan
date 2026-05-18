@@ -1,13 +1,13 @@
 ## Why
 
-Split tabs currently communicate only a small subset of pane topology in the sidebar.
+Terminal tabs currently communicate only a small subset of pane topology in the sidebar.
 As Alan adds richer split workflows, the tab list needs a compact way to distinguish
-common multi-pane layouts without turning the sidebar into a pane-management panel.
+single-pane and common multi-pane layouts without turning the sidebar into a pane-management panel.
 
 ## What Changes
 
-- Extend the sidebar split indicator contract so it can represent common 3-pane and
-  4-pane topologies, including three-column and three-row layouts.
+- Extend the sidebar split indicator contract so it always represents terminal
+  pane topology, from single-pane tabs through common 3-pane and 4-pane layouts.
 - Keep the default indicator compact and topology-first: it should remain a small
   tab-row affordance, not a text label, pane strip, or debug surface.
 - Treat complex N-pane layouts as a single-pane-shaped indicator with the pane count
