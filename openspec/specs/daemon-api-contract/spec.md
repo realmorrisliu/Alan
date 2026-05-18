@@ -104,6 +104,63 @@ a task explicitly marks a route change as breaking and provides migration notes.
 - **THEN** existing public session, connection, skill, relay, WebSocket, and
   health route paths continue to resolve as before
 
+### Requirement: Session route semantics match runtime protocol mapping
+The daemon SHALL keep public session route paths aligned with the runtime
+protocol semantics owned by `runtime-core-contract`.
+
+Compatibility mapping:
+
+- `POST /api/v1/sessions` creates a thread/session and returns session metadata,
+  route URLs, provider binding metadata, execution backend, streaming mode,
+  partial-stream recovery mode, and durability state.
+- `GET /api/v1/sessions` lists compatibility sessions and reports runtime
+  liveness through `active`.
+- `GET /api/v1/sessions/{id}` returns metadata-focused compatibility state.
+- `GET /api/v1/sessions/{id}/read` returns session metadata plus persisted
+  message/history state needed by reconnecting clients.
+- `GET /api/v1/sessions/{id}/history` returns persisted message history only.
+- `POST /api/v1/sessions/{id}/submit` accepts protocol operations including
+  `turn`, `input`, `resume`, `interrupt`, dynamic tool registration, client
+  capabilities, compact-with-options, and rollback.
+- `GET /api/v1/sessions/{id}/events` streams event envelopes as NDJSON.
+- `GET /api/v1/sessions/{id}/ws` exposes the realtime WebSocket transport.
+- `GET /api/v1/sessions/{id}/events/read` returns buffered events after a
+  cursor and includes gap, oldest, and latest cursor metadata.
+- `GET /api/v1/sessions/{id}/reconnect_snapshot` returns mobile/TUI recovery
+  state, current execution state, pending-yield context when present, and
+  dedupe hints.
+- `POST /api/v1/sessions/{id}/resume` is a compatibility resume route.
+- `POST /api/v1/sessions/{id}/fork` creates a fork from latest rollout state.
+- `POST /api/v1/sessions/{id}/rollback` exposes in-memory rollback and returns
+  durability warning metadata.
+- `POST /api/v1/sessions/{id}/compact` triggers compaction with optional focus.
+- `POST /api/v1/sessions/{id}/schedule_at` and
+  `POST /api/v1/sessions/{id}/sleep_until` are scheduler extensions.
+- `DELETE /api/v1/sessions/{id}` is the destructive compatibility removal
+  path.
+
+#### Scenario: Events read route is used after reconnect
+- **WHEN** a client calls `events/read` with `after_event_id`
+- **THEN** the daemon returns ordered event envelopes, cursor metadata, and
+  `gap` state so the client can decide whether to replay incrementally or
+  rebuild from a snapshot
+
+#### Scenario: Rollback route is used
+- **WHEN** a client calls the rollback route
+- **THEN** the response includes accepted state and durability metadata
+- **AND** in-memory-only rollback includes a warning that it will not survive
+  runtime restart
+
+#### Scenario: Archived compatibility session is read
+- **WHEN** a session has no live runtime but retained rollout and history state
+- **THEN** read/list routes return `active=false` rather than treating the
+  session as missing
+
+#### Scenario: Relay handles streaming routes during MVP
+- **WHEN** the relay layer receives `/events` or `/ws` in the current MVP
+- **THEN** it rejects those paths explicitly unless a later OpenSpec change
+  adds streaming or WebSocket proxy support
+
 ### Requirement: Raw Route String Guardrail
 The repository SHALL include focused guardrails that prevent new raw canonical
 daemon route strings in production client, relay, remote-control, and daemon URL

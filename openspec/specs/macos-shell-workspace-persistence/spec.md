@@ -1,7 +1,10 @@
 # macos-shell-workspace-persistence Specification
 
 ## Purpose
-TBD - created by archiving change persist-macos-shell-workspaces. Update Purpose after archive.
+Defines macOS shell workspace persistence, including workspace manifest restore
+authority, corrupt-manifest recovery, durable Spaces, pinned Tab snapshots,
+unpinned Tab lifecycle, active-task retention, and shell-state projection.
+
 ## Requirements
 ### Requirement: Workspace manifest is the restore authority
 The macOS shell SHALL use a versioned workspace manifest as the authoritative source for restoring Spaces, Tabs, pin snapshots, Tab lifecycle metadata, and the last selected Space/Tab across app restarts.
@@ -124,4 +127,3 @@ The macOS shell SHALL keep `ShellStateSnapshot` as the current UI/control-plane/
 - **WHEN** Alan for macOS restarts after publishing a shell state file in the previous process
 - **THEN** alan restores Spaces and Tabs from the workspace manifest
 - **AND** terminal runtimes are newly created rather than restored from the old shell state process snapshot
-
