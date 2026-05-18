@@ -116,7 +116,7 @@ xcodebuild \
     -project "$REPO_ROOT/clients/apple/alan-macos.xcodeproj" \
     -scheme alan-macos \
     -configuration Release \
-    -destination platform=macOS \
+    -destination generic/platform=macOS \
     -derivedDataPath "$DERIVED_DATA" \
     CODE_SIGNING_ALLOWED=NO \
     build

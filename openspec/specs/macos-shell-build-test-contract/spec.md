@@ -328,7 +328,7 @@ engineering identity.
 - **WHEN** implementation is ready for review
 - **THEN** the documented Xcode build command uses
   `clients/apple/alan-macos.xcodeproj`, scheme `alan-macos`, configuration
-  `Debug`, destination `platform=macOS`, and the shared derived-data path
+  `Debug`, destination `generic/platform=macOS`, and the shared derived-data path
 - **AND** the build produces `Alan.app`
 
 #### Scenario: Focused scripts are updated
