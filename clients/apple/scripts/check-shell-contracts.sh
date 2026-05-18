@@ -1154,6 +1154,31 @@ require_pattern \
     "segmentButton\\(paneID: paneID\\)" \
     "two-pane sidebar split indicators must render pane-specific actions"
 
+require_pattern \
+    "clients/apple/alan-macos/ShellModel.swift" \
+    "enum ShellSidebarPaneTopologyKind" \
+    "sidebar split topology classification must live in the testable shell model layer"
+
+require_pattern \
+    "clients/apple/scripts/test-shell-split-model.swift" \
+    "verifiesSidebarSplitTopologyProjection" \
+    "split model tests must cover sidebar topology projection"
+
+require_pattern \
+    "clients/apple/alan-macos/Views/Shell/ShellSidebarView.swift" \
+    "complexCountOverlay" \
+    "complex split indicators must overlay count on the pane-shaped topology base"
+
+require_pattern \
+    "clients/apple/alan-macos/Views/Shell/ShellSidebarView.swift" \
+    "accessibilityHidden\\(!showsCloseButton\\)" \
+    "hidden sidebar close buttons must not remain exposed to accessibility"
+
+reject_pattern \
+    "clients/apple/alan-macos/Views/Shell/ShellSidebarView.swift" \
+    "rectangle\\.split\\.3x1" \
+    "complex split indicators must not render icon and count side by side"
+
 reject_pattern \
     "clients/apple/alan-macos/ShellHostController.swift" \
     "selectedSpaceID = spaceID" \

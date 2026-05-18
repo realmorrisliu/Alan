@@ -497,7 +497,7 @@ struct ShellSidebarView: View {
         host.refocusSelectedTerminalPane()
     }
 
-    private func focusNextSplitPane(in tab: ShellTab, summary: ShellTabSplitSummary) {
+    private func focusNextSplitPane(in tab: ShellTab, summary: ShellTabPaneSummary) {
         guard let paneID = summary.nextPaneID(after: host.shellState.focusedPaneID) else { return }
         focusPane(paneID, in: tab)
     }
@@ -518,11 +518,10 @@ struct ShellSidebarView: View {
             title: projection.title,
             subtitle: projection.secondaryLine,
             isActivitySubtitle: projection.activity != nil,
-            iconName: tabIconName(for: tab),
             progress: projection.progress,
             attention: strongestAttention(for: tab),
             showsAlanMarker: showsAlanMarker(for: tab, activity: projection.activity),
-            splitSummary: splitSummary(for: tab),
+            paneSummary: paneSummary(for: tab),
             isPinned: host.isTabPinned(tabID: tab.tabID),
             isSelected: isSelected,
             isHovered: isHovered,
@@ -569,25 +568,16 @@ struct ShellSidebarView: View {
         }
     }
 
-    private func splitSummary(for tab: ShellTab) -> ShellTabSplitSummary? {
+    private func paneSummary(for tab: ShellTab) -> ShellTabPaneSummary? {
         let paneIDs = tab.paneTree.paneIDs.filter { paneID in
             host.shellState.panes.contains { $0.paneID == paneID }
         }
-        guard paneIDs.count > 1 else { return nil }
+        guard !paneIDs.isEmpty else { return nil }
 
-        let children = tab.paneTree.children ?? []
-        let isSimpleTwoPaneSplit = paneIDs.count == 2
-            && tab.paneTree.kind == .split
-            && children.count == 2
-            && children.allSatisfy { $0.kind == .pane }
-
-        return ShellTabSplitSummary(
-            paneIDs: paneIDs,
-            direction: isSimpleTwoPaneSplit ? tab.paneTree.direction : nil,
-            focusedPaneID: paneIDs.contains(host.shellState.focusedPaneID ?? "")
-                ? host.shellState.focusedPaneID
-                : nil,
-            isComplex: !isSimpleTwoPaneSplit
+        return ShellTabPaneSummary(
+            paneTree: tab.paneTree,
+            visiblePaneIDs: paneIDs,
+            focusedPaneID: host.shellState.focusedPaneID
         )
     }
 
@@ -599,17 +589,6 @@ struct ShellSidebarView: View {
             return "Scratch"
         case .log:
             return "Logs"
-        }
-    }
-
-    private func tabIconName(for tab: ShellTab) -> String {
-        switch tab.kind {
-        case .terminal:
-            return "terminal"
-        case .scratch:
-            return "note.text"
-        case .log:
-            return "doc.text.magnifyingglass"
         }
     }
 
@@ -847,28 +826,6 @@ private struct ShellSpaceSwitcherItem: View {
     }
 }
 
-private struct ShellTabSplitSummary: Equatable {
-    let paneIDs: [String]
-    let direction: ShellSplitDirection?
-    let focusedPaneID: String?
-    let isComplex: Bool
-
-    var paneCount: Int {
-        paneIDs.count
-    }
-
-    func nextPaneID(after currentPaneID: String?) -> String? {
-        guard !paneIDs.isEmpty else { return nil }
-        guard let currentPaneID,
-              let currentIndex = paneIDs.firstIndex(of: currentPaneID)
-        else {
-            return paneIDs.first
-        }
-
-        return paneIDs[(currentIndex + 1) % paneIDs.count]
-    }
-}
-
 private enum ShellSidebarRowVisualState: Equatable {
     case normal
     case hover
@@ -972,113 +929,76 @@ private enum ShellSidebarTypography {
 private struct ShellTabSidebarRow: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @FocusState private var isKeyboardFocused: Bool
+    @State private var isCloseHovered = false
     let title: String
     let subtitle: String
     let isActivitySubtitle: Bool
-    let iconName: String
     let progress: TerminalActivityProgress?
     let attention: ShellAttentionState?
     let showsAlanMarker: Bool
-    let splitSummary: ShellTabSplitSummary?
+    let paneSummary: ShellTabPaneSummary?
     let isPinned: Bool
     let isSelected: Bool
     let isHovered: Bool
     let showsCloseAffordance: Bool
     let onFocusSplitPane: (String) -> Void
-    let onFocusNextSplitPane: (ShellTabSplitSummary) -> Void
+    let onFocusNextSplitPane: (ShellTabPaneSummary) -> Void
     let onClose: () -> Void
 
     var body: some View {
-        ZStack(alignment: .trailing) {
-            HStack(alignment: .top, spacing: 10) {
-                leadingSlot
-                    .frame(width: 24, height: 24, alignment: .center)
+        HStack(alignment: .center, spacing: 10) {
+            leadingSlot
+                .frame(width: 24, height: 24, alignment: .center)
 
-                VStack(alignment: .leading, spacing: progress == nil ? 3 : 5) {
-                    HStack(spacing: 6) {
-                        Text(title)
-                            .font(
-                                .system(
-                                    size: ShellSidebarTypography.titleSize,
-                                    weight: ShellSidebarTypography.titleWeight(isSelected: isSelected)
-                                )
+            VStack(alignment: .leading, spacing: progress == nil ? 3 : 5) {
+                HStack(spacing: 6) {
+                    Text(title)
+                        .font(
+                            .system(
+                                size: ShellSidebarTypography.titleSize,
+                                weight: ShellSidebarTypography.titleWeight(isSelected: isSelected)
                             )
-                            .foregroundStyle(titleForeground)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-
-                        if showsAlanMarker {
-                            Image(systemName: "sparkles")
-                                .font(
-                                    .system(
-                                        size: ShellSidebarTypography.markerSize,
-                                        weight: ShellSidebarTypography.markerWeight
-                                    )
-                                )
-                                .foregroundStyle(ShellPalette.accent)
-                        }
-
-                        if isPinned {
-                            Image(systemName: "pin.fill")
-                                .font(
-                                    .system(
-                                        size: ShellSidebarTypography.pinSize,
-                                        weight: ShellSidebarTypography.markerWeight
-                                    )
-                                )
-                                .foregroundStyle(ShellPalette.accent.opacity(isSelected ? 0.84 : 0.64))
-                                .help("Pinned tab")
-                        }
-                    }
-
-                    subtitleText
-                        .foregroundStyle(subtitleForeground)
+                        )
+                        .foregroundStyle(titleForeground)
                         .lineLimit(1)
                         .truncationMode(.middle)
 
-                    if let progress {
-                        ShellSidebarActivityProgressRail(progress: progress, isSelected: isSelected)
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-
-                Spacer(minLength: 8)
-            }
-
-            if showsCloseButton {
-                HStack(spacing: 0) {
-                    LinearGradient(
-                        colors: [
-                            closeOverlayFill.opacity(0),
-                            closeOverlayFill.opacity(0.96),
-                        ],
-                        startPoint: .leading,
-                        endPoint: .trailing
-                    )
-                    .frame(width: 28)
-
-                    Button(action: onClose) {
-                        Image(systemName: "xmark")
+                    if showsAlanMarker {
+                        Image(systemName: "sparkles")
                             .font(
                                 .system(
-                                    size: ShellSidebarTypography.closeSize,
+                                    size: ShellSidebarTypography.markerSize,
                                     weight: ShellSidebarTypography.markerWeight
                                 )
                             )
-                            .foregroundStyle(closeForeground)
-                            .frame(width: 22, height: 22)
-                            .contentShape(Rectangle())
-                            .background {
-                                Circle()
-                                    .fill(closeOverlayFill.opacity(0.98))
-                            }
+                            .foregroundStyle(ShellPalette.accent)
                     }
-                    .buttonStyle(.plain)
-                    .help("Close tab")
-                    .accessibilityLabel("Close tab")
+
+                    if isPinned {
+                        Image(systemName: "pin.fill")
+                            .font(
+                                .system(
+                                    size: ShellSidebarTypography.pinSize,
+                                    weight: ShellSidebarTypography.markerWeight
+                                )
+                            )
+                            .foregroundStyle(ShellPalette.accent.opacity(isSelected ? 0.84 : 0.64))
+                            .help("Pinned tab")
+                    }
                 }
-                .transition(.opacity)
+
+                subtitleText
+                    .foregroundStyle(subtitleForeground)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+
+                if let progress {
+                    ShellSidebarActivityProgressRail(progress: progress, isSelected: isSelected)
+                }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            closeButtonSlot
         }
         .padding(.horizontal, ShellSidebarMetrics.rowInset)
         .padding(.vertical, 8)
@@ -1113,27 +1033,50 @@ private struct ShellTabSidebarRow: View {
     }
 
     private var showsCloseButton: Bool {
-        isInteractionActive
+        isSelected || isInteractionActive
+    }
+
+    private var closeButtonSlot: some View {
+        Button(action: onClose) {
+            Image(systemName: "xmark")
+                .font(
+                    .system(
+                        size: ShellSidebarTypography.closeSize,
+                        weight: ShellSidebarTypography.markerWeight
+                    )
+                )
+                .foregroundStyle(closeForeground)
+                .frame(width: 20, height: 20)
+                .contentShape(Circle())
+                .background {
+                    if isCloseHovered || isKeyboardFocused {
+                        Circle()
+                            .fill(ShellPalette.sidebarInk.opacity(isSelected ? 0.05 : 0.035))
+                    }
+                }
+        }
+        .buttonStyle(.plain)
+        .opacity(showsCloseButton ? 1 : 0)
+        .allowsHitTesting(showsCloseButton)
+        .accessibilityHidden(!showsCloseButton)
+        .help("Close tab")
+        .accessibilityLabel("Close tab")
+        .onHover { isHovering in
+            isCloseHovered = isHovering
+        }
     }
 
     @ViewBuilder
     private var leadingSlot: some View {
-        if let splitSummary {
-            ShellSplitTopologyIndicator(
-                summary: splitSummary,
+        if let paneSummary {
+            ShellPaneTopologyIndicator(
+                summary: paneSummary,
+                isSelected: isSelected,
                 onFocusSplitPane: onFocusSplitPane,
                 onFocusNextSplitPane: onFocusNextSplitPane
             )
         } else {
-            Image(systemName: iconName)
-                .font(
-                    .system(
-                        size: ShellSidebarMetrics.iconPointSize,
-                        weight: ShellSidebarTypography.iconWeight
-                    )
-                )
-                .foregroundStyle(iconForeground)
-                .frame(width: ShellSidebarMetrics.iconColumnWidth)
+            ShellPaneTopologyIndicator.placeholder(isSelected: isSelected)
         }
     }
 
@@ -1173,10 +1116,6 @@ private struct ShellTabSidebarRow: View {
         return 0
     }
 
-    private var iconForeground: Color {
-        isSelected ? ShellPalette.accent : ShellPalette.sidebarMutedInk.opacity(0.84)
-    }
-
     private var titleForeground: Color {
         isSelected ? ShellPalette.sidebarInk : ShellPalette.sidebarInk.opacity(0.88)
     }
@@ -1186,11 +1125,10 @@ private struct ShellTabSidebarRow: View {
     }
 
     private var closeForeground: Color {
-        isSelected ? ShellPalette.sidebarInk.opacity(0.50) : ShellPalette.sidebarMutedInk.opacity(0.72)
-    }
-
-    private var closeOverlayFill: Color {
-        isSelected ? ShellPalette.sidebarRowSelected : ShellPalette.sidebarRowHover
+        if isCloseHovered {
+            return ShellPalette.sidebarInk.opacity(isSelected ? 0.68 : 0.76)
+        }
+        return isSelected ? ShellPalette.sidebarInk.opacity(0.46) : ShellPalette.sidebarMutedInk.opacity(0.62)
     }
 
     private var accessibilityLabel: String {
@@ -1201,8 +1139,8 @@ private struct ShellTabSidebarRow: View {
         if attention != nil {
             parts.append("needs attention")
         }
-        if let splitSummary {
-            parts.append("\(splitSummary.paneCount) panes")
+        if let paneSummary {
+            parts.append(paneSummary.paneCount == 1 ? "1 pane" : "\(paneSummary.paneCount) panes")
         }
         if isPinned {
             parts.append("pinned")
@@ -1253,63 +1191,249 @@ private struct ShellSidebarActivityProgressRail: View {
     }
 }
 
-private struct ShellSplitTopologyIndicator: View {
-    let summary: ShellTabSplitSummary
+private struct ShellPaneTopologyIndicator: View {
+    let summary: ShellTabPaneSummary
+    let isSelected: Bool
     let onFocusSplitPane: (String) -> Void
-    let onFocusNextSplitPane: (ShellTabSplitSummary) -> Void
+    let onFocusNextSplitPane: (ShellTabPaneSummary) -> Void
 
+    @ViewBuilder
     var body: some View {
-        if summary.isComplex {
+        switch summary.topology.kind {
+        case .single:
+            singlePaneIndicator
+        case .columns(let count):
+            columnsIndicator(paneIDs: Array(summary.paneIDs.prefix(count)))
+        case .rows(let count):
+            rowsIndicator(paneIDs: Array(summary.paneIDs.prefix(count)))
+        case .mainLeftWithRightStack:
+            mainLeftWithRightStackIndicator
+        case .mainRightWithLeftStack:
+            mainRightWithLeftStackIndicator
+        case .mainTopWithBottomSplit:
+            mainTopWithBottomSplitIndicator
+        case .mainBottomWithTopSplit:
+            mainBottomWithTopSplitIndicator
+        case .grid2x2(let rootDirection):
+            gridIndicator(rootDirection: rootDirection)
+        case .complex:
             complexButton
-        } else {
-            twoPaneIndicator
         }
     }
 
-    private var twoPaneIndicator: some View {
-        let paneIDs = Array(summary.paneIDs.prefix(2))
-        let isVertical = summary.direction == .vertical
+    private var singlePaneIndicator: some View {
+        indicatorFrame {
+            RoundedRectangle(cornerRadius: ShellRadii.micro, style: .continuous)
+                .fill(primaryPaneFill)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .accessibilityLabel("Single pane")
+    }
 
-        return Group {
-            if isVertical {
-                HStack(spacing: 2) {
-                    ForEach(paneIDs, id: \.self) { paneID in
-                        segmentButton(paneID: paneID)
-                    }
-                }
-            } else {
-                VStack(spacing: 2) {
-                    ForEach(paneIDs, id: \.self) { paneID in
-                        segmentButton(paneID: paneID)
-                    }
+    private func columnsIndicator(paneIDs: [String]) -> some View {
+        indicatorFrame {
+            HStack(spacing: 2) {
+                ForEach(paneIDs, id: \.self) { paneID in
+                    segmentButton(paneID: paneID)
                 }
             }
         }
-        .frame(width: 22, height: 16)
         .help("Focus split pane")
-        .accessibilityLabel("Split tab, \(summary.paneCount) panes")
+        .accessibilityLabel(splitAccessibilityLabel)
+    }
+
+    private func rowsIndicator(paneIDs: [String]) -> some View {
+        indicatorFrame {
+            VStack(spacing: 2) {
+                ForEach(paneIDs, id: \.self) { paneID in
+                    segmentButton(paneID: paneID)
+                }
+            }
+        }
+        .help("Focus split pane")
+        .accessibilityLabel(splitAccessibilityLabel)
+    }
+
+    @ViewBuilder
+    private var mainLeftWithRightStackIndicator: some View {
+        let paneIDs = Array(summary.paneIDs.prefix(3))
+        if paneIDs.count == 3 {
+            indicatorFrame {
+                HStack(spacing: 2) {
+                    segmentButton(paneID: paneIDs[0])
+                    VStack(spacing: 2) {
+                        segmentButton(paneID: paneIDs[1])
+                        segmentButton(paneID: paneIDs[2])
+                    }
+                }
+            }
+            .help("Focus split pane")
+            .accessibilityLabel(splitAccessibilityLabel)
+        } else {
+            complexButton
+        }
+    }
+
+    @ViewBuilder
+    private var mainRightWithLeftStackIndicator: some View {
+        let paneIDs = Array(summary.paneIDs.prefix(3))
+        if paneIDs.count == 3 {
+            indicatorFrame {
+                HStack(spacing: 2) {
+                    VStack(spacing: 2) {
+                        segmentButton(paneID: paneIDs[0])
+                        segmentButton(paneID: paneIDs[1])
+                    }
+                    segmentButton(paneID: paneIDs[2])
+                }
+            }
+            .help("Focus split pane")
+            .accessibilityLabel(splitAccessibilityLabel)
+        } else {
+            complexButton
+        }
+    }
+
+    @ViewBuilder
+    private var mainTopWithBottomSplitIndicator: some View {
+        let paneIDs = Array(summary.paneIDs.prefix(3))
+        if paneIDs.count == 3 {
+            indicatorFrame {
+                VStack(spacing: 2) {
+                    segmentButton(paneID: paneIDs[0])
+                    HStack(spacing: 2) {
+                        segmentButton(paneID: paneIDs[1])
+                        segmentButton(paneID: paneIDs[2])
+                    }
+                }
+            }
+            .help("Focus split pane")
+            .accessibilityLabel(splitAccessibilityLabel)
+        } else {
+            complexButton
+        }
+    }
+
+    @ViewBuilder
+    private var mainBottomWithTopSplitIndicator: some View {
+        let paneIDs = Array(summary.paneIDs.prefix(3))
+        if paneIDs.count == 3 {
+            indicatorFrame {
+                VStack(spacing: 2) {
+                    HStack(spacing: 2) {
+                        segmentButton(paneID: paneIDs[0])
+                        segmentButton(paneID: paneIDs[1])
+                    }
+                    segmentButton(paneID: paneIDs[2])
+                }
+            }
+            .help("Focus split pane")
+            .accessibilityLabel(splitAccessibilityLabel)
+        } else {
+            complexButton
+        }
+    }
+
+    @ViewBuilder
+    private func gridIndicator(rootDirection: ShellSplitDirection) -> some View {
+        let paneIDs = Array(summary.paneIDs.prefix(4))
+        if paneIDs.count == 4 {
+            indicatorFrame {
+                if rootDirection == .vertical {
+                    HStack(spacing: 2) {
+                        VStack(spacing: 2) {
+                            segmentButton(paneID: paneIDs[0])
+                            segmentButton(paneID: paneIDs[1])
+                        }
+                        VStack(spacing: 2) {
+                            segmentButton(paneID: paneIDs[2])
+                            segmentButton(paneID: paneIDs[3])
+                        }
+                    }
+                } else {
+                    VStack(spacing: 2) {
+                        HStack(spacing: 2) {
+                            segmentButton(paneID: paneIDs[0])
+                            segmentButton(paneID: paneIDs[1])
+                        }
+                        HStack(spacing: 2) {
+                            segmentButton(paneID: paneIDs[2])
+                            segmentButton(paneID: paneIDs[3])
+                        }
+                    }
+                }
+            }
+            .help("Focus split pane")
+            .accessibilityLabel(splitAccessibilityLabel)
+        } else {
+            complexButton
+        }
+    }
+
+    private func indicatorFrame<Content: View>(@ViewBuilder content: () -> Content) -> some View {
+        let shape = RoundedRectangle(cornerRadius: ShellRadii.badge, style: .continuous)
+
+        return content()
+            .padding(3)
+            .frame(width: 22, height: 18)
+            .background {
+                shape
+                    .fill(containerFill)
+                    .overlay {
+                        shape.stroke(ShellPalette.line.opacity(isSelected ? 0.20 : 0.15), lineWidth: 0.5)
+                    }
+            }
+    }
+
+    static func placeholder(isSelected: Bool) -> some View {
+        let shape = RoundedRectangle(cornerRadius: ShellRadii.badge, style: .continuous)
+        return shape
+            .fill(ShellPalette.sidebarMutedInk.opacity(isSelected ? 0.20 : 0.13))
+            .frame(width: 22, height: 18)
+            .overlay {
+                shape.stroke(ShellPalette.line.opacity(isSelected ? 0.20 : 0.15), lineWidth: 0.5)
+            }
+            .accessibilityLabel("Pane")
+    }
+
+    private var containerFill: Color {
+        ShellPalette.sidebarMutedInk.opacity(isSelected ? 0.105 : 0.075)
+    }
+
+    private var primaryPaneFill: Color {
+        isSelected ? ShellPalette.accent.opacity(0.82) : ShellPalette.sidebarMutedInk.opacity(0.38)
+    }
+
+    private func paneFill(isFocused: Bool) -> Color {
+        if isFocused {
+            return ShellPalette.accent.opacity(isSelected ? 0.88 : 0.78)
+        }
+        return ShellPalette.sidebarMutedInk.opacity(isSelected ? 0.40 : 0.32)
     }
 
     private var complexButton: some View {
         Button {
             onFocusNextSplitPane(summary)
         } label: {
-            HStack(spacing: 2) {
-                Image(systemName: "rectangle.split.3x1")
-                    .font(.system(size: 8, weight: .bold))
-                Text("\(summary.paneCount)")
-                    .font(.system(size: 8, weight: .bold, design: .monospaced))
-            }
-            .foregroundStyle(summary.focusedPaneID == nil ? .secondary : ShellPalette.accent)
-            .frame(width: 24, height: 18)
-            .background(
-                RoundedRectangle(cornerRadius: ShellRadii.badge, style: .continuous)
-                    .fill(ShellPalette.canvas.opacity(0.55))
-            )
+            complexCountOverlay
         }
         .buttonStyle(.plain)
         .help("Focus next split pane")
-        .accessibilityLabel("Split tab, \(summary.paneCount) panes")
+        .accessibilityLabel(splitAccessibilityLabel)
+    }
+
+    private var complexCountOverlay: some View {
+        indicatorFrame {
+            ZStack {
+                RoundedRectangle(cornerRadius: ShellRadii.micro, style: .continuous)
+                    .fill(primaryPaneFill)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+                Text("\(summary.paneCount)")
+                    .font(.system(size: 8.5, weight: .bold, design: .monospaced))
+                    .foregroundStyle(isSelected ? ShellPalette.sidebarInk : ShellPalette.sidebarInk.opacity(0.76))
+            }
+        }
     }
 
     private func segmentButton(paneID: String) -> some View {
@@ -1329,7 +1453,11 @@ private struct ShellSplitTopologyIndicator: View {
         let isFocused = summary.focusedPaneID == paneID
 
         return RoundedRectangle(cornerRadius: ShellRadii.micro, style: .continuous)
-            .fill(isFocused ? ShellPalette.accent.opacity(0.9) : ShellPalette.mutedInk.opacity(0.24))
+            .fill(paneFill(isFocused: isFocused))
+    }
+
+    private var splitAccessibilityLabel: String {
+        "Split tab, \(summary.accessibilityTopologyLabel)"
     }
 }
 
