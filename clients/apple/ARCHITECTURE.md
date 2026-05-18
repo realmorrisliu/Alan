@@ -119,10 +119,10 @@ preserving PR slices. The final validation pass before syncing this spec ran:
 - `git diff --check`
 - `openspec validate improve-macos-app-architecture-maintainability --type change --strict --json`
 - `openspec validate --all --strict --json`
-- `xcodebuild -project clients/apple/alan-macos.xcodeproj -scheme alan-macos -configuration Debug -destination platform=macOS -derivedDataPath target/xcode-derived build`
+- `xcodebuild -project clients/apple/alan-macos.xcodeproj -scheme alan-macos -configuration Debug -destination generic/platform=macOS -derivedDataPath target/xcode-derived build`
 
 The macOS build succeeded. Local Xcode continued to print the existing
-CoreSimulator version warning while building for `platform=macOS`; simulator
+CoreSimulator version warning while building for `generic/platform=macOS`; simulator
 device support was not required for this validation.
 
 ## Remaining Architecture Debt
