@@ -460,6 +460,10 @@ final class AlanTerminalFocusClickAdapter {
         return true
     }
 
+    func shouldSuppressLeftMouseDrag() -> Bool {
+        suppressNextLeftMouseUp
+    }
+
     func resetSuppression() {
         suppressNextLeftMouseUp = false
     }

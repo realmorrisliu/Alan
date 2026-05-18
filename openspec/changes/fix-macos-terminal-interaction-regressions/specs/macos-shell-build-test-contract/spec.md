@@ -16,7 +16,7 @@ inheritance, and shell child-exit lifecycle changes.
 #### Scenario: AppKit responder-chain verification
 - **WHEN** terminal keyboard routing is changed
 - **THEN** verification covers `performKeyEquivalent`/`doCommand` redispatch for Control or Command key equivalents
-- **AND** verification covers Ghostty's special `Control-/` handling and focus-only split clicks that must not reach Vim mouse mode
+- **AND** verification covers Ghostty's special `Control-/` handling and focus-only split click/drag sequences that must not reach Vim mouse mode or terminal selection
 
 #### Scenario: New tab cwd verification
 - **WHEN** terminal tab creation is changed

@@ -1085,6 +1085,11 @@ require_pattern \
 
 require_pattern \
     "clients/apple/alan-macos/TerminalHostView.swift" \
+    "shouldSuppressLeftMouseDrag" \
+    "terminal focus-only split clicks must suppress matching mouse drags"
+
+require_pattern \
+    "clients/apple/alan-macos/TerminalHostView.swift" \
     "func insertText\\(_ string: Any, replacementRange: NSRange\\)" \
     "terminal IME text insertion must remain owned by the AppKit terminal host"
 

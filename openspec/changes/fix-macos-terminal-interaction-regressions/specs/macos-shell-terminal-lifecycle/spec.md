@@ -45,8 +45,9 @@ app-reserved `Command` shortcut owns that key.
 - **WHEN** the app and window are already active
 - **AND** the user clicks a terminal split pane that is selected in the shell model but is not the AppKit first responder
 - **THEN** alan focuses that terminal host and consumes the focus-transfer mouse down
+- **AND** matching left mouse drags are suppressed until the focus-transfer mouse up
 - **AND** the matching left mouse up is suppressed
-- **AND** Vim mouse mode does not receive a stray click from the focus transfer
+- **AND** Vim mouse mode does not receive a stray click or selection drag from the focus transfer
 
 #### Scenario: Modifier changes follow Ghostty semantics
 - **WHEN** modifier keys change while IME marked text is active

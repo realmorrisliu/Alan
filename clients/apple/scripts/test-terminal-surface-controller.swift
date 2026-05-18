@@ -395,6 +395,26 @@ private enum TerminalSurfaceControllerTests {
             "left mouse-up suppression must be one-shot"
         )
 
+        _ = adapter.routeLeftMouseDown(
+            hitOwnsTerminal: true,
+            commandSurfaceVisible: false,
+            isFirstResponder: false,
+            appIsActive: true,
+            windowIsKey: true
+        )
+        expect(
+            adapter.shouldSuppressLeftMouseDrag(),
+            "focus-only mouse down must suppress matching left mouse drags"
+        )
+        expect(
+            adapter.consumeSuppressedLeftMouseUp(),
+            "focus-only drag suppression must keep suppressing until mouse up"
+        )
+        expect(
+            !adapter.shouldSuppressLeftMouseDrag(),
+            "left mouse-drag suppression must clear after mouse up"
+        )
+
         expect(
             adapter.routeLeftMouseDown(
                 hitOwnsTerminal: true,

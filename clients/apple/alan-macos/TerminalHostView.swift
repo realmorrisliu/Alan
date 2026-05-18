@@ -618,6 +618,9 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
     }
 
     override func mouseDragged(with event: NSEvent) {
+        if focusClickAdapter.shouldSuppressLeftMouseDrag() {
+            return
+        }
         routePointer(terminalPointerInput(for: event, phase: .drag, button: .primary))
     }
 
