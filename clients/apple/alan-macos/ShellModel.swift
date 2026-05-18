@@ -1,5 +1,13 @@
 import Foundation
 
+struct ShellSidebarTabProjection: Equatable {
+    let title: String
+    let secondaryLine: String
+    let activity: TerminalActivitySnapshot?
+    let progress: TerminalActivityProgress?
+    let accessibilityActivityLabel: String?
+}
+
 func shellUserFacingSummary(_ summary: String?) -> String? {
     guard let summary else { return nil }
 
@@ -7,13 +15,19 @@ func shellUserFacingSummary(_ summary: String?) -> String? {
     guard !trimmed.isEmpty else { return nil }
 
     let internalOnlySummaries = [
+        "command finished",
+        "command succeeded",
         "title updated",
         "input committed",
+        "terminal bell",
         "terminal rendering",
         "window attached",
     ]
 
-    if internalOnlySummaries.contains(trimmed.lowercased()) {
+    let lowercasedSummary = trimmed.lowercased()
+    if internalOnlySummaries.contains(lowercasedSummary)
+        || lowercasedSummary.hasPrefix("command failed")
+    {
         return nil
     }
 
@@ -49,9 +63,11 @@ func shellTerminalStatusSummary(for pane: ShellPane) -> String? {
 
     switch pane.attention {
     case .awaitingUser:
-        return shellUserFacingSummary(pane.viewport?.summary) ?? "Needs attention"
+        guard let rawSummary = pane.viewport?.summary else { return "Needs attention" }
+        return shellUserFacingSummary(rawSummary)
     case .notable:
-        return shellUserFacingSummary(pane.viewport?.summary) ?? "Terminal bell"
+        guard let rawSummary = pane.viewport?.summary else { return "Terminal bell" }
+        return shellUserFacingSummary(rawSummary)
     case .active, .idle:
         return nil
     }
@@ -169,4 +185,134 @@ func shellPaneTitleBarTitle(for pane: ShellPane) -> String {
     }
 
     return "Terminal"
+}
+
+func shellPaneActivityAccessoryLabel(for pane: ShellPane, now: Date? = nil) -> String? {
+    guard let activity = pane.activity else { return nil }
+    if let now, !activity.isFresh(at: now) {
+        return nil
+    }
+
+    switch activity.status {
+    case .idle, .stale:
+        return nil
+    case .done:
+        return activity.source.kind == .command ? nil : activity.display.sourceFirstLabel
+    case .needsInput, .failed, .paused, .progress, .running, .bell, .exited:
+        return activity.display.sourceFirstLabel
+    }
+}
+
+func shellSidebarTabProjection(
+    for tab: ShellTab,
+    panes allPanes: [ShellPane],
+    focusedPaneID: String?,
+    focusedTabID: String?,
+    now: Date? = nil
+) -> ShellSidebarTabProjection {
+    let panes = shellOrderedPanes(for: tab, panes: allPanes)
+    let primaryPane = shellPrimaryPane(in: panes, focusedPaneID: focusedPaneID)
+    let title = shellSidebarTabTitle(for: tab, primaryPane: primaryPane)
+    let isOwningTabFocused = focusedTabID == tab.tabID
+
+    let activityCandidates = panes.enumerated().compactMap { index, pane -> TerminalActivitySnapshot? in
+        guard let activity = pane.activity,
+              activity.isSidebarWorthy(at: now, owningTabFocused: isOwningTabFocused)
+        else { return nil }
+
+        let hint: String?
+        if panes.count > 1,
+           pane.paneID != primaryPane?.paneID
+        {
+            hint = "Pane \(index + 1)"
+        } else {
+            hint = nil
+        }
+        return activity.withPaneHint(hint)
+    }
+
+    if let activity = TerminalActivitySnapshot.primarySidebarActivity(activityCandidates, now: now) {
+        return ShellSidebarTabProjection(
+            title: title,
+            secondaryLine: activity.display.sourceFirstLabel,
+            activity: activity,
+            progress: activity.progress,
+            accessibilityActivityLabel: activity.display.sourceFirstLabel
+        )
+    }
+
+    let fallback = primaryPane.flatMap(shellTerminalStatusSummary(for:))
+        ?? primaryPane.flatMap { shellSidebarContextLine(for: $0, title: title) }
+        ?? shellFallbackTitle(for: tab.kind)
+    return ShellSidebarTabProjection(
+        title: title,
+        secondaryLine: fallback,
+        activity: nil,
+        progress: nil,
+        accessibilityActivityLabel: nil
+    )
+}
+
+func shellOrderedPanes(for tab: ShellTab, panes allPanes: [ShellPane]) -> [ShellPane] {
+    let byID = Dictionary(uniqueKeysWithValues: allPanes.map { ($0.paneID, $0) })
+    let ordered = tab.paneTree.paneIDs.compactMap { byID[$0] }
+    if !ordered.isEmpty {
+        return ordered
+    }
+    return allPanes.filter { $0.tabID == tab.tabID }
+}
+
+private func shellPrimaryPane(in panes: [ShellPane], focusedPaneID: String?) -> ShellPane? {
+    if let focusedPaneID,
+       let focused = panes.first(where: { $0.paneID == focusedPaneID })
+    {
+        return focused
+    }
+    return panes.first
+}
+
+private func shellSidebarTabTitle(for tab: ShellTab, primaryPane: ShellPane?) -> String {
+    shellDisplayTitle(
+        rawTitle: tab.title ?? primaryPane?.viewport?.title,
+        workingDirectoryName: primaryPane?.context?.workingDirectoryName,
+        cwd: primaryPane?.cwd,
+        program: primaryPane?.process?.program,
+        launchTarget: primaryPane?.resolvedLaunchTarget ?? .shell,
+        fallback: shellFallbackTitle(for: tab.kind)
+    )
+}
+
+private func shellSidebarContextLine(for pane: ShellPane, title: String) -> String? {
+    let contextLabel = shellPathLeaf(pane.context?.repositoryRoot)
+        ?? shellVisibleLabel(pane.context?.workingDirectoryName)
+        ?? shellPathLeaf(pane.cwd)
+
+    if let branch = shellVisibleLabel(pane.context?.gitBranch) {
+        if let contextLabel, contextLabel != title {
+            return "\(contextLabel) · \(branch)"
+        }
+        return branch
+    }
+
+    if let contextLabel {
+        if contextLabel == title,
+           let program = shellVisibleLabel(pane.process?.program)
+        {
+            return program
+        }
+        return contextLabel
+    }
+
+    return shellVisibleLabel(pane.process?.program)
+}
+
+private func shellFallbackTitle(for kind: ShellTabKind) -> String {
+    switch kind {
+    case .terminal:
+        return "Terminal"
+    case .scratch:
+        return "Scratch"
+    case .log:
+        return "Logs"
+    }
 }

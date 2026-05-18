@@ -82,20 +82,56 @@ extension ShellStateSnapshot {
 
 
     func focusingPane(_ paneID: String) throws -> ShellStateMutationResult {
-        guard pane(paneID: paneID) != nil else {
+        guard let targetPane = pane(paneID: paneID) else {
             throw ShellStateMutationError.paneNotFound
         }
 
+        let acknowledgedPanes = panesAcknowledgingCommandFailureActivities(
+            in: targetPane.tabID,
+            focusedPaneID: paneID
+        )
         return ShellStateMutationResult(
             state: replacing(
-                spaces: spaces,
-                panes: panes,
+                spaces: rebuildingAttention(in: spaces, panes: acknowledgedPanes),
+                panes: acknowledgedPanes,
                 focusedPaneID: paneID
             ),
-            spaceID: pane(paneID: paneID)?.spaceID,
-            tabID: pane(paneID: paneID)?.tabID,
+            spaceID: targetPane.spaceID,
+            tabID: targetPane.tabID,
             paneID: paneID
         )
+    }
+
+    private func panesAcknowledgingCommandFailureActivities(
+        in tabID: String,
+        focusedPaneID: String
+    ) -> [ShellPane] {
+        panes.map { current in
+            guard current.tabID == tabID,
+                  current.activity?.isCommandFailure == true
+            else { return current }
+
+            let acknowledgedAttention: ShellAttentionState
+            if current.attention == .notable {
+                acknowledgedAttention = current.paneID == focusedPaneID ? .active : .idle
+            } else {
+                acknowledgedAttention = current.attention
+            }
+
+            return ShellPane(
+                paneID: current.paneID,
+                tabID: current.tabID,
+                spaceID: current.spaceID,
+                launchTarget: current.launchTarget,
+                cwd: current.cwd,
+                process: current.process,
+                attention: acknowledgedAttention,
+                context: current.context,
+                viewport: current.viewport,
+                activity: nil,
+                alanBinding: current.alanBinding
+            )
+        }
     }
 
     func focusingAdjacentPane(_ direction: ShellSpatialFocusDirection) throws -> ShellStateMutationResult {

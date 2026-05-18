@@ -679,7 +679,11 @@ final class AlanGhosttyLiveHost: NSObject {
 
         case GHOSTTY_ACTION_RING_BELL:
             performOnMain {
-                self.updateMetadata(summary: "terminal bell", attention: .notable)
+                self.updateMetadata(
+                    summary: "terminal bell",
+                    attention: .notable,
+                    activity: TerminalActivitySnapshot.bellActivity(now: .now)
+                )
             }
             return true
 
@@ -691,7 +695,11 @@ final class AlanGhosttyLiveHost: NSObject {
                     attention: .awaitingUser,
                     processExited: true,
                     lastCommandExitCode: Int(exitCode),
-                    activeTaskState: .inactive
+                    activeTaskState: .inactive,
+                    activity: TerminalActivitySnapshot.processExitedActivity(
+                        exitCode: Int(exitCode),
+                        now: .now
+                    )
                 )
             }
             return true
