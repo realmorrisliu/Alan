@@ -14,9 +14,16 @@
 - [x] 2.4 保留 command input 可见时的 submit/dismiss/toggle 行为，以及 `Command-T`、`Command-W` 等明确 native workspace shortcut。
 - [x] 2.5 为 fake terminal surface 或 focused shell contract 增加键盘输入验证，覆盖 Vim/TUI 关键按键、IME composing Backspace 和 native command shortcut 非回归。
 - [x] 2.6 按 Ghostty macOS `SurfaceView_AppKit` 补齐 `performKeyEquivalent`/`doCommand` timestamp redispatch，覆盖 `Control-/`、`Control-Return`、普通 Control/Command key equivalent 和 terminal binding。
-- [x] 2.7 补齐 focused terminal 的 local AppKit event monitor：Command keyUp release、active-window focus-only left click suppression、matching mouseUp suppression。
+- [x] 2.7 补齐 focused terminal 的 local AppKit event monitor：Command keyUp release、active-window focus-only left click suppression、matching mouseDrag/mouseUp suppression。
 - [x] 2.8 补齐 modifier event 语义：IME marked text 中不转发 `flagsChanged`，正常路径保留 caps/right-side modifier bits。
 - [x] 2.9 增加 focused tests 或 shell contract，证明 Ghostty-style key-equivalent state machine、focus-only click suppression 和 modifier event 语义不会回退。
+- [x] 2.10 将 focus-only primary button sequence、normal-buffer selection drag、alternate-screen/mouse-reporting delivery 和 surface readiness 判断收敛到单一 terminal input router；`TerminalHostView` 只保留 AppKit event normalization 和 decision execution。
+- [x] 2.11 将物理键盘输入收敛到 terminal input router，并确保 printable keys、Escape、Control keys 最终通过 Ghostty key event delivery。
+- [x] 2.12 将 `ghostty_surface_text` 路径命名为 programmatic text delivery，保留给 paste/control-plane/非 keyDown text insertion，不作为物理键盘输入路径。
+- [x] 2.13 修复 printable key 直接绕过 AppKit text interpretation 导致中文 IME 无法启动 composition 的回归，同时保持 committed printable input 最终走 Ghostty key event。
+- [x] 2.14 修复 focus-only mouse routing 只看 AppKit first responder、不看 shell selection 导致 pane focus click 被误判为 terminal selection drag 的回归。
+- [x] 2.15 根据 terminal input trace 修复 focus-only click 的 primary buttonDown 泄漏：即使 AppKit 在 local monitor 判定 focus-only 后仍派发 native mouseDown，也由同一 input router 消费整段 primary down/drag/up 序列。
+- [x] 2.16 让 terminal input trace 的 user-defaults 开关和路径在运行中按短刷新间隔重新读取，避免打开或关闭诊断日志必须重启 alan。
 
 ## 3. New Tab Cwd Inheritance
 
@@ -43,4 +50,6 @@
 - [x] 5.4 手工验证 split pane、single-pane tab 和 final-pane/fallback 的 `exit` 行为。
   - 2026-05-17: User confirmed exit behavior is OK.
 - [x] 5.5 更新实现说明或 verification notes，列出覆盖的按键、cwd 路径、exit 场景和任何剩余限制。
+- [x] 5.7 验证 terminal input router 收敛后的 focused tests、shell contract、OpenSpec strict validation 和 macOS build。
+- [x] 5.8 修复 GhosttyKit 本地 artifact modulemap 的 umbrella-header build warnings，并让 shell contract 拒绝回归。
 - [ ] 5.6 实现合入后，将 delta specs 同步到 `openspec/specs/` 并准备 archive。

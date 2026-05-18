@@ -21,8 +21,10 @@ private enum TerminalSurfaceControllerTests {
         verifiesNativeScrollViewForwardsMouseEvents()
         verifiesInputCommandRouting()
         verifiesTUIKeyboardRoutingKeepsTerminalOwnedKeysInTerminal()
+        verifiesKeyboardPipelineKeepsPhysicalKeysOnGhosttyKeyPath()
         verifiesGhosttyKeyEquivalentRedispatchContract()
         verifiesFocusOnlyClickSuppressionPolicy()
+        verifiesTerminalInputRouterOwnsFocusOnlyPointerSequence()
         verifiesTextInputInterpretationPolicyPreservesIMEMarkedText()
         verifiesPointerRoutingFollowsTerminalMouseModes()
         verifiesPointerButtonMappingMatchesGhostty()
@@ -143,78 +145,96 @@ private enum TerminalSurfaceControllerTests {
     }
 
     private static func verifiesInputCommandRouting() {
-        let adapter = AlanTerminalInputAdapter()
-        let command = adapter.routeKey(
+        let router = AlanTerminalInputRouter()
+        let command = router.routeKeyboard(
             AlanTerminalKeyInput(
                 characters: "q",
                 keyCode: 12,
                 modifiers: [.command],
                 phase: .down,
                 isRepeat: false
-            )
+            ),
+            hasMarkedText: false
         )
         expect(command == .nativeCommand("quit"), "command-q must route to the native app command")
 
-        let findCommand = adapter.routeKey(
+        let findCommand = router.routeKeyboard(
             AlanTerminalKeyInput(
                 characters: "f",
                 keyCode: 3,
                 modifiers: [.command],
                 phase: .down,
                 isRepeat: false
-            )
+            ),
+            hasMarkedText: false
         )
         expect(findCommand == .nativeCommand("find"), "command-f must route to pane search")
 
-        let printable = adapter.routeKey(
+        let printable = router.routeKeyboard(
             AlanTerminalKeyInput(
                 characters: "a",
                 keyCode: 0,
                 modifiers: [],
                 phase: .down,
                 isRepeat: false
-            )
+            ),
+            hasMarkedText: false
         )
-        expect(printable == .terminalText("a"), "printable key input must become terminal text")
+        expect(
+            printable == .interpretTextInput,
+            "printable key input must enter AppKit text interpretation so IME composition can start"
+        )
 
-        let splitDown = adapter.routeWorkspaceCommand(
+        let splitDown = router.routeKeyboard(
             AlanTerminalKeyInput(
                 characters: "d",
                 keyCode: 2,
                 modifiers: [.command, .shift],
                 phase: .down,
                 isRepeat: false
-            )
+            ),
+            hasMarkedText: false
         )
-        expect(splitDown == .splitDown, "command-shift-d must route to shell split down before terminal bindings")
+        expect(
+            splitDown == .workspaceCommand(.splitDown),
+            "command-shift-d must route to shell split down before terminal bindings"
+        )
 
-        let splitRight = adapter.routeWorkspaceCommand(
+        let splitRight = router.routeKeyboard(
             AlanTerminalKeyInput(
                 characters: "d",
                 keyCode: 2,
                 modifiers: [.command],
                 phase: .down,
                 isRepeat: false
-            )
+            ),
+            hasMarkedText: false
         )
-        expect(splitRight == .splitRight, "command-d must route to shell split right before terminal bindings")
+        expect(
+            splitRight == .workspaceCommand(.splitRight),
+            "command-d must route to shell split right before terminal bindings"
+        )
 
-        let focusRight = adapter.routeWorkspaceCommand(
+        let focusRight = router.routeKeyboard(
             AlanTerminalKeyInput(
                 characters: nil,
                 keyCode: 0x7C,
                 modifiers: [.command, .control],
                 phase: .down,
                 isRepeat: false
-            )
+            ),
+            hasMarkedText: false
         )
-        expect(focusRight == .focusRight, "command-control-right must route to shell focus right")
+        expect(
+            focusRight == .workspaceCommand(.focusRight),
+            "command-control-right must route to shell focus right"
+        )
     }
 
     private static func verifiesTUIKeyboardRoutingKeepsTerminalOwnedKeysInTerminal() {
-        let adapter = AlanTerminalInputAdapter()
+        let router = AlanTerminalInputRouter()
 
-        let controlWWorkspaceCommand = adapter.routeWorkspaceCommand(
+        let controlWWorkspaceCommand = router.routeWorkspaceCommand(
             AlanTerminalKeyInput(
                 characters: "w",
                 keyCode: 13,
@@ -225,60 +245,174 @@ private enum TerminalSurfaceControllerTests {
         )
         expect(controlWWorkspaceCommand == nil, "control-w must not be consumed as a workspace command")
 
-        let controlW = adapter.routeKey(
+        let controlW = router.routeKeyboard(
             AlanTerminalKeyInput(
                 characters: "\u{17}",
                 keyCode: 13,
                 modifiers: [.control],
                 phase: .down,
                 isRepeat: false
-            )
+            ),
+            hasMarkedText: false
         )
         expect(controlW == .terminalKey, "control-w must stay a terminal key for Vim split navigation")
 
-        let escape = adapter.routeKey(
+        let escape = router.routeKeyboard(
             AlanTerminalKeyInput(
                 characters: "\u{1B}",
                 keyCode: 53,
                 modifiers: [],
                 phase: .down,
                 isRepeat: false
-            )
+            ),
+            hasMarkedText: false
         )
         expect(escape == .terminalKey, "escape must stay a terminal key for TUI command mode")
 
-        let tab = adapter.routeKey(
+        let tab = router.routeKeyboard(
             AlanTerminalKeyInput(
                 characters: "\t",
                 keyCode: 48,
                 modifiers: [],
                 phase: .down,
                 isRepeat: false
-            )
+            ),
+            hasMarkedText: false
         )
         expect(tab == .terminalKey, "tab must stay a terminal key for TUI focus and completion")
 
-        let optionF = adapter.routeKey(
+        let optionF = router.routeKeyboard(
             AlanTerminalKeyInput(
                 characters: "f",
                 keyCode: 3,
                 modifiers: [.option],
                 phase: .down,
                 isRepeat: false
-            )
+            ),
+            hasMarkedText: false
         )
         expect(optionF == .terminalKey, "option-modified keys must preserve modifier-aware terminal delivery")
 
-        let commandT = adapter.routeWorkspaceCommand(
+        let commandT = router.routeKeyboard(
             AlanTerminalKeyInput(
                 characters: "t",
                 keyCode: 17,
                 modifiers: [.command],
                 phase: .down,
                 isRepeat: false
-            )
+            ),
+            hasMarkedText: false
         )
-        expect(commandT == .newTerminalTab, "command-t must remain a native workspace shortcut")
+        expect(
+            commandT == .workspaceCommand(.newTerminalTab),
+            "command-t must remain a native workspace shortcut"
+        )
+    }
+
+    private static func verifiesKeyboardPipelineKeepsPhysicalKeysOnGhosttyKeyPath() {
+        let router = AlanTerminalInputRouter()
+
+        let printable = router.routeKeyboard(
+            AlanTerminalKeyInput(
+                characters: "a",
+                keyCode: 0,
+                modifiers: [],
+                phase: .down,
+                isRepeat: false
+            ),
+            hasMarkedText: false
+        )
+        expect(
+            printable == .interpretTextInput,
+            "printable physical keys must enter AppKit text interpretation before Ghostty key delivery"
+        )
+
+        let colon = router.routeKeyboard(
+            AlanTerminalKeyInput(
+                characters: ":",
+                keyCode: 41,
+                modifiers: [.shift],
+                phase: .down,
+                isRepeat: false
+            ),
+            hasMarkedText: false
+        )
+        expect(
+            colon == .interpretTextInput,
+            "shift-printable physical keys must enter AppKit text interpretation before Ghostty key delivery"
+        )
+
+        let escape = router.routeKeyboard(
+            AlanTerminalKeyInput(
+                characters: "\u{1B}",
+                keyCode: 53,
+                modifiers: [],
+                phase: .down,
+                isRepeat: false
+            ),
+            hasMarkedText: false
+        )
+        expect(
+            escape == .terminalKey,
+            "Escape must be delivered through Ghostty key events for Vim command mode"
+        )
+
+        let controlBracket = router.routeKeyboard(
+            AlanTerminalKeyInput(
+                characters: "\u{1B}",
+                keyCode: 33,
+                modifiers: [.control],
+                phase: .down,
+                isRepeat: false
+            ),
+            hasMarkedText: false
+        )
+        expect(controlBracket == .terminalKey, "Control-[ must remain terminal-owned")
+
+        let controlW = router.routeKeyboard(
+            AlanTerminalKeyInput(
+                characters: "\u{17}",
+                keyCode: 13,
+                modifiers: [.control],
+                phase: .down,
+                isRepeat: false
+            ),
+            hasMarkedText: false
+        )
+        expect(
+            controlW == .terminalKey,
+            "Control-W must remain terminal-owned for Vim split navigation"
+        )
+
+        let commandT = router.routeKeyboard(
+            AlanTerminalKeyInput(
+                characters: "t",
+                keyCode: 17,
+                modifiers: [.command],
+                phase: .down,
+                isRepeat: false
+            ),
+            hasMarkedText: false
+        )
+        expect(
+            commandT == .workspaceCommand(.newTerminalTab),
+            "Command-T must remain an app workspace command"
+        )
+
+        let composingBackspace = router.routeKeyboard(
+            AlanTerminalKeyInput(
+                characters: "\u{7F}",
+                keyCode: 51,
+                modifiers: [],
+                phase: .down,
+                isRepeat: false
+            ),
+            hasMarkedText: true
+        )
+        expect(
+            composingBackspace == .interpretTextInput,
+            "IME marked text must keep control keys in AppKit text interpretation first"
+        )
     }
 
     private static func verifiesGhosttyKeyEquivalentRedispatchContract() {
@@ -374,10 +508,10 @@ private enum TerminalSurfaceControllerTests {
     }
 
     private static func verifiesFocusOnlyClickSuppressionPolicy() {
-        let adapter = AlanTerminalFocusClickAdapter()
+        let router = AlanTerminalInputRouter()
 
         expect(
-            adapter.routeLeftMouseDown(
+            router.routeLeftMouseDown(
                 hitOwnsTerminal: true,
                 commandSurfaceVisible: false,
                 isFirstResponder: false,
@@ -386,17 +520,66 @@ private enum TerminalSurfaceControllerTests {
             ) == .focusOnly,
             "active-window clicks into an unfocused terminal split must only transfer focus"
         )
-        expect(
-            adapter.consumeSuppressedLeftMouseUp(),
-            "focus-only mouse down must suppress the matching left mouse up"
+
+        let suppressedDown = router.routePointer(
+            primaryPointerInput(phase: .buttonDown),
+            terminalMode: .normalBuffer,
+            surfaceReady: true
         )
         expect(
-            !adapter.consumeSuppressedLeftMouseUp(),
-            "left mouse-up suppression must be one-shot"
+            suppressedDown == .consumed,
+            "focus-only mouse down must suppress the matching terminal button press"
+        )
+
+        let suppressedUp = router.routePointer(
+            primaryPointerInput(phase: .buttonUp),
+            terminalMode: .normalBuffer,
+            surfaceReady: true
+        )
+        expect(
+            suppressedUp == .consumed,
+            "focus-only mouse down must suppress the matching left mouse up"
+        )
+
+        _ = router.routeLeftMouseDown(
+            hitOwnsTerminal: true,
+            commandSurfaceVisible: false,
+            isFirstResponder: false,
+            appIsActive: true,
+            windowIsKey: true
+        )
+        let suppressedDrag = router.routePointer(
+            primaryPointerInput(phase: .drag),
+            terminalMode: .normalBuffer,
+            surfaceReady: true
+        )
+        expect(
+            suppressedDrag == .consumed,
+            "focus-only mouse down must suppress matching left mouse drags"
+        )
+        let dragSuppressionClosingUp = router.routePointer(
+            primaryPointerInput(phase: .buttonUp),
+            terminalMode: .normalBuffer,
+            surfaceReady: true
+        )
+        expect(
+            dragSuppressionClosingUp == .consumed,
+            "focus-only drag suppression must keep suppressing until mouse up"
+        )
+        let postSuppressionDown = router.routePointer(
+            primaryPointerInput(phase: .buttonDown),
+            terminalMode: .normalBuffer,
+            surfaceReady: true
+        )
+        expect(
+            postSuppressionDown == .terminalSelection(
+                .button(state: .press, button: .primary, x: 24, y: 48, modifiers: [])
+            ),
+            "left mouse-drag suppression must clear after mouse up"
         )
 
         expect(
-            adapter.routeLeftMouseDown(
+            AlanTerminalInputRouter().routeLeftMouseDown(
                 hitOwnsTerminal: true,
                 commandSurfaceVisible: false,
                 isFirstResponder: true,
@@ -407,7 +590,7 @@ private enum TerminalSurfaceControllerTests {
         )
 
         expect(
-            adapter.routeLeftMouseDown(
+            AlanTerminalInputRouter().routeLeftMouseDown(
                 hitOwnsTerminal: true,
                 commandSurfaceVisible: false,
                 isFirstResponder: false,
@@ -418,72 +601,144 @@ private enum TerminalSurfaceControllerTests {
         )
     }
 
-    private static func verifiesTextInputInterpretationPolicyPreservesIMEMarkedText() {
-        let adapter = AlanTerminalInputAdapter()
+    private static func verifiesTerminalInputRouterOwnsFocusOnlyPointerSequence() {
+        let router = AlanTerminalInputRouter()
 
-        let backspace = adapter.routeKey(
-            AlanTerminalKeyInput(
-                characters: "\u{7F}",
-                keyCode: 51,
-                modifiers: [],
-                phase: .down,
-                isRepeat: false
-            )
-        )
-        expect(backspace == .terminalKey, "backspace must remain a terminal-owned key outside IME composition")
         expect(
-            !adapter.shouldInterpretTextInput(backspace, hasMarkedText: false),
-            "backspace must not go through NSTextInput when no IME marked text exists"
+            router.routeLeftMouseDown(
+                hitOwnsTerminal: true,
+                commandSurfaceVisible: false,
+                isFirstResponder: false,
+                appIsActive: true,
+                windowIsKey: true
+            ) == .focusOnly,
+            "active-window focus-transfer clicks must be identified by the terminal input router"
+        )
+
+        let suppressedDown = router.routePointer(
+            primaryPointerInput(phase: .buttonDown),
+            terminalMode: .normalBuffer,
+            surfaceReady: true
         )
         expect(
-            adapter.shouldInterpretTextInput(backspace, hasMarkedText: true),
+            suppressedDown == .consumed,
+            "focus-transfer primary button-down must be consumed even if AppKit still dispatches it"
+        )
+
+        let suppressedDrag = router.routePointer(
+            primaryPointerInput(phase: .drag),
+            terminalMode: .normalBuffer,
+            surfaceReady: true
+        )
+        expect(
+            suppressedDrag == .consumed,
+            "focus-transfer primary drags must be consumed by the same input router sequence"
+        )
+
+        let suppressedUp = router.routePointer(
+            primaryPointerInput(phase: .buttonUp),
+            terminalMode: .normalBuffer,
+            surfaceReady: true
+        )
+        expect(
+            suppressedUp == .consumed,
+            "focus-transfer primary mouse-up must close the router-owned suppression sequence"
+        )
+
+        let nextPrimaryDown = router.routePointer(
+            primaryPointerInput(phase: .buttonDown),
+            terminalMode: .normalBuffer,
+            surfaceReady: true
+        )
+        expect(
+            nextPrimaryDown == .terminalSelection(
+                .button(state: .press, button: .primary, x: 24, y: 48, modifiers: [])
+            ),
+            "router suppression must end before the next primary button sequence"
+        )
+    }
+
+    private static func primaryPointerInput(
+        phase: AlanTerminalPointerPhase
+    ) -> AlanTerminalPointerInput {
+        AlanTerminalPointerInput(
+            phase: phase,
+            button: .primary,
+            buttonNumber: 0,
+            x: 24,
+            y: 48,
+            modifiers: [],
+            pressureStage: nil,
+            pressure: nil
+        )
+    }
+
+    private static func verifiesTextInputInterpretationPolicyPreservesIMEMarkedText() {
+        let router = AlanTerminalInputRouter()
+
+        let backspace = AlanTerminalKeyInput(
+            characters: "\u{7F}",
+            keyCode: 51,
+            modifiers: [],
+            phase: .down,
+            isRepeat: false
+        )
+        expect(
+            router.routeKeyboard(backspace, hasMarkedText: false) == .terminalKey,
+            "backspace must remain a terminal-owned key outside IME composition"
+        )
+        expect(
+            router.routeKeyboard(backspace, hasMarkedText: true) == .interpretTextInput,
             "backspace must go through NSTextInput while IME marked text exists"
         )
 
-        let printable = adapter.routeKey(
-            AlanTerminalKeyInput(
-                characters: "a",
-                keyCode: 0,
-                modifiers: [],
-                phase: .down,
-                isRepeat: false
-            )
+        let printable = AlanTerminalKeyInput(
+            characters: "a",
+            keyCode: 0,
+            modifiers: [],
+            phase: .down,
+            isRepeat: false
         )
         expect(
-            adapter.shouldInterpretTextInput(printable, hasMarkedText: false),
-            "printable input must still go through NSTextInput"
+            router.routeKeyboard(printable, hasMarkedText: false) == .interpretTextInput,
+            "printable physical input must enter AppKit text interpretation outside active preedit"
+        )
+        expect(
+            router.routeKeyboard(printable, hasMarkedText: true) == .interpretTextInput,
+            "printable input must still go through NSTextInput while IME marked text exists"
         )
 
-        let findCommand = adapter.routeKey(
+        let findCommand = router.routeKeyboard(
             AlanTerminalKeyInput(
                 characters: "f",
                 keyCode: 3,
                 modifiers: [.command],
                 phase: .down,
                 isRepeat: false
-            )
+            ),
+            hasMarkedText: true
         )
         expect(
-            !adapter.shouldInterpretTextInput(findCommand, hasMarkedText: true),
+            findCommand == .nativeCommand("find"),
             "native command shortcuts must not be reinterpreted as IME text input"
         )
 
         expect(
-            AlanTerminalInputAdapter.shouldSuppressComposingControlInput(
+            AlanTerminalTextCompositionPolicy.shouldSuppressComposingControlInput(
                 "\u{08}",
                 composing: true
             ),
             "raw C0 control input must not leak to the terminal during composition"
         )
         expect(
-            AlanTerminalInputAdapter.shouldSuppressComposingControlInput(
+            AlanTerminalTextCompositionPolicy.shouldSuppressComposingControlInput(
                 "\u{7F}",
                 composing: true
             ),
             "backspace must not leak to the terminal during composition"
         )
         expect(
-            !AlanTerminalInputAdapter.shouldSuppressComposingControlInput(
+            !AlanTerminalTextCompositionPolicy.shouldSuppressComposingControlInput(
                 "\u{08}",
                 composing: false
             ),
