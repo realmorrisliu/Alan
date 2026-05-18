@@ -50,6 +50,7 @@ private enum ShellRuntimeMetadataTests {
         verifiesActivityAttentionIsReadTimeOnly()
         verifiesPaneTitleActivityAccessoryLabel()
         verifiesPaneTitleDetailProjectionIncludesContextBranchAndProcess()
+        verifiesPaneTitleDetailProjectionPreservesResponsivePriority()
         verifiesPaneTitleDetailProjectionAvoidsDuplicateAgentAndAlan()
         verifiesActivityNotificationPolicyIsLowNoise()
         verifiesControllerRoutesActivityNotificationsOnce()
@@ -1500,6 +1501,60 @@ private enum ShellRuntimeMetadataTests {
             "pane title details must expose non-redundant worktree, branch, and process"
         )
         expect(details.map(\.title) == ["alan", "main", "fish"], "pane title details must use compact labels")
+    }
+
+    private static func verifiesPaneTitleDetailProjectionPreservesResponsivePriority() {
+        let now = Date(timeIntervalSince1970: 1_779_008_400)
+        let progress = TerminalActivitySnapshot.progressActivity(percent: 42, now: now)
+        let testPane = ShellPane(
+            paneID: "pane_1",
+            tabID: "tab_1",
+            spaceID: "space_1",
+            launchTarget: .shell,
+            cwd: "/Users/morris/Developer/alan",
+            process: ShellProcessBinding(program: "fish", argvPreview: nil),
+            attention: .notable,
+            context: context(
+                workingDirectoryName: "alan",
+                repositoryRoot: "/Users/morris/Developer/alan",
+                gitBranch: "feature/title-bar",
+                processState: "running",
+                rendererHealth: "failed",
+                surfaceReadiness: "renderer_failed",
+                lastCommandExitCode: nil
+            ),
+            viewport: nil,
+            activity: progress,
+            alanBinding: ShellAlanBinding(
+                sessionID: "session_1",
+                runStatus: "running",
+                pendingYield: true,
+                source: "test",
+                lastProjectedAt: nil
+            )
+        )
+
+        let details = shellPaneTitleBarDetailProjection(
+            for: testPane,
+            title: "Editor",
+            now: now
+        )
+
+        expect(
+            details.map(\.id) == ["activity", "status", "worktree", "branch", "process", "alan"],
+            "pane title detail projection must preserve responsive priority order"
+        )
+        expect(
+            details.map(\.title) == [
+                "Progress · 42%",
+                "Renderer failed",
+                "alan",
+                "feature/title-bar",
+                "fish",
+                "Input",
+            ],
+            "pane title detail projection must keep compact labels in priority order"
+        )
     }
 
     private static func verifiesPaneTitleDetailProjectionAvoidsDuplicateAgentAndAlan() {

@@ -690,6 +690,28 @@ private enum ShellPaneTitleTypography {
     static let closeWeight: Font.Weight = .semibold
 }
 
+private enum ShellPaneTitleBarMetrics {
+    static let height: CGFloat = 28
+    static let minimumTitleWidth: CGFloat = 56
+    static let horizontalLeadingPadding: CGFloat = 10
+    static let horizontalTrailingPadding: CGFloat = 6
+    static let itemSpacing: CGFloat = 8
+    static let accessorySpacing: CGFloat = 8
+    static let accessoryInternalSpacing: CGFloat = 4
+    static let closeButtonSize: CGFloat = 22
+}
+
+private enum ShellPaneTitleBarPresentation {
+    case full
+    case compact
+    case minimal
+}
+
+private enum ShellPaneTitleBarAccessoryMode: Equatable {
+    case textAndIcon
+    case iconOnly
+}
+
 private struct ShellPaneTitleBarView: View {
     let title: String
     let pane: ShellPane
@@ -699,65 +721,83 @@ private struct ShellPaneTitleBarView: View {
     @State private var activityFreshnessNow = Date()
 
     var body: some View {
-        HStack(spacing: 8) {
-            Text(title)
-                .font(
-                    .system(
-                        size: ShellPaneTitleTypography.titleSize,
-                        weight: ShellPaneTitleTypography.titleWeight(isSelected: isSelected)
-                    )
-                )
-                .foregroundStyle(isSelected ? ShellPalette.ink : ShellPalette.mutedInk)
-                .lineLimit(1)
-                .truncationMode(.middle)
-                .frame(maxWidth: .infinity, alignment: .leading)
-
-            if !accessories.isEmpty {
-                HStack(spacing: 10) {
-                    ForEach(accessories) { accessory in
-                        ShellPaneTitleBarAccessoryView(accessory: accessory, isSelected: isSelected)
-                    }
-                }
-                .layoutPriority(1)
-            }
-
-            Button(action: onClosePane) {
-                Image(systemName: "xmark")
-                    .font(
-                        .system(
-                            size: ShellPaneTitleTypography.closeSize,
-                            weight: ShellPaneTitleTypography.closeWeight
-                        )
-                    )
-                    .foregroundStyle(ShellPalette.mutedInk)
-                    .frame(width: 22, height: 22)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .help("Close pane")
-            .accessibilityLabel("Close pane")
+        ViewThatFits(in: .horizontal) {
+            titleBarContent(presentation: .full)
+            titleBarContent(presentation: .compact)
+            titleBarContent(presentation: .minimal)
         }
-        .padding(.leading, 10)
-        .padding(.trailing, 6)
-        .frame(height: 28)
-        .background(
-            Rectangle()
-                .fill(
-                    isSelected
-                        ? ShellMaterialRole.terminalChromeSelected.fill
-                        : ShellMaterialRole.terminalChrome.fill
-                )
-        )
-        .overlay(alignment: .bottom) {
-            Rectangle()
-                .fill(ShellPalette.line.opacity(isSelected ? 0.18 : 0.12))
-                .frame(height: 1)
-        }
+        .padding(.leading, ShellPaneTitleBarMetrics.horizontalLeadingPadding)
+        .padding(.trailing, ShellPaneTitleBarMetrics.horizontalTrailingPadding)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(height: ShellPaneTitleBarMetrics.height)
+        .background(ShellPalette.terminal)
         .contentShape(Rectangle())
         .onTapGesture(perform: onFocusPane)
         .task(id: activityFreshnessRefreshID) {
             await scheduleActivityFreshnessRefresh()
         }
+    }
+
+    private func titleBarContent(presentation: ShellPaneTitleBarPresentation) -> some View {
+        HStack(spacing: ShellPaneTitleBarMetrics.itemSpacing) {
+            titleView
+
+            let visibleAccessories = accessories(for: presentation)
+            if !visibleAccessories.isEmpty {
+                HStack(spacing: ShellPaneTitleBarMetrics.accessorySpacing) {
+                    ForEach(visibleAccessories) { accessory in
+                        ShellPaneTitleBarAccessoryView(
+                            accessory: accessory,
+                            isSelected: isSelected,
+                            mode: accessoryMode(for: accessory, presentation: presentation)
+                        )
+                    }
+                }
+                .fixedSize(horizontal: true, vertical: true)
+            }
+
+            closeButton
+        }
+    }
+
+    private var titleView: some View {
+        Text(title)
+            .font(
+                .system(
+                    size: ShellPaneTitleTypography.titleSize,
+                    weight: ShellPaneTitleTypography.titleWeight(isSelected: isSelected)
+                )
+            )
+            .foregroundStyle(Color.white.opacity(isSelected ? 0.94 : 0.78))
+            .lineLimit(1)
+            .truncationMode(.middle)
+            .layoutPriority(2)
+            .frame(
+                minWidth: ShellPaneTitleBarMetrics.minimumTitleWidth,
+                alignment: .leading
+            )
+    }
+
+    private var closeButton: some View {
+        Button(action: onClosePane) {
+            Image(systemName: "xmark")
+                .font(
+                    .system(
+                        size: ShellPaneTitleTypography.closeSize,
+                        weight: ShellPaneTitleTypography.closeWeight
+                    )
+                )
+                .foregroundStyle(Color.white.opacity(isSelected ? 0.68 : 0.52))
+                .frame(
+                    width: ShellPaneTitleBarMetrics.closeButtonSize,
+                    height: ShellPaneTitleBarMetrics.closeButtonSize
+                )
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .fixedSize(horizontal: true, vertical: true)
+        .help("Close pane")
+        .accessibilityLabel("Close pane")
     }
 
     private var activityFreshnessRefreshID: String {
@@ -810,9 +850,33 @@ private struct ShellPaneTitleBarView: View {
                 title: projection.title,
                 help: projection.help,
                 tint: accessoryTint(for: projection.id),
-                isEmphasized: accessoryIsEmphasized(projection.id),
-                maxWidth: accessoryMaxWidth(for: projection.id)
+                isEmphasized: accessoryIsEmphasized(projection.id)
             )
+        }
+    }
+
+    private func accessories(
+        for presentation: ShellPaneTitleBarPresentation
+    ) -> [ShellPaneTitleBarAccessory] {
+        switch presentation {
+        case .full, .compact:
+            return accessories
+        case .minimal:
+            return accessories.filter { $0.isPrimary || $0.isEmphasized }
+        }
+    }
+
+    private func accessoryMode(
+        for accessory: ShellPaneTitleBarAccessory,
+        presentation: ShellPaneTitleBarPresentation
+    ) -> ShellPaneTitleBarAccessoryMode {
+        switch presentation {
+        case .full:
+            return .textAndIcon
+        case .compact:
+            return accessory.isPrimary ? .textAndIcon : .iconOnly
+        case .minimal:
+            return .iconOnly
         }
     }
 
@@ -846,7 +910,7 @@ private struct ShellPaneTitleBarView: View {
         case .active:
             return ShellPalette.accent
         case .passive, nil:
-            return ShellPalette.mutedInk
+            return Color.white
         }
     }
 
@@ -877,7 +941,7 @@ private struct ShellPaneTitleBarView: View {
         {
             return ShellPalette.attention
         }
-        return ShellPalette.mutedInk
+        return Color.white
     }
 
     private func accessoryIcon(for id: String) -> String {
@@ -908,7 +972,7 @@ private struct ShellPaneTitleBarView: View {
         case "alan":
             return ShellPalette.accent
         default:
-            return ShellPalette.mutedInk
+            return Color.white
         }
     }
 
@@ -926,18 +990,6 @@ private struct ShellPaneTitleBarView: View {
         }
     }
 
-    private func accessoryMaxWidth(for id: String) -> CGFloat? {
-        switch id {
-        case "activity":
-            return 140
-        case "branch", "worktree", "cwd":
-            return 120
-        case "process", "alan":
-            return 72
-        default:
-            return nil
-        }
-    }
 }
 
 private struct ShellPaneTitleBarAccessory: Identifiable {
@@ -947,15 +999,19 @@ private struct ShellPaneTitleBarAccessory: Identifiable {
     let help: String
     let tint: Color
     let isEmphasized: Bool
-    var maxWidth: CGFloat?
+
+    var isPrimary: Bool {
+        id == "activity" || id == "status"
+    }
 }
 
 private struct ShellPaneTitleBarAccessoryView: View {
     let accessory: ShellPaneTitleBarAccessory
     let isSelected: Bool
+    let mode: ShellPaneTitleBarAccessoryMode
 
     var body: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: ShellPaneTitleBarMetrics.accessoryInternalSpacing) {
             Image(systemName: accessory.icon)
                 .font(
                     .system(
@@ -964,7 +1020,8 @@ private struct ShellPaneTitleBarAccessoryView: View {
                     )
                 )
 
-            if let title = accessory.title {
+            if mode == .textAndIcon,
+               let title = accessory.title {
                 Text(title)
                     .font(
                         .system(
@@ -976,13 +1033,20 @@ private struct ShellPaneTitleBarAccessoryView: View {
                     )
                     .lineLimit(1)
                     .truncationMode(.middle)
-                    .frame(maxWidth: accessory.maxWidth, alignment: .leading)
+                    .fixedSize(horizontal: true, vertical: false)
             }
         }
-        .foregroundStyle(accessory.tint.opacity(isSelected ? 0.86 : 0.58))
-        .fixedSize(horizontal: false, vertical: true)
+        .foregroundStyle(accessory.tint.opacity(accessoryOpacity))
+        .fixedSize(horizontal: true, vertical: true)
         .help(accessory.help)
         .accessibilityLabel(accessory.help)
+    }
+
+    private var accessoryOpacity: Double {
+        if accessory.isEmphasized {
+            return isSelected ? 0.96 : 0.82
+        }
+        return isSelected ? 0.78 : 0.62
     }
 }
 
