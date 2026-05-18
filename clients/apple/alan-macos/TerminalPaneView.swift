@@ -675,6 +675,21 @@ private struct ShellTerminalLeafView: View {
     }
 }
 
+private enum ShellPaneTitleTypography {
+    static let titleSize: CGFloat = 11
+    static let accessorySize: CGFloat = 10
+    static let closeSize: CGFloat = 9
+
+    static func titleWeight(isSelected: Bool) -> Font.Weight {
+        isSelected ? .medium : .regular
+    }
+
+    static let accessoryWeight: Font.Weight = .regular
+    static let emphasizedAccessoryWeight: Font.Weight = .medium
+    static let iconWeight: Font.Weight = .medium
+    static let closeWeight: Font.Weight = .semibold
+}
+
 private struct ShellPaneTitleBarView: View {
     let title: String
     let pane: ShellPane
@@ -686,7 +701,12 @@ private struct ShellPaneTitleBarView: View {
     var body: some View {
         HStack(spacing: 8) {
             Text(title)
-                .font(.system(size: 11, weight: isSelected ? .semibold : .medium))
+                .font(
+                    .system(
+                        size: ShellPaneTitleTypography.titleSize,
+                        weight: ShellPaneTitleTypography.titleWeight(isSelected: isSelected)
+                    )
+                )
                 .foregroundStyle(isSelected ? ShellPalette.ink : ShellPalette.mutedInk)
                 .lineLimit(1)
                 .truncationMode(.middle)
@@ -703,7 +723,12 @@ private struct ShellPaneTitleBarView: View {
 
             Button(action: onClosePane) {
                 Image(systemName: "xmark")
-                    .font(.system(size: 9, weight: .bold))
+                    .font(
+                        .system(
+                            size: ShellPaneTitleTypography.closeSize,
+                            weight: ShellPaneTitleTypography.closeWeight
+                        )
+                    )
                     .foregroundStyle(ShellPalette.mutedInk)
                     .frame(width: 22, height: 22)
                     .contentShape(Rectangle())
@@ -785,6 +810,7 @@ private struct ShellPaneTitleBarView: View {
                 title: projection.title,
                 help: projection.help,
                 tint: accessoryTint(for: projection.id),
+                isEmphasized: accessoryIsEmphasized(projection.id),
                 maxWidth: accessoryMaxWidth(for: projection.id)
             )
         }
@@ -886,6 +912,20 @@ private struct ShellPaneTitleBarView: View {
         }
     }
 
+    private func accessoryIsEmphasized(_ id: String) -> Bool {
+        switch id {
+        case "activity":
+            return pane.activity?.priority == .awaitingUser || pane.activity?.priority == .notable
+        case "status":
+            return shellEffectiveAttention(for: pane, now: activityFreshnessNow) == .awaitingUser
+                || shellEffectiveAttention(for: pane, now: activityFreshnessNow) == .notable
+        case "alan":
+            return pane.alanBinding?.pendingYield == true
+        default:
+            return false
+        }
+    }
+
     private func accessoryMaxWidth(for id: String) -> CGFloat? {
         switch id {
         case "activity":
@@ -906,6 +946,7 @@ private struct ShellPaneTitleBarAccessory: Identifiable {
     let title: String?
     let help: String
     let tint: Color
+    let isEmphasized: Bool
     var maxWidth: CGFloat?
 }
 
@@ -916,11 +957,23 @@ private struct ShellPaneTitleBarAccessoryView: View {
     var body: some View {
         HStack(spacing: 4) {
             Image(systemName: accessory.icon)
-                .font(.system(size: 10, weight: .semibold))
+                .font(
+                    .system(
+                        size: ShellPaneTitleTypography.accessorySize,
+                        weight: ShellPaneTitleTypography.iconWeight
+                    )
+                )
 
             if let title = accessory.title {
                 Text(title)
-                    .font(.system(size: 10, weight: .semibold))
+                    .font(
+                        .system(
+                            size: ShellPaneTitleTypography.accessorySize,
+                            weight: accessory.isEmphasized
+                                ? ShellPaneTitleTypography.emphasizedAccessoryWeight
+                                : ShellPaneTitleTypography.accessoryWeight
+                        )
+                    )
                     .lineLimit(1)
                     .truncationMode(.middle)
                     .frame(maxWidth: accessory.maxWidth, alignment: .leading)
