@@ -1,7 +1,10 @@
 # documentation-governance Specification
 
 ## Purpose
-TBD - created by archiving change consolidate-docs-specs-into-openspec. Update Purpose after archive.
+Defines how alan separates durable OpenSpec requirements from implementation
+guides, operator runbooks, executable fixtures, bridge pages, and retired
+historical plans.
+
 ## Requirements
 ### Requirement: OpenSpec owns durable specifications
 alan SHALL use OpenSpec as the only durable source of truth for product,

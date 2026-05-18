@@ -1,7 +1,10 @@
 # runtime-core-contract Specification
 
 ## Purpose
-TBD - created by archiving change consolidate-docs-specs-into-openspec. Update Purpose after archive.
+Defines durable runtime-core contracts for sessions, turns, tape, rollout,
+operations, emitted events, compaction, scheduling, rollback, fork, and recovery
+semantics.
+
 ## Requirements
 ### Requirement: Runtime core contracts live in OpenSpec
 alan SHALL keep durable runtime, kernel, execution, compaction, scheduler,

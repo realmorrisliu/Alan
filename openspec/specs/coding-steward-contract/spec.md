@@ -1,7 +1,10 @@
 # coding-steward-contract Specification
 
 ## Purpose
-TBD - created by archiving change consolidate-docs-specs-into-openspec. Update Purpose after archive.
+Defines the durable coding-steward contract for parent/worker orchestration,
+repo-worker delegation, verification honesty, coding governance, and eval
+boundaries.
+
 ## Requirements
 ### Requirement: Coding steward contracts live in OpenSpec
 alan SHALL specify coding steward orchestration, repo-worker delegation,

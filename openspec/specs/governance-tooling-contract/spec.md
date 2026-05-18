@@ -1,7 +1,10 @@
 # governance-tooling-contract Specification
 
 ## Purpose
-TBD - created by archiving change consolidate-docs-specs-into-openspec. Update Purpose after archive.
+Defines durable governance and tooling boundaries for policy decisions, tool
+identity, runtime binding, capability routing, extension points, and workspace
+scoping.
+
 ## Requirements
 ### Requirement: Governance and tooling contracts live in OpenSpec
 alan SHALL specify HITE governance, policy decisions, tool catalog identity,

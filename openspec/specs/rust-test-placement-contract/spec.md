@@ -1,7 +1,10 @@
 # rust-test-placement-contract Specification
 
 ## Purpose
-TBD - created by archiving change consolidate-docs-specs-into-openspec. Update Purpose after archive.
+Defines Rust test placement rules for inline unit tests, extracted white-box
+suites, crate-level integration tests, migration policy, and behavior-boundary
+coverage.
+
 ## Requirements
 ### Requirement: Rust test placement contracts live in OpenSpec
 alan SHALL specify Rust test placement rules, extraction triggers, migration

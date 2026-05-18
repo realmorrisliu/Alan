@@ -1,7 +1,9 @@
 # runtime-harness-contract Specification
 
 ## Purpose
-TBD - created by archiving change consolidate-docs-specs-into-openspec. Update Purpose after archive.
+Defines normative harness contracts for scenario semantics, runner pass/fail
+criteria, KPI expectations, self-eval boundaries, and external bridge delivery.
+
 ## Requirements
 ### Requirement: Harness contracts live in OpenSpec
 alan SHALL specify normative harness behavior, KPI expectations, self-eval

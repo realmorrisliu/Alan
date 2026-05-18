@@ -1,7 +1,10 @@
 # remote-control-contract Specification
 
 ## Purpose
-TBD - created by archiving change consolidate-docs-specs-into-openspec. Update Purpose after archive.
+Defines remote-control contracts for direct and relay modes, node/client
+identity, scopes, reconnect behavior, notification signals, and non-bypass
+governance.
+
 ## Requirements
 ### Requirement: Remote control contracts live in OpenSpec
 alan SHALL specify remote control topology, direct and relay modes, remote

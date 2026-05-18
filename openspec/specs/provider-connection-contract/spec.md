@@ -1,7 +1,10 @@
 # provider-connection-contract Specification
 
 ## Purpose
-TBD - created by archiving change consolidate-docs-specs-into-openspec. Update Purpose after archive.
+Defines provider and connection-profile contracts, including provider
+capabilities, authentication boundaries, host credential storage, request
+controls, model metadata, and explicit degradation.
+
 ## Requirements
 ### Requirement: Provider and connection contracts live in OpenSpec
 alan SHALL specify provider capabilities, provider authentication, connection

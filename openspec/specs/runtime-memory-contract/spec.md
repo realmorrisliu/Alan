@@ -1,7 +1,10 @@
 # runtime-memory-contract Specification
 
 ## Purpose
-TBD - created by archiving change consolidate-docs-specs-into-openspec. Update Purpose after archive.
+Defines runtime-memory contracts for workspace memory layout, recall and write
+paths, compaction coordination, human-readable memory surfaces, provenance, and
+truncation behavior.
+
 ## Requirements
 ### Requirement: Memory contracts live in OpenSpec
 alan SHALL keep durable memory architecture, pure-text memory layout, recall,
