@@ -1,7 +1,10 @@
 # alan-app-distribution Specification
 
 ## Purpose
-TBD - created by archiving change package-alan-app-distribution. Update Purpose after archive.
+Defines Alan's macOS app-first distribution contract, including bundled CLI/TUI
+artifacts, Developer ID signing, notarization, Homebrew cask behavior, local
+install flow, and deprecated install paths.
+
 ## Requirements
 ### Requirement: Alan.app is the primary macOS distribution artifact
 Alan SHALL distribute macOS releases as an app-first package where `Alan.app`
@@ -143,4 +146,3 @@ workflow.
 - **WHEN** focused Apple contract checks inspect local app workflow scripts
 - **THEN** they reject reintroducing a justfile recipe that builds, kills, and launches the app as the default local app workflow
 - **AND** they accept `just install` as the supported local app installation workflow
-

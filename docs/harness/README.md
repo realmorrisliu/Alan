@@ -1,6 +1,8 @@
 # alan Harness
 
-> Status: VNext validation framework blueprint.
+> Status: current runner and fixture guide. Normative harness behavior lives in
+> OpenSpec:
+> [`runtime-harness-contract`](../../openspec/specs/runtime-harness-contract/spec.md).
 
 ## Goals
 

@@ -4,11 +4,10 @@
 > The authoritative current governance contract lives in
 > [`governance_current_contract.md`](./governance_current_contract.md).
 >
-> The authoritative skill-system contract now lives in
-> [`spec/skill_system_contract.md`](./spec/skill_system_contract.md). This
-> document focuses on current implementation details, runtime surfaces, and
-> operator-facing behavior. The skill plan documents in `plans/` capture
-> rollout history and design rationale.
+> The authoritative skill-system contract now lives in OpenSpec:
+> [`skill-system-contract`](../openspec/specs/skill-system-contract/spec.md).
+> This document focuses on current implementation details, runtime surfaces,
+> and operator-facing behavior.
 
 ## Overview
 
@@ -120,8 +119,8 @@ All implementations live in [alan-tools/src/lib.rs](../crates/tools/src/lib.rs).
 Tool catalog identity is separate from runtime execution binding. Built-in
 definitions keep stable names/schema/locality across runtimes, while
 workspace-specific facts such as `workspace_root` and `cwd` belong to runtime
-binding/context. See
-[tool_catalog_binding_contract.md](./spec/tool_catalog_binding_contract.md).
+binding/context. See the OpenSpec
+[`governance-tooling-contract`](../openspec/specs/governance-tooling-contract/spec.md).
 
 `bash` exposes a `timeout` argument in schema (1–300, default 60), and the tool-level default timeout is currently 300 seconds (`timeout_secs`).
 
@@ -135,7 +134,7 @@ alan V2 governance is:
 When policy returns `escalate`, runtime emits `Event::Yield` and waits for `Op::Resume`. This path is explicit and does not depend on session-level approval toggles.
 
 Current contract: [governance_current_contract.md](./governance_current_contract.md).  
-Target V2 design and policy file format: [HITE Governance](./spec/hite_governance.md).
+Target V2 design and policy file format: [`governance-tooling-contract`](../openspec/specs/governance-tooling-contract/spec.md).
 
 ### Verification-First Response Guardrails
 
@@ -563,7 +562,7 @@ Current built-in package ids are `builtin:alan-memory`,
 
 Source: [skills/memory/SKILL.md](../crates/runtime/skills/memory/SKILL.md), [skills/plan/SKILL.md](../crates/runtime/skills/plan/SKILL.md), [skills/repo-coding/SKILL.md](../crates/runtime/skills/repo-coding/SKILL.md), [skills/alan-shell-control/SKILL.md](../crates/runtime/skills/alan-shell-control/SKILL.md), [skills/skill-creator/SKILL.md](../crates/runtime/skills/skill-creator/SKILL.md), [skills/workspace-inspect/SKILL.md](../crates/runtime/skills/workspace-inspect/SKILL.md), [skills/workspace-manager/SKILL.md](../crates/runtime/skills/workspace-manager/SKILL.md)
 
-Target memory contract: [spec/pure_text_memory_contract.md](./spec/pure_text_memory_contract.md)
+Target memory contract: [`runtime-memory-contract`](../openspec/specs/runtime-memory-contract/spec.md)
 
 These are exposed through the same package + skill-override model as every
 other capability. Built-ins are a distribution source, not a separate runtime
@@ -710,4 +709,4 @@ crates/runtime/src/skills/
 7. **Path-Based Filesystem Isolation** — simple, portable workspace containment without OS-specific mechanisms; trades maximum isolation for zero external dependencies.
 
 For the stable contract and compatibility target, see
-[`spec/skill_system_contract.md`](./spec/skill_system_contract.md).
+[`skill-system-contract`](../openspec/specs/skill-system-contract/spec.md).

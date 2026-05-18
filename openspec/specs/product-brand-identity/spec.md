@@ -1,7 +1,9 @@
 # product-brand-identity Specification
 
 ## Purpose
-TBD - created by archiving change normalize-alan-branding-and-macos-app-name. Update Purpose after archive.
+Defines Alan's product-brand identity, public domain, macOS app naming,
+historical AlanNative removal, and brand validation rules.
+
 ## Requirements
 ### Requirement: Primary public domain is alanworks.app
 The product SHALL use `alanworks.app` as the primary public domain for this
@@ -117,4 +119,3 @@ or other future clients.
 - **WHEN** Dock, app menu, window title, or default app metadata only needs the
   product name
 - **THEN** it uses `Alan` instead of `Alan for macOS`
-

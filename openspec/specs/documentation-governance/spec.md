@@ -1,0 +1,96 @@
+# documentation-governance Specification
+
+## Purpose
+Defines how alan separates durable OpenSpec requirements from implementation
+guides, operator runbooks, executable fixtures, bridge pages, and retired
+historical plans.
+
+## Requirements
+### Requirement: OpenSpec owns durable specifications
+alan SHALL use OpenSpec as the only durable source of truth for product,
+runtime, protocol, provider, governance, testing-contract, and UX
+specifications.
+
+#### Scenario: Durable behavior is specified
+- **WHEN** a change defines normative behavior, target behavior, acceptance
+  criteria, product contracts, runtime contracts, provider contracts, or testing
+  contracts
+- **THEN** the requirement is authored under `openspec/specs/` or an active
+  `openspec/changes/<change>/specs/` delta
+- **AND** the requirement is not authored as a new long-form contract under
+  `docs/spec/`, `plans/`, or `docs/superpowers/`
+
+#### Scenario: In-flight design is specified
+- **WHEN** design decisions, scope changes, task sequencing, verification
+  expectations, or requirement deltas are still in flight
+- **THEN** they are captured in the relevant active OpenSpec change artifacts
+  instead of a standalone plan directory
+
+### Requirement: Non-OpenSpec docs are implementation and operation surfaces
+Repository documentation outside OpenSpec SHALL be limited to implementation
+guides, operator guides, maintainer runbooks, validation instructions, generated
+or executable fixtures, and short bridge pointers.
+
+#### Scenario: Current implementation guide explains behavior
+- **WHEN** a `docs/` guide explains current commands, runtime surfaces,
+  troubleshooting, architecture context, or validation usage
+- **THEN** it may remain outside OpenSpec
+- **AND** any normative requirement it references points to an OpenSpec
+  capability or active OpenSpec change
+
+#### Scenario: Harness data is documented
+- **WHEN** docs describe harness runners, KPI output, self-eval modes, or JSON
+  scenario fixtures
+- **THEN** those docs may remain under `docs/harness/`
+- **AND** the reusable behavior contract behind those fixtures is captured in
+  OpenSpec when it is normative
+
+### Requirement: Legacy spec bridges are temporary and narrow
+Legacy contract paths outside OpenSpec SHALL either be removed or rewritten as
+short bridge pages that identify the authoritative OpenSpec replacement.
+
+#### Scenario: Existing links still target a retired contract doc
+- **WHEN** a previously public or heavily linked `docs/spec/*.md` path is still
+  needed during migration
+- **THEN** the file contains only a short non-authoritative bridge
+- **AND** the bridge names the OpenSpec capability or active change that owns
+  the contract
+- **AND** the bridge does not restate the full legacy contract
+
+#### Scenario: Active references have been updated
+- **WHEN** no active non-archived docs, guides, scripts, or agent instructions
+  require a legacy bridge path
+- **THEN** the bridge page is removed instead of retained as historical archive
+
+### Requirement: Historical execution plans are removed after capture
+Historical implementation plans SHALL NOT remain as current repository docs once
+their active decisions are captured in OpenSpec or current implementation
+guides.
+
+#### Scenario: Plan is implemented or superseded
+- **WHEN** a `plans/` or `docs/superpowers/` file describes work that is already
+  implemented, archived, or superseded by an active OpenSpec change
+- **THEN** the file is deleted after any still-current decisions are captured in
+  OpenSpec or a current guide
+
+#### Scenario: Plan still guides active work
+- **WHEN** a historical plan still contains live scope, sequencing, or
+  verification decisions
+- **THEN** those decisions are moved into the relevant OpenSpec proposal,
+  design, tasks, specs, or verification artifact before the plan is deleted
+
+### Requirement: Documentation drift is validated
+alan SHALL validate that active documentation does not recreate a parallel spec
+system outside OpenSpec.
+
+#### Scenario: Documentation cleanup is reviewed
+- **WHEN** a change migrates or removes spec-like documentation
+- **THEN** OpenSpec strict validation is run
+- **AND** the review checks active non-archived references for stale
+  `docs/spec/`, `plans/`, or `docs/superpowers/` contract-source links
+
+#### Scenario: New spec-like docs are added outside OpenSpec
+- **WHEN** an active non-OpenSpec document introduces normative target behavior
+  or acceptance criteria without pointing to OpenSpec
+- **THEN** the documentation governance review rejects the document or requires
+  the normative content to move into OpenSpec

@@ -46,6 +46,14 @@
 
 用户将自行验证当前运行中的 alan app：
 
+- 手工 Vim smoke 具体步骤：
+  - 在 focused Alan terminal pane 中运行 `vim /tmp/alan-vim-input-smoke.txt`。
+  - 输入 `iabc` 应进入 insert mode 并写入文本。
+  - 按 `Esc` 应离开 insert mode。
+  - 按 `:` 应打开 Vim command mode，而不是把冒号插入文件。
+  - 输入 `:q!` 应退出 Vim。
+  - 在 Vim 中输入 `iabc` 后按 `Control-[`，应像 Escape 一样离开 insert mode。
+  - 在 Vim/nvim 中测试 arrow keys、`Control-W`、Tab 和 Backspace；这些按键应送达 focused terminal pane，而不是触发 alan workspace command。
 - Vim/nvim 中 Escape、Tab、Backspace、Control-W、Control-F、Control-B、Control-]、Control-/, Control-Return、Command-modified terminal binding 和 Option-modified navigation 是否正常进入 terminal。
 - 中文/日文/韩文输入法组合输入中，Backspace 是否删除 marked text，而不是删除已提交 terminal 内容或无响应。
 - 同一窗口中从未 focused split pane 切换 focus 时，第一次 click/drag 是否只聚焦、不注入 Vim mouse mode 或触发 terminal selection；窗口未激活时第一次 click 是否仍能按系统语义激活窗口。

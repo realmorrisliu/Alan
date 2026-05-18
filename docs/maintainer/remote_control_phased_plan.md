@@ -82,16 +82,16 @@ Required foundations (already scoped in VNext issues):
 2. Notification trigger contracts (non-bypass, informational only).
 3. Nightly reliability regressions in harness.
 4. Primary reliability contract surfaces:
-   - `docs/spec/remote_control_architecture.md`
-   - `docs/spec/remote_control_security.md`
+   - `openspec/specs/remote-control-contract/spec.md`
+   - `openspec/changes/add-alan-anywhere-mvp/specs/alan-anywhere/spec.md`
 
 ## Tracking Matrix
 
 | Track | Primary Artifact | Validation |
 | --- | --- | --- |
-| Architecture | `docs/spec/remote_control_architecture.md` | `#32`/`#33` design review + harness scenarios |
-| Security | `docs/spec/remote_control_security.md` | `#32`/`#33` scope/revocation tests |
-| Protocol | `docs/spec/app_server_protocol.md` extension notes | `#32` compatibility tests |
+| Architecture | `openspec/specs/remote-control-contract/spec.md` | `#32`/`#33` design review + harness scenarios |
+| Security | `openspec/specs/remote-control-contract/spec.md` | `#32`/`#33` scope/revocation tests |
+| Protocol | `openspec/specs/daemon-api-contract/spec.md` | `#32` compatibility tests |
 | Reliability | harness autonomy + reconnect suites | `#34` CI + nightly |
 
 ## Exit Criteria (for #9)

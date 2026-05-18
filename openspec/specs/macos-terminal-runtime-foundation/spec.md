@@ -1,7 +1,10 @@
 # macos-terminal-runtime-foundation Specification
 
 ## Purpose
-TBD - created by archiving change promote-macos-ghostty-runtime. Update Purpose after archive.
+Defines the macOS terminal runtime foundation, including process-scoped Ghostty
+bootstrap, window-scoped runtime services, stable pane handles, host-view
+adapter boundaries, metadata projection, and deterministic cleanup.
+
 ## Requirements
 ### Requirement: Ghostty initialization is process scoped
 The macOS app SHALL initialize libghostty, Ghostty resources, terminfo, logging,
@@ -90,4 +93,3 @@ through closing and closed states and release Ghostty resources exactly once.
 #### Scenario: App terminates
 - **WHEN** the app terminates while terminal panes are live
 - **THEN** the runtime service performs best-effort teardown and records closed or interrupted terminal state for persisted diagnostics
-

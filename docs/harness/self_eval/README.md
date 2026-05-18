@@ -1,5 +1,8 @@
 # Self-Eval Suite
 
+> Status: current runner guide. Normative harness behavior lives in OpenSpec:
+> [`runtime-harness-contract`](../../../openspec/specs/runtime-harness-contract/spec.md).
+
 Self-eval compares `baseline` vs `candidate` profile behavior and emits a promotion report.
 
 ## Run Modes

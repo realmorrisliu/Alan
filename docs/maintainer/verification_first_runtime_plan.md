@@ -175,7 +175,7 @@ persist an auditable, redacted view instead of every secret-bearing byte.
 2. `crates/runtime/src/session.rs`
 3. `crates/runtime/src/rollout.rs`
 4. `docs/architecture.md`
-5. `docs/spec/kernel_contract.md`
+5. `openspec/specs/runtime-core-contract/spec.md`
 6. `docs/skills_and_tools.md`
 
 #### Expected Code Changes
@@ -294,7 +294,7 @@ Update existing docs instead of creating a new top-level spec:
    - durable payload redaction note
 2. `docs/architecture.md`
    - rollout phrasing: auditable durable record, not raw secret dump
-3. `docs/spec/kernel_contract.md`
+3. `openspec/specs/runtime-core-contract/spec.md`
    - rollout as audit chain, possibly redacted on durable surfaces
 4. `docs/harness/README.md`
    - new verification-first / contradiction-recovery regression scenario
