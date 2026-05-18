@@ -1014,6 +1014,41 @@ require_pattern \
     "pane title typography must use role-based typography tokens"
 
 require_pattern \
+    "clients/apple/alan-macos/TerminalPaneView.swift" \
+    "ViewThatFits\\(in: \\.horizontal\\)" \
+    "pane title bars must use staged responsive fallback instead of fixed-width accessory columns"
+
+require_pattern \
+    "clients/apple/alan-macos/TerminalPaneView.swift" \
+    "private enum ShellPaneTitleBarPresentation" \
+    "pane title bars must encode full, compact, and minimal presentation tiers"
+
+require_pattern \
+    "clients/apple/alan-macos/TerminalPaneView.swift" \
+    "private var titleView" \
+    "pane title bars must keep title text as a persistent title view"
+
+require_pattern \
+    "clients/apple/alan-macos/TerminalPaneView.swift" \
+    "Text\\(title\\)" \
+    "pane title bars must render the title as text instead of icon-only content"
+
+require_pattern \
+    "clients/apple/alan-macos/TerminalPaneView.swift" \
+    "minimumTitleWidth" \
+    "pane title bars must preserve a minimum text title width before accessory fallback"
+
+reject_pattern \
+    "clients/apple/alan-macos/TerminalPaneView.swift" \
+    "terminalChromeSelected\\.fill|terminalChrome\\.fill" \
+    "pane title bars must not reintroduce selected/unselected overlay fills"
+
+reject_pattern \
+    "clients/apple/alan-macos/TerminalPaneView.swift" \
+    "accessoryMaxWidth|maxWidth: accessory\\.maxWidth" \
+    "pane title-bar accessories must not use fixed max-width columns"
+
+require_pattern \
     "clients/apple/alan-macos/Views/Shell/ShellSidebarView.swift" \
     "onFocusSplitPane: \\{ paneID in" \
     "sidebar split indicators must preserve direct clicked-pane targeting"
