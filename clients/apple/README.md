@@ -189,7 +189,7 @@ The client uses the existing `/api/v1/sessions/*` compatibility layer:
 xcodebuild \
   -project clients/apple/alan-macos.xcodeproj \
   -scheme alan-macos \
-  -destination 'platform=macOS' build
+  -destination 'generic/platform=macOS' build
 
 # Shell control-plane contract smoke
 bash clients/apple/scripts/check-shell-contracts.sh
