@@ -22,4 +22,4 @@
 
 - [x] 4.1 Review the implementation against `macos-shell-ui-ux-conformance` to confirm it remains terminal-first, compact, and free of pane-management chrome.
 - [x] 4.2 Verify no terminal runtime, pane lifecycle, control-plane API, or persisted pane-tree semantics changed as part of the UI projection work.
-- [ ] 4.3 Before archiving, sync the accepted delta specs into `openspec/specs/` and validate the full OpenSpec set.
+- [x] 4.3 Before archiving, sync the accepted delta specs into `openspec/specs/` and validate the full OpenSpec set.
