@@ -40,7 +40,7 @@ the primary user-facing hosting abstraction.
 2. **Checkpointed Reasoning** — Every thought, action, and observation is durably recorded
 3. **Separation of Concerns** — Core handles state transitions; the `alan` binary handles lifecycle & CLI
 4. **Skills over Plugins** — Capabilities are Markdown-based instructions, not compiled code
-5. **Human-in-the-End** — Humans own outcomes, not operations ([read more →](docs/spec/governance_boundaries.md))
+5. **Human-in-the-End** — Humans own outcomes, not operations ([docs →](docs/README.md))
 
 ---
 
@@ -328,10 +328,10 @@ first-party packages into one `ResolvedCapabilityView`, and a
 standards-compatible skill directory is adapted automatically as a single-skill
 package without an alan-specific manifest.
 
-The authoritative skill-system contract lives in
-`docs/spec/skill_system_contract.md`. `docs/skills_and_tools.md` is the current
-implementation guide, and the plan documents under `plans/` are historical
-rollout/design references.
+Skill-system contract material now lives in OpenSpec under
+`openspec/specs/skill-system-contract/spec.md`.
+`docs/skills_and_tools.md` is the current implementation guide, and historical
+plan documents must not be treated as specification sources.
 
 alan also supports optional alan-native sidecars inside a skill package:
 
@@ -355,7 +355,8 @@ packages. A resolved package can also expose package-level resources such as
 
 At runtime, a resolved skill may execute inline or as a delegated
 package-local child-agent run. The detailed execution, fallback, and
-availability semantics live in `docs/spec/skill_system_contract.md`.
+availability semantics are part of the legacy skill-system contract material
+being migrated into OpenSpec.
 
 Each root can also override skill exposure explicitly in `agent.toml`:
 
@@ -532,7 +533,10 @@ rules:
 default_action: allow
 ```
 
-See [`docs/governance_current_contract.md`](docs/governance_current_contract.md) for the current contract and [`docs/spec/hite_governance.md`](docs/spec/hite_governance.md) for the target V2 design.
+See [`docs/governance_current_contract.md`](docs/governance_current_contract.md)
+for the current implementation contract. HITE target-design material now lives
+in OpenSpec under
+`openspec/specs/governance-tooling-contract/spec.md`.
 
 ---
 

@@ -389,9 +389,11 @@ cargo test -p alan-llm --features mock
 - Use `MockLlmProvider` for testing LLM-dependent code
 - All protocol types have serialization/deserialization tests
 
-For new or materially edited Rust tests, follow
-`docs/spec/rust_test_placement_contract.md`: choose inline unit tests,
-extracted white-box tests, or crate-level integration tests deliberately.
+For new or materially edited Rust tests, follow the OpenSpec Rust test
+placement contract at
+`openspec/specs/rust-test-placement-contract/spec.md`:
+choose inline unit tests, extracted white-box tests, or crate-level integration
+tests deliberately.
 
 ---
 
@@ -451,9 +453,9 @@ alan connection pin chatgpt-main --scope global
 alan connection test chatgpt-main
 ```
 
-Daemon clients use the same model through `/api/v1/connections/*`. The primary
-contract is `docs/spec/connection_profile_contract.md`; provider/auth boundaries
-are in `docs/spec/provider_auth_contract.md`.
+Daemon clients use the same model through `/api/v1/connections/*`. Connection
+profile and provider/auth contract material lives in OpenSpec at
+`openspec/specs/provider-connection-contract/spec.md`.
 
 Agent definitions are resolved from `AgentRoot`s on disk:
 
@@ -796,10 +798,10 @@ only to that pending checkpoint.
 
 ### Skills
 
-For the authoritative current skill-system contract, see
-`docs/spec/skill_system_contract.md`. For implementation details and current
-runtime surfaces, see `docs/skills_and_tools.md`. This section is only the
-agent-guide summary.
+Skill-system contract material lives in OpenSpec at
+`openspec/specs/skill-system-contract/spec.md`.
+For implementation details and current runtime surfaces, see
+`docs/skills_and_tools.md`. This section is only the agent-guide summary.
 
 Skills are Markdown-based capabilities with YAML frontmatter:
 
@@ -846,8 +848,8 @@ Skills can declare availability gates through frontmatter such as
 `compatibility.dependencies`; unresolved constraints mark the skill unavailable
 in runtime and `alan skills` output.
 Resolved skill execution may be `inline` or
-`delegate(target=package-launch-target)`; see
-`docs/spec/skill_system_contract.md` for the full contract.
+`delegate(target=package-launch-target)`; the full contract material lives in
+OpenSpec.
 
 ---
 
@@ -865,9 +867,10 @@ Resolved skill execution may be `inline` or
    `crates/runtime/skills/<skill-id>/` for first-party built-ins, use
    `alan skills init` for scaffolding ordinary packages, or add packages under
    an agent-root `skills/` directory / the zero-conversion public install
-   directories under `.agents/skills/`. For the stable contract, use
-   `docs/spec/skill_system_contract.md`; for current implementation details,
-   use `docs/skills_and_tools.md` and `docs/skill_authoring.md`.
+   directories under `.agents/skills/`. For the stable contract material, use
+   `openspec/specs/skill-system-contract/spec.md`;
+   for current implementation details, use `docs/skills_and_tools.md` and
+   `docs/skill_authoring.md`.
 
 ---
 
@@ -917,12 +920,10 @@ full signed, notarized, stapled release assembly.
 - **README.md**: Project philosophy and vision
 - **docs/architecture.md**: Full architecture documentation
 - **docs/governance_current_contract.md**: Authoritative current governance contract
-- **docs/spec/README.md**: Spec index and current-vs-target guidance
-- **docs/spec/connection_profile_contract.md**: Connection/profile management contract
-- **docs/spec/app_server_protocol.md**: App-server/session compatibility protocol
-- **docs/spec/skill_system_contract.md**: Authoritative skill-system contract
-- **docs/spec/rust_test_placement_contract.md**: Rust test placement contract
-- **docs/spec/hite_governance.md**: HITE runtime governance model
+- **openspec/specs/**: Long-lived specifications
+- **openspec/changes/**: Active specification changes
+- **docs/spec/README.md**: Legacy spec migration bridge
+- **docs/spec/*.md**: Legacy compatibility bridge pages, not contract sources
 
 ### Inspirations
 

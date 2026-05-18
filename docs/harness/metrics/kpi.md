@@ -1,5 +1,9 @@
 # Harness KPI Output
 
+> Status: current runner output guide. Normative harness behavior lives in
+> OpenSpec:
+> [`runtime-harness-contract`](../../../openspec/specs/runtime-harness-contract/spec.md).
+
 Harness runners write KPI output to:
 
 - `target/harness/autonomy/latest/kpi.json`

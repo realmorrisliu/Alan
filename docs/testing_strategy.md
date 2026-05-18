@@ -1,5 +1,11 @@
 # Testing Strategy: Prevent Client-Server Protocol Drift
 
+> Status: current testing guide. Normative Rust test placement and reusable
+> harness behavior live in OpenSpec:
+> [`rust-test-placement-contract`](../openspec/specs/rust-test-placement-contract/spec.md)
+> and
+> [`runtime-harness-contract`](../openspec/specs/runtime-harness-contract/spec.md).
+
 ## Goals
 
 alan's event stream is a cross-client contract. The testing strategy aims to ensure:

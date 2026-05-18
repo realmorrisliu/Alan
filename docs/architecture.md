@@ -17,22 +17,16 @@ effects. That computation model is intentionally separate from alan's hosting
 model, which distinguishes on-disk agent definitions, persistent workspaces,
 running agent instances, and bounded sessions.
 
-Companion execution contracts:
+Companion OpenSpec contracts and migration owners:
 
-- [`spec/kernel_contract.md`](./spec/kernel_contract.md)
-- [`spec/execution_model.md`](./spec/execution_model.md)
-- [`spec/alan_coding_steward_contract.md`](./spec/alan_coding_steward_contract.md)
-- [`spec/memory_architecture.md`](./spec/memory_architecture.md)
-- [`spec/compaction_contract.md`](./spec/compaction_contract.md)
-- [`spec/governance_boundaries.md`](./spec/governance_boundaries.md)
-- [`spec/workspace_routing_contract.md`](./spec/workspace_routing_contract.md)
-- [`spec/app_server_protocol.md`](./spec/app_server_protocol.md)
-- [`spec/scheduler_contract.md`](./spec/scheduler_contract.md)
-- [`spec/interaction_inbox_contract.md`](./spec/interaction_inbox_contract.md)
-- [`spec/durable_run_contract.md`](./spec/durable_run_contract.md)
-- [`spec/extension_contract.md`](./spec/extension_contract.md)
-- [`spec/capability_router.md`](./spec/capability_router.md)
-- [`spec/harness_bridge.md`](./spec/harness_bridge.md)
+- [`runtime-core-contract`](../openspec/specs/runtime-core-contract/spec.md)
+- [`runtime-memory-contract`](../openspec/specs/runtime-memory-contract/spec.md)
+- [`governance-tooling-contract`](../openspec/specs/governance-tooling-contract/spec.md)
+- [`coding-steward-contract`](../openspec/specs/coding-steward-contract/spec.md)
+- [`skill-system-contract`](../openspec/specs/skill-system-contract/spec.md)
+- [`daemon-api-contract`](../openspec/specs/daemon-api-contract/spec.md)
+- [`agent-root-layout`](../openspec/specs/agent-root-layout/spec.md)
+- [`workspace-runtime-state-hygiene`](../openspec/specs/workspace-runtime-state-hygiene/spec.md)
 
 ---
 
@@ -116,8 +110,8 @@ is distinct from delegated child-agent runs created during a session.
 ### Capability Packages In The Definition Layer
 
 For the authoritative skill-system contract, see
-[`spec/skill_system_contract.md`](./spec/skill_system_contract.md). For the
-current implementation guide, see [`skills_and_tools.md`](./skills_and_tools.md).
+[`skill-system-contract`](../openspec/specs/skill-system-contract/spec.md).
+For the current implementation guide, see [`skills_and_tools.md`](./skills_and_tools.md).
 This section keeps only the architecture-level summary so the detailed behavior
 does not drift in multiple places.
 
@@ -153,8 +147,7 @@ tool descriptions, or dedicated runtime policy.
 
 At runtime, those resolved skills may execute inline or delegate to
 package-local launch targets, but the execution contract itself lives in
-[`spec/skill_system_contract.md`](./spec/skill_system_contract.md) rather than
-this architecture summary.
+OpenSpec rather than this architecture summary.
 
 Skill frontmatter/runtime requirement data is enforced at the runtime boundary. When
 `required_tools` or `min_version` constraints are not met, the package remains
@@ -295,7 +288,7 @@ Policy file resolution is:
 When a policy file is found, it replaces the builtin profile rule set for that session. There is no implicit merge with builtin rules.
 
 Detailed current behavior: [`governance_current_contract.md`](./governance_current_contract.md).  
-Target V2 design: [HITE Governance](./spec/hite_governance.md).
+Target V2 design: [`governance-tooling-contract`](../openspec/specs/governance-tooling-contract/spec.md).
 
 ---
 

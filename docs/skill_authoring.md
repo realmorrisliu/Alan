@@ -1,5 +1,9 @@
 # Skill Authoring Workflow
 
+> Status: current authoring guide. Normative skill package behavior lives in
+> OpenSpec:
+> [`skill-system-contract`](../openspec/specs/skill-system-contract/spec.md).
+
 alan's first-party skill authoring tooling operates over the same
 directory-backed `skill package` contract used by externally discovered skills.
 It does not introduce a second package system.
