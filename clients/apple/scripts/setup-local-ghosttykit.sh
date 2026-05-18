@@ -52,6 +52,20 @@ link_output() {
     ln -sfn "$source" "$destination"
 }
 
+normalize_ghosttykit_modulemaps() {
+    local framework="$1"
+    local modulemap
+    local tmp
+
+    while IFS= read -r -d '' modulemap; do
+        if grep -q 'umbrella header "ghostty\.h"' "$modulemap"; then
+            tmp="$modulemap.tmp.$$"
+            sed 's/umbrella header "ghostty\.h"/header "ghostty.h"/' "$modulemap" > "$tmp"
+            mv "$tmp" "$modulemap"
+        fi
+    done < <(find -L "$framework" -name module.modulemap -type f -print0)
+}
+
 require_metal_toolchain() {
     if xcrun -sdk macosx --find metal >/dev/null 2>&1; then
         return 0
@@ -134,6 +148,7 @@ ensure_ghosttykit() {
 
     printf '==> Syncing %s -> %s\n' "$resolved" "$CACHE_XCFRAMEWORK"
     sync_path "$resolved" "$CACHE_XCFRAMEWORK"
+    normalize_ghosttykit_modulemaps "$CACHE_XCFRAMEWORK"
 
     printf '==> Linking %s -> %s\n' "$OUTPUT_XCFRAMEWORK" "$CACHE_XCFRAMEWORK"
     link_output "$CACHE_XCFRAMEWORK" "$OUTPUT_XCFRAMEWORK"

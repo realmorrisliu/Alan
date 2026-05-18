@@ -9,11 +9,12 @@ import GhosttyKit
 #endif
 
 final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHandle {
+    private static let inputTrace = AlanTerminalInputTrace()
+
     private let canvasView = makeCanvasView()
     private let overlayPresenter = TerminalHostOverlayPresenter()
     private let surfaceController = AlanTerminalSurfaceController()
     private let keyEquivalentAdapter = AlanTerminalKeyEquivalentAdapter()
-    private let focusClickAdapter = AlanTerminalFocusClickAdapter()
     private let runtimeReporter = TerminalHostRuntimeReporter()
     private let windowObserver = TerminalHostWindowObserver()
 
@@ -114,7 +115,7 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
     override func resignFirstResponder() -> Bool {
         let result = super.resignFirstResponder()
         if result {
-            focusClickAdapter.resetSuppression()
+            surfaceController.resetInputRouting()
             synchronizeLiveHost()
             publishRuntimeSnapshot()
         }
@@ -250,7 +251,7 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
 
     private func localEventKeyUp(_ event: NSEvent) -> NSEvent? {
         guard event.modifierFlags.contains(.command) else { return event }
-        guard isFocused else { return event }
+        guard terminalInputIsActive else { return event }
         keyUp(with: event)
         return nil
     }
@@ -261,18 +262,31 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
               event.window == window,
               let contentView = window.contentView
         else {
+            traceTerminalInput(
+                "local-leftMouseDown ignored",
+                event: event,
+                details: "reason=window_mismatch"
+            )
             return event
         }
 
         let location = contentView.convert(event.locationInWindow, from: nil)
-        let hitOwnsTerminal = terminalHostOwnsHitTestView(contentView.hitTest(location))
-        switch focusClickAdapter.routeLeftMouseDown(
+        let hitView = contentView.hitTest(location)
+        let hitOwnsTerminal = terminalHostOwnsHitTestView(hitView)
+        let decision = surfaceController.routeLeftMouseDown(
             hitOwnsTerminal: hitOwnsTerminal,
             commandSurfaceVisible: false,
-            isFirstResponder: isFocused,
+            isFirstResponder: terminalInputIsActive,
             appIsActive: NSApp.isActive,
             windowIsKey: window.isKeyWindow
-        ) {
+        )
+        traceTerminalInput(
+            "local-leftMouseDown",
+            event: event,
+            details: "hitOwnsTerminal=\(hitOwnsTerminal) hitView=\(traceViewName(hitView)) decision=\(decision)"
+        )
+
+        switch decision {
         case .ignored, .deliverToTerminal:
             return event
         case .focusOnly:
@@ -342,7 +356,7 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
         let stage: TerminalHostStage = {
             guard superview != nil else { return .scaffold }
             guard window != nil else { return .viewAttached }
-            return isFocused ? .focused : .windowAttached
+            return terminalInputIsActive ? .focused : .windowAttached
         }()
 
         let displayID = (screen?.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)
@@ -357,7 +371,7 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
             displayName: screen?.localizedName,
             displayID: displayID,
             attachedWindowTitle: window?.title,
-            isFocused: isFocused,
+            isFocused: terminalInputIsActive,
             renderer: rendererSnapshot,
             paneMetadata: paneMetadata,
             surfaceState: surfaceController.surfaceStateSnapshot,
@@ -372,7 +386,7 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
         surfaceController.attach(
             to: canvasView,
             bootProfile: bootProfile,
-            focused: isFocused,
+            focused: terminalInputIsActive,
             onDiagnosticsChange: { [weak self] snapshot in
                 guard let self else { return }
                 rendererSnapshot = snapshot
@@ -455,6 +469,62 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
         window?.firstResponder === self
     }
 
+    private var terminalInputIsActive: Bool {
+        isSelected && isFocused
+    }
+
+    private func traceTerminalInput(
+        _ eventName: String,
+        event: NSEvent? = nil,
+        details: @autoclosure () -> String = ""
+    ) {
+        guard Self.inputTrace.isEnabled else { return }
+        let paneID = pane?.paneID ?? "nil"
+        let firstResponder = traceResponderName(window?.firstResponder)
+        let windowKey = window?.isKeyWindow == true
+        let timestamp = event.map { String(format: "%.6f", $0.timestamp) } ?? "nil"
+        let point = event.map { tracePoint(localPoint(for: $0)) } ?? "nil"
+        let detailText = details()
+        let suffix = detailText.isEmpty ? "" : " \(detailText)"
+        Self.inputTrace.log(
+            "\(eventName) pane=\(paneID) selected=\(isSelected) firstResponderSelf=\(isFocused) active=\(terminalInputIsActive) appActive=\(NSApp.isActive) windowKey=\(windowKey) firstResponder=\(firstResponder) ts=\(timestamp) point=\(point)\(suffix)"
+        )
+    }
+
+    private func tracePointerInput(
+        _ eventName: String,
+        input: AlanTerminalPointerInput,
+        decision: AlanTerminalPointerRoutingDecision,
+        handled: Bool
+    ) {
+        guard Self.inputTrace.isEnabled else { return }
+        switch input.phase {
+        case .buttonDown, .buttonUp, .drag:
+            break
+        case .entered, .moved, .exited, .pressure:
+            return
+        }
+
+        let paneID = pane?.paneID ?? "nil"
+        Self.inputTrace.log(
+            "\(eventName) pane=\(paneID) selected=\(isSelected) firstResponderSelf=\(isFocused) active=\(terminalInputIsActive) phase=\(input.phase) button=\(input.normalizedButton.map { String(describing: $0) } ?? "nil") x=\(String(format: "%.1f", input.x)) y=\(String(format: "%.1f", input.y)) decision=\(decision) handled=\(handled)"
+        )
+    }
+
+    private func tracePoint(_ point: CGPoint) -> String {
+        "(\(String(format: "%.1f", point.x)),\(String(format: "%.1f", point.y)))"
+    }
+
+    private func traceResponderName(_ responder: NSResponder?) -> String {
+        guard let responder else { return "nil" }
+        return String(describing: type(of: responder))
+    }
+
+    private func traceViewName(_ view: NSView?) -> String {
+        guard let view else { return "nil" }
+        return String(describing: type(of: view))
+    }
+
     private func focusTerminalSoon() {
         guard isSelected, pane != nil else { return }
         guard window != nil else {
@@ -530,24 +600,51 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
 
     @discardableResult
     private func routePointer(_ input: AlanTerminalPointerInput) -> Bool {
+        let decision = pointerDecision(for: input)
+        let handled = executePointerDecision(decision)
+        tracePointerInput("pointer-route", input: input, decision: decision, handled: handled)
+        return handled
+    }
+
+    private func pointerDecision(
+        for input: AlanTerminalPointerInput
+    ) -> AlanTerminalPointerRoutingDecision {
 #if canImport(GhosttyKit)
-        return deliverPointerDecision(surfaceController.routePointer(input))
+        return surfaceController.routePointer(input)
+#else
+        return .ignored
+#endif
+    }
+
+    @discardableResult
+    private func executePointerDecision(_ decision: AlanTerminalPointerRoutingDecision) -> Bool {
+#if canImport(GhosttyKit)
+        return deliverPointerDecision(decision)
 #else
         return false
 #endif
     }
 
     override func mouseDown(with event: NSEvent) {
+        traceTerminalInput("raw-leftMouseDown", event: event)
         activateTerminalHostForMouseEvent()
         routePointer(terminalPointerInput(for: event, phase: .buttonDown, button: .primary))
     }
 
     override func mouseUp(with event: NSEvent) {
-        if focusClickAdapter.consumeSuppressedLeftMouseUp() {
+        let buttonUpDecision = pointerDecision(
+            for: terminalPointerInput(for: event, phase: .buttonUp, button: .primary)
+        )
+        traceTerminalInput(
+            "raw-leftMouseUp",
+            event: event,
+            details: "decision=\(buttonUpDecision)"
+        )
+        if buttonUpDecision == .consumed {
             return
         }
         previousPressureStage = 0
-        routePointer(terminalPointerInput(for: event, phase: .buttonUp, button: .primary))
+        executePointerDecision(buttonUpDecision)
         routePointer(
             AlanTerminalPointerInput(
                 phase: .pressure,
@@ -618,6 +715,7 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
     }
 
     override func mouseDragged(with event: NSEvent) {
+        traceTerminalInput("raw-leftMouseDragged", event: event)
         routePointer(terminalPointerInput(for: event, phase: .drag, button: .primary))
     }
 
@@ -642,6 +740,11 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
 
     @discardableResult
     private func routeWrappedMouseEvent(_ routedEvent: AlanTerminalRoutedMouseEvent, _ event: NSEvent) -> Bool {
+        traceTerminalInput(
+            "wrapped-\(routedEvent)",
+            event: event,
+            details: "source=nativeScrollView"
+        )
         switch routedEvent {
         case .mouseDown:
             mouseDown(with: event)
@@ -755,6 +858,8 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
              .terminalSelection(let operation),
              .terminalHover(let operation):
             return deliverPointerOperation(operation)
+        case .consumed:
+            return true
         case .ignored:
             return false
         }
@@ -849,7 +954,9 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
 
 #if canImport(GhosttyKit)
         guard !isApplicationReservedKeyEquivalent(event) else { return false }
-        guard event.type == .keyDown, isFocused, surfaceController.isSurfaceReady == true else { return false }
+        guard event.type == .keyDown,
+              terminalInputIsActive,
+              surfaceController.isSurfaceReady == true else { return false }
 
         var keyEvent = ghosttyKeyEvent(for: event, action: GHOSTTY_ACTION_PRESS)
         var flags = ghostty_binding_flags_e(0)
@@ -861,7 +968,7 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
 
         switch keyEquivalentAdapter.routeKeyEquivalent(
             terminalKeyEquivalentInput(for: event),
-            isFocused: isFocused,
+            isFocused: terminalInputIsActive,
             isTerminalBinding: isBinding
         ) {
         case .sendOriginal:
@@ -902,7 +1009,26 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
 
         requestTerminalFocus()
         keyEquivalentAdapter.clearPendingRedispatch()
-        let inputRoutingDecision = surfaceController.inputAdapter.routeKey(terminalKeyInput(for: event))
+        let keyboardDecision = surfaceController.routeKeyboard(
+            terminalKeyInput(for: event),
+            hasMarkedText: markedText.length > 0
+        )
+
+        switch keyboardDecision {
+        case .workspaceCommand(let command):
+            workspaceCommandHandler?(command)
+            return
+        case .nativeCommand("find"):
+            _ = beginFindInteraction()
+            return
+        case .nativeCommand("quit"):
+            NSApp.terminate(nil)
+            return
+        case .nativeCommand, .drop:
+            return
+        case .interpretTextInput, .terminalKey:
+            break
+        }
 
         let translationModsGhostty =
             surfaceController.keyTranslationMods(for: modsFromEvent(event))
@@ -951,10 +1077,7 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
         defer { keyTextAccumulator = nil }
 
         let markedTextBefore = markedText.length > 0
-        let shouldInterpretText = surfaceController.inputAdapter.shouldInterpretTextInput(
-            inputRoutingDecision,
-            hasMarkedText: markedTextBefore
-        )
+        let shouldInterpretText = keyboardDecision == .interpretTextInput
         let keyboardIDBefore = !markedTextBefore && shouldInterpretText
             ? AlanKeyboardLayout.currentID
             : nil
@@ -973,7 +1096,7 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
            !keyTextAccumulator.isEmpty
         {
             for text in keyTextAccumulator {
-                guard !AlanTerminalInputAdapter.shouldSuppressComposingControlInput(
+                guard !AlanTerminalTextCompositionPolicy.shouldSuppressComposingControlInput(
                     text,
                     composing: composing
                 ) else {
@@ -983,7 +1106,13 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
                 if markedTextBefore {
                     sendCommittedPreeditText(text, action: action)
                 } else {
-                    surfaceController.sendText(text)
+                    sendGhosttyKeyEvent(
+                        for: event,
+                        action: action,
+                        translationMods: translationMods,
+                        textOverride: text,
+                        composing: false
+                    )
                 }
             }
 
@@ -998,7 +1127,7 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
             return
         }
 
-        if AlanTerminalInputAdapter.shouldSuppressComposingControlInput(
+        if AlanTerminalTextCompositionPolicy.shouldSuppressComposingControlInput(
             event.characters,
             composing: composing
         ) {
@@ -1142,6 +1271,7 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
         action: ghostty_input_action_e,
         translationMods: NSEvent.ModifierFlags,
         textEvent: NSEvent? = nil,
+        textOverride: String? = nil,
         composing: Bool
     ) -> Bool {
         var keyEvent = ghosttyKeyEvent(
@@ -1151,10 +1281,8 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
         )
         keyEvent.composing = composing
 
-        if let textEvent,
-           let text = textForKeyEvent(textEvent),
-           shouldSendText(text)
-        {
+        let text = textOverride ?? textEvent.flatMap { textForKeyEvent($0) }
+        if let text, shouldSendText(text) {
             return text.withCString { cString in
                 keyEvent.text = cString
                 return surfaceController.sendKey(keyEvent)
@@ -1234,19 +1362,23 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
     }
 
     private func routeNativeKeyCommandIfNeeded(_ event: NSEvent) -> Bool {
-        switch surfaceController.inputAdapter.routeKey(terminalKeyInput(for: event)) {
+        switch surfaceController.routeKeyboard(
+            terminalKeyInput(for: event),
+            hasMarkedText: markedText.length > 0
+        ) {
         case .nativeCommand("find"):
             return beginFindInteraction()
         case .nativeCommand("quit"):
             return false
-        case .nativeCommand, .terminalText, .terminalKey, .ignored:
+        case .nativeCommand, .workspaceCommand, .terminalKey, .interpretTextInput, .drop:
             return false
         }
     }
 
     private func routeWorkspaceKeyCommandIfNeeded(_ event: NSEvent) -> Bool {
-        guard let command = surfaceController.inputAdapter.routeWorkspaceCommand(
-            terminalKeyInput(for: event)
+        guard case .workspaceCommand(let command) = surfaceController.routeKeyboard(
+            terminalKeyInput(for: event),
+            hasMarkedText: markedText.length > 0
         ) else {
             return false
         }
@@ -1362,7 +1494,7 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
 
         let wasComposing = markedText.length > 0
         unmarkText()
-        guard !AlanTerminalInputAdapter.shouldSuppressComposingControlInput(
+        guard !AlanTerminalTextCompositionPolicy.shouldSuppressComposingControlInput(
             characters,
             composing: wasComposing
         ) else { return }
@@ -1372,7 +1504,7 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
             self.keyTextAccumulator = keyTextAccumulator
         } else {
 #if canImport(GhosttyKit)
-            surfaceController.sendText(characters)
+            surfaceController.sendProgrammaticText(characters)
 #endif
         }
     }
@@ -1494,6 +1626,137 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
         if refocusTerminal {
             requestTerminalFocus()
         }
+    }
+}
+
+private struct AlanTerminalInputTraceConfig {
+    let isEnabled: Bool
+    let fileURL: URL?
+}
+
+private final class AlanTerminalInputTrace {
+    private let environment: [String: String]
+    private let defaults: UserDefaults
+    private let fileManager: FileManager
+    private let lock = NSLock()
+    private let timestampFormatter: ISO8601DateFormatter
+    private let configRefreshInterval: TimeInterval = 0.5
+    private var cachedConfig: AlanTerminalInputTraceConfig?
+    private var lastConfigRefresh = Date.distantPast
+
+    var isEnabled: Bool {
+        currentConfig().isEnabled
+    }
+
+    init(
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        defaults: UserDefaults = .standard,
+        fileManager: FileManager = .default
+    ) {
+        self.environment = environment
+        self.defaults = defaults
+        self.fileManager = fileManager
+        timestampFormatter = ISO8601DateFormatter()
+        timestampFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    }
+
+    func log(_ message: @autoclosure () -> String) {
+        let config = currentConfig()
+        guard config.isEnabled, let fileURL = config.fileURL else { return }
+
+        let line = "\(timestampFormatter.string(from: Date())) \(message())\n"
+        guard let data = line.data(using: .utf8) else { return }
+
+        lock.lock()
+        defer { lock.unlock() }
+
+        do {
+            try FileManager.default.createDirectory(
+                at: fileURL.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            if !FileManager.default.fileExists(atPath: fileURL.path) {
+                FileManager.default.createFile(atPath: fileURL.path, contents: nil)
+            }
+            let handle = try FileHandle(forWritingTo: fileURL)
+            defer { try? handle.close() }
+            try handle.seekToEnd()
+            try handle.write(contentsOf: data)
+        } catch {
+            // Tracing is diagnostic-only and must never affect terminal input delivery.
+        }
+    }
+
+    private func currentConfig() -> AlanTerminalInputTraceConfig {
+        let now = Date()
+
+        lock.lock()
+        defer { lock.unlock() }
+
+        if let cachedConfig,
+           now.timeIntervalSince(lastConfigRefresh) < configRefreshInterval
+        {
+            return cachedConfig
+        }
+
+        defaults.synchronize()
+        let config = Self.resolveConfig(
+            environment: environment,
+            defaults: defaults,
+            fileManager: fileManager
+        )
+        cachedConfig = config
+        lastConfigRefresh = now
+        return config
+    }
+
+    private static func resolveConfig(
+        environment: [String: String],
+        defaults: UserDefaults,
+        fileManager: FileManager
+    ) -> AlanTerminalInputTraceConfig {
+        AlanTerminalInputTraceConfig(
+            isEnabled: isTruthy(environment["ALAN_TERMINAL_INPUT_TRACE"])
+                || defaults.bool(forKey: "AlanTerminalInputTraceEnabled"),
+            fileURL: resolveFileURL(
+                environment: environment,
+                defaults: defaults,
+                fileManager: fileManager
+            )
+        )
+    }
+
+    private static func resolveFileURL(
+        environment: [String: String],
+        defaults: UserDefaults,
+        fileManager: FileManager
+    ) -> URL? {
+        if let override = environment["ALAN_TERMINAL_INPUT_TRACE_PATH"],
+           !override.isEmpty {
+            return URL(fileURLWithPath: expandingHomeDirectory(in: override))
+        }
+        if let override = defaults.string(forKey: "AlanTerminalInputTracePath"),
+           !override.isEmpty {
+            return URL(fileURLWithPath: expandingHomeDirectory(in: override))
+        }
+
+        guard let libraryURL = fileManager.urls(for: .libraryDirectory, in: .userDomainMask).first else {
+            return nil
+        }
+        return libraryURL
+            .appendingPathComponent("Logs", isDirectory: true)
+            .appendingPathComponent("Alan", isDirectory: true)
+            .appendingPathComponent("terminal-input-trace.log", isDirectory: false)
+    }
+
+    private static func expandingHomeDirectory(in path: String) -> String {
+        guard path == "~" || path.hasPrefix("~/") else { return path }
+        return NSHomeDirectory() + String(path.dropFirst())
+    }
+
+    private static func isTruthy(_ value: String?) -> Bool {
+        guard let value = value?.lowercased() else { return false }
+        return value == "1" || value == "true" || value == "yes" || value == "on"
     }
 }
 

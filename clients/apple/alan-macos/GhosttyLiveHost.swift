@@ -123,7 +123,7 @@ final class AlanGhosttyLiveHost: NSObject {
         return ghostty_surface_key_is_binding(surface, keyEvent, flags)
     }
 
-    func sendText(_ text: String) {
+    func sendProgrammaticText(_ text: String) {
         guard let surface, !text.isEmpty else { return }
         let isCommandSubmission = isCommandSubmissionText(text)
         if isCommandSubmission {

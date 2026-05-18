@@ -10,6 +10,18 @@ app-reserved `Command` shortcut owns that key.
 - **THEN** non-`Command` terminal keys such as Escape, Tab, Backspace, `Control-[`, `Control-W`, `Control-F`, and `Control-B` are delivered to the terminal runtime
 - **AND** the shell workspace command router does not consume those keys as pane, tab, or command-input actions
 
+#### Scenario: Printable physical keyboard input uses Ghostty key events
+- **WHEN** a focused terminal pane receives printable physical keyboard input such as `a` or `:`
+- **THEN** alan first lets AppKit text interpretation process the key so IME composition can start
+- **AND** alan delivers committed printable input through the Ghostty key-event path
+- **AND** alan does not bypass Ghostty's key encoder by sending that physical key through programmatic text injection
+
+#### Scenario: IME composition can start from printable input
+- **WHEN** a focused terminal pane uses a Chinese/Japanese/Korean input method
+- **AND** the user types the first printable key of a composition
+- **THEN** alan lets AppKit `interpretKeyEvents` create or update marked text
+- **AND** alan updates Ghostty preedit state from the resulting marked text
+
 #### Scenario: IME marked text owns composing backspace
 - **WHEN** a focused terminal pane has active AppKit `NSTextInputClient` marked text from a Chinese/Japanese/Korean input method
 - **AND** the user presses Backspace or an equivalent composing control key
@@ -45,8 +57,15 @@ app-reserved `Command` shortcut owns that key.
 - **WHEN** the app and window are already active
 - **AND** the user clicks a terminal split pane that is selected in the shell model but is not the AppKit first responder
 - **THEN** alan focuses that terminal host and consumes the focus-transfer mouse down
+- **AND** matching left mouse drags are suppressed until the focus-transfer mouse up
 - **AND** the matching left mouse up is suppressed
-- **AND** Vim mouse mode does not receive a stray click from the focus transfer
+- **AND** Vim mouse mode does not receive a stray click or selection drag from the focus transfer
+
+#### Scenario: Terminal input router owns primary pointer sequence policy
+- **WHEN** terminal pointer routing is evaluated for a focused or focus-transfer terminal pane
+- **THEN** the macOS terminal surface controller owns the sequence policy for focus-only primary button events, normal-buffer selection drags, alternate-screen mouse delivery, mouse-reporting delivery, and unready-surface ignores
+- **AND** the AppKit host view only normalizes events and executes the returned focus, deliver, consume, or fallthrough decision
+- **AND** focus-transfer suppression state MUST NOT be split between separate host-view drag guards and surface pointer routing
 
 #### Scenario: Modifier changes follow Ghostty semantics
 - **WHEN** modifier keys change while IME marked text is active
