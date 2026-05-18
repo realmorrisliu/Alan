@@ -14,6 +14,7 @@ private enum ShellSplitModelTests {
         try verifiesSplitRatiosClampWhenResized()
         try verifiesEqualizeRestoresEverySplitRatio()
         try verifiesSameDirectionAttachKeepsBinarySplitTree()
+        try verifiesSidebarSplitTopologyProjection()
         try verifiesSpatialFocusFollowsSplitTree()
         try verifiesSpatialFocusPreservesPerpendicularPosition()
         try verifiesPaneScopedCloseRemovesSelectedPane()
@@ -113,6 +114,120 @@ private enum ShellSplitModelTests {
             attached.paneIDs == ["pane_1", "pane_2", "pane_3"],
             "same-direction attachment must preserve pane ordering"
         )
+    }
+
+    private static func verifiesSidebarSplitTopologyProjection() throws {
+        let threeColumns = split(
+            .vertical,
+            leaf("pane_1"),
+            split(.vertical, leaf("pane_2"), leaf("pane_3"))
+        )
+        let threeColumnSummary = summary(for: threeColumns, focusedPaneID: "pane_2")
+        expect(
+            threeColumnSummary.topology.kind == .columns(count: 3),
+            "same-axis vertical chains must classify as three columns"
+        )
+        expect(
+            threeColumnSummary.paneIDs == ["pane_1", "pane_2", "pane_3"],
+            "three-column topology must preserve visible pane order"
+        )
+        expect(
+            threeColumnSummary.focusedPaneID == "pane_2",
+            "topology summary must preserve focused pane when it is visible"
+        )
+
+        let threeRows = split(
+            .horizontal,
+            leaf("pane_1"),
+            split(.horizontal, leaf("pane_2"), leaf("pane_3"))
+        )
+        expect(
+            summary(for: threeRows).topology.kind == .rows(count: 3),
+            "same-axis horizontal chains must classify as three rows"
+        )
+
+        let mainLeft = split(
+            .vertical,
+            leaf("pane_1"),
+            split(.horizontal, leaf("pane_2"), leaf("pane_3"))
+        )
+        expect(
+            summary(for: mainLeft).topology.kind == .mainLeftWithRightStack,
+            "left main with right stack must classify as a main-stack topology"
+        )
+
+        let mainRight = split(
+            .vertical,
+            split(.horizontal, leaf("pane_1"), leaf("pane_2")),
+            leaf("pane_3")
+        )
+        expect(
+            summary(for: mainRight).topology.kind == .mainRightWithLeftStack,
+            "right main with left stack must classify as a main-stack topology"
+        )
+
+        let mainTop = split(
+            .horizontal,
+            leaf("pane_1"),
+            split(.vertical, leaf("pane_2"), leaf("pane_3"))
+        )
+        expect(
+            summary(for: mainTop).topology.kind == .mainTopWithBottomSplit,
+            "top main with bottom split must classify as a main-stack topology"
+        )
+
+        let mainBottom = split(
+            .horizontal,
+            split(.vertical, leaf("pane_1"), leaf("pane_2")),
+            leaf("pane_3")
+        )
+        expect(
+            summary(for: mainBottom).topology.kind == .mainBottomWithTopSplit,
+            "bottom main with top split must classify as a main-stack topology"
+        )
+
+        let fourColumns = split(
+            .vertical,
+            leaf("pane_1"),
+            split(
+                .vertical,
+                leaf("pane_2"),
+                split(.vertical, leaf("pane_3"), leaf("pane_4"))
+            )
+        )
+        expect(
+            summary(for: fourColumns).topology.kind == .columns(count: 4),
+            "same-axis four-pane chains must stay recognizable when legible"
+        )
+
+        let grid = split(
+            .vertical,
+            split(.horizontal, leaf("pane_1"), leaf("pane_2")),
+            split(.horizontal, leaf("pane_3"), leaf("pane_4"))
+        )
+        expect(
+            summary(for: grid).topology.kind == .grid2x2(rootDirection: .vertical),
+            "balanced opposite-axis four-pane layouts must classify as a 2 by 2 grid"
+        )
+
+        let fiveColumns = split(
+            .vertical,
+            leaf("pane_1"),
+            split(
+                .vertical,
+                leaf("pane_2"),
+                split(
+                    .vertical,
+                    leaf("pane_3"),
+                    split(.vertical, leaf("pane_4"), leaf("pane_5"))
+                )
+            )
+        )
+        if case .complex(let count) = summary(for: fiveColumns).topology.kind {
+            expect(count == 5, "high-count same-axis layouts must fall back to complex count")
+        } else {
+            expect(false, "high-count same-axis layouts must classify as complex")
+        }
     }
 
     private static func verifiesSpatialFocusFollowsSplitTree() throws {
@@ -316,6 +431,41 @@ private enum ShellSplitModelTests {
             throw TestFailure("focused tab missing")
         }
         return tab.paneTree
+    }
+
+    private static func summary(
+        for paneTree: ShellPaneTreeNode,
+        focusedPaneID: String? = nil
+    ) -> ShellTabPaneSummary {
+        ShellTabPaneSummary(
+            paneTree: paneTree,
+            visiblePaneIDs: paneTree.paneIDs,
+            focusedPaneID: focusedPaneID
+        )
+    }
+
+    private static func leaf(_ paneID: String) -> ShellPaneTreeNode {
+        ShellPaneTreeNode(
+            nodeID: "node_\(paneID)",
+            kind: .pane,
+            direction: nil,
+            paneID: paneID,
+            children: nil
+        )
+    }
+
+    private static func split(
+        _ direction: ShellSplitDirection,
+        _ children: ShellPaneTreeNode...
+    ) -> ShellPaneTreeNode {
+        let paneIDSlug = children.flatMap(\.paneIDs).joined(separator: "_")
+        return ShellPaneTreeNode(
+            nodeID: "node_split_\(direction.rawValue)_\(paneIDSlug)",
+            kind: .split,
+            direction: direction,
+            paneID: nil,
+            children: children
+        )
     }
 
     private static func expect(
