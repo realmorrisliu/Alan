@@ -1005,6 +1005,16 @@ require_pattern \
 
 require_pattern \
     "clients/apple/alan-macos/Views/Shell/ShellSidebarView.swift" \
+    "private enum ShellSidebarTypography" \
+    "sidebar tab typography must use role-based typography tokens"
+
+require_pattern \
+    "clients/apple/alan-macos/TerminalPaneView.swift" \
+    "private enum ShellPaneTitleTypography" \
+    "pane title typography must use role-based typography tokens"
+
+require_pattern \
+    "clients/apple/alan-macos/Views/Shell/ShellSidebarView.swift" \
     "onFocusSplitPane: \\{ paneID in" \
     "sidebar split indicators must preserve direct clicked-pane targeting"
 

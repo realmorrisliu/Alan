@@ -517,6 +517,7 @@ struct ShellSidebarView: View {
         ShellTabSidebarRow(
             title: projection.title,
             subtitle: projection.secondaryLine,
+            isActivitySubtitle: projection.activity != nil,
             iconName: tabIconName(for: tab),
             progress: projection.progress,
             attention: strongestAttention(for: tab),
@@ -951,11 +952,29 @@ private struct ShellSidebarRowBackground: View {
     }
 }
 
+private enum ShellSidebarTypography {
+    static let titleSize: CGFloat = 13
+    static let secondarySize: CGFloat = 11
+    static let markerSize: CGFloat = 9
+    static let pinSize: CGFloat = 8.5
+    static let closeSize: CGFloat = 9.5
+
+    static func titleWeight(isSelected: Bool) -> Font.Weight {
+        isSelected ? .medium : .regular
+    }
+
+    static let secondaryWeight: Font.Weight = .regular
+    static let secondaryEmphasisWeight: Font.Weight = .medium
+    static let iconWeight: Font.Weight = .medium
+    static let markerWeight: Font.Weight = .semibold
+}
+
 private struct ShellTabSidebarRow: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @FocusState private var isKeyboardFocused: Bool
     let title: String
     let subtitle: String
+    let isActivitySubtitle: Bool
     let iconName: String
     let progress: TerminalActivityProgress?
     let attention: ShellAttentionState?
@@ -978,27 +997,41 @@ private struct ShellTabSidebarRow: View {
                 VStack(alignment: .leading, spacing: progress == nil ? 3 : 5) {
                     HStack(spacing: 6) {
                         Text(title)
-                            .font(.system(size: 13, weight: .semibold))
+                            .font(
+                                .system(
+                                    size: ShellSidebarTypography.titleSize,
+                                    weight: ShellSidebarTypography.titleWeight(isSelected: isSelected)
+                                )
+                            )
                             .foregroundStyle(titleForeground)
                             .lineLimit(1)
                             .truncationMode(.middle)
 
                         if showsAlanMarker {
                             Image(systemName: "sparkles")
-                                .font(.system(size: 9, weight: .bold))
+                                .font(
+                                    .system(
+                                        size: ShellSidebarTypography.markerSize,
+                                        weight: ShellSidebarTypography.markerWeight
+                                    )
+                                )
                                 .foregroundStyle(ShellPalette.accent)
                         }
 
                         if isPinned {
                             Image(systemName: "pin.fill")
-                                .font(.system(size: 8.5, weight: .bold))
+                                .font(
+                                    .system(
+                                        size: ShellSidebarTypography.pinSize,
+                                        weight: ShellSidebarTypography.markerWeight
+                                    )
+                                )
                                 .foregroundStyle(ShellPalette.accent.opacity(isSelected ? 0.84 : 0.64))
                                 .help("Pinned tab")
                         }
                     }
 
-                    Text(subtitle)
-                        .font(.system(size: 11, weight: .medium))
+                    subtitleText
                         .foregroundStyle(subtitleForeground)
                         .lineLimit(1)
                         .truncationMode(.middle)
@@ -1026,7 +1059,12 @@ private struct ShellTabSidebarRow: View {
 
                     Button(action: onClose) {
                         Image(systemName: "xmark")
-                            .font(.system(size: 9.5, weight: .bold))
+                            .font(
+                                .system(
+                                    size: ShellSidebarTypography.closeSize,
+                                    weight: ShellSidebarTypography.markerWeight
+                                )
+                            )
                             .foregroundStyle(closeForeground)
                             .frame(width: 22, height: 22)
                             .contentShape(Rectangle())
@@ -1088,10 +1126,51 @@ private struct ShellTabSidebarRow: View {
             )
         } else {
             Image(systemName: iconName)
-                .font(.system(size: ShellSidebarMetrics.iconPointSize, weight: .semibold))
+                .font(
+                    .system(
+                        size: ShellSidebarMetrics.iconPointSize,
+                        weight: ShellSidebarTypography.iconWeight
+                    )
+                )
                 .foregroundStyle(iconForeground)
                 .frame(width: ShellSidebarMetrics.iconColumnWidth)
         }
+    }
+
+    private var subtitleText: Text {
+        let parts = subtitle.components(separatedBy: " · ")
+        guard isActivitySubtitle, !parts.isEmpty else {
+            return Text(subtitle)
+                .font(
+                    .system(
+                        size: ShellSidebarTypography.secondarySize,
+                        weight: ShellSidebarTypography.secondaryWeight
+                    )
+                )
+        }
+
+        let emphasizedIndex = emphasizedSubtitleIndex(for: parts)
+        var attributedSubtitle = AttributedString()
+        for element in parts.enumerated() {
+            let (index, part) = element
+            let prefix = index == 0 ? "" : " · "
+            let weight = index == emphasizedIndex
+                ? ShellSidebarTypography.secondaryEmphasisWeight
+                : ShellSidebarTypography.secondaryWeight
+            var fragment = AttributedString(prefix + part)
+            fragment.font = .system(size: ShellSidebarTypography.secondarySize, weight: weight)
+            attributedSubtitle += fragment
+        }
+        return Text(attributedSubtitle)
+    }
+
+    private func emphasizedSubtitleIndex(for parts: [String]) -> Int {
+        if parts.count >= 3,
+           parts[0].hasPrefix("Pane ")
+        {
+            return 1
+        }
+        return 0
     }
 
     private var iconForeground: Color {
