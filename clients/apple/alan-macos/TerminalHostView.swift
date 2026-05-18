@@ -1629,27 +1629,40 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
     }
 }
 
+private struct AlanTerminalInputTraceConfig {
+    let isEnabled: Bool
+    let fileURL: URL?
+}
+
 private final class AlanTerminalInputTrace {
-    private let fileURL: URL?
+    private let environment: [String: String]
+    private let defaults: UserDefaults
+    private let fileManager: FileManager
     private let lock = NSLock()
     private let timestampFormatter: ISO8601DateFormatter
+    private let configRefreshInterval: TimeInterval = 0.5
+    private var cachedConfig: AlanTerminalInputTraceConfig?
+    private var lastConfigRefresh = Date.distantPast
 
-    let isEnabled: Bool
+    var isEnabled: Bool {
+        currentConfig().isEnabled
+    }
 
     init(
         environment: [String: String] = ProcessInfo.processInfo.environment,
         defaults: UserDefaults = .standard,
         fileManager: FileManager = .default
     ) {
-        isEnabled = Self.isTruthy(environment["ALAN_TERMINAL_INPUT_TRACE"])
-            || defaults.bool(forKey: "AlanTerminalInputTraceEnabled")
-        fileURL = Self.resolveFileURL(environment: environment, defaults: defaults, fileManager: fileManager)
+        self.environment = environment
+        self.defaults = defaults
+        self.fileManager = fileManager
         timestampFormatter = ISO8601DateFormatter()
         timestampFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
     }
 
     func log(_ message: @autoclosure () -> String) {
-        guard isEnabled, let fileURL else { return }
+        let config = currentConfig()
+        guard config.isEnabled, let fileURL = config.fileURL else { return }
 
         let line = "\(timestampFormatter.string(from: Date())) \(message())\n"
         guard let data = line.data(using: .utf8) else { return }
@@ -1672,6 +1685,45 @@ private final class AlanTerminalInputTrace {
         } catch {
             // Tracing is diagnostic-only and must never affect terminal input delivery.
         }
+    }
+
+    private func currentConfig() -> AlanTerminalInputTraceConfig {
+        let now = Date()
+
+        lock.lock()
+        defer { lock.unlock() }
+
+        if let cachedConfig,
+           now.timeIntervalSince(lastConfigRefresh) < configRefreshInterval
+        {
+            return cachedConfig
+        }
+
+        defaults.synchronize()
+        let config = Self.resolveConfig(
+            environment: environment,
+            defaults: defaults,
+            fileManager: fileManager
+        )
+        cachedConfig = config
+        lastConfigRefresh = now
+        return config
+    }
+
+    private static func resolveConfig(
+        environment: [String: String],
+        defaults: UserDefaults,
+        fileManager: FileManager
+    ) -> AlanTerminalInputTraceConfig {
+        AlanTerminalInputTraceConfig(
+            isEnabled: isTruthy(environment["ALAN_TERMINAL_INPUT_TRACE"])
+                || defaults.bool(forKey: "AlanTerminalInputTraceEnabled"),
+            fileURL: resolveFileURL(
+                environment: environment,
+                defaults: defaults,
+                fileManager: fileManager
+            )
+        )
     }
 
     private static func resolveFileURL(

@@ -23,6 +23,7 @@
 - [x] 2.13 修复 printable key 直接绕过 AppKit text interpretation 导致中文 IME 无法启动 composition 的回归，同时保持 committed printable input 最终走 Ghostty key event。
 - [x] 2.14 修复 focus-only mouse routing 只看 AppKit first responder、不看 shell selection 导致 pane focus click 被误判为 terminal selection drag 的回归。
 - [x] 2.15 根据 terminal input trace 修复 focus-only click 的 primary buttonDown 泄漏：即使 AppKit 在 local monitor 判定 focus-only 后仍派发 native mouseDown，也由同一 input router 消费整段 primary down/drag/up 序列。
+- [x] 2.16 让 terminal input trace 的 user-defaults 开关和路径在运行中按短刷新间隔重新读取，避免打开或关闭诊断日志必须重启 alan。
 
 ## 3. New Tab Cwd Inheritance
 

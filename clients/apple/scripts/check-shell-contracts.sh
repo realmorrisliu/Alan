@@ -1161,6 +1161,16 @@ require_pattern \
 
 require_pattern \
     "clients/apple/alan-macos/TerminalHostView.swift" \
+    "synchronize\\(\\)" \
+    "terminal input trace defaults must refresh without restarting alan"
+
+require_pattern \
+    "clients/apple/alan-macos/TerminalHostView.swift" \
+    "configRefreshInterval" \
+    "terminal input trace must bound live default refresh overhead"
+
+require_pattern \
+    "clients/apple/alan-macos/TerminalHostView.swift" \
     "local-leftMouseDown" \
     "terminal focus-click diagnostics must log local monitor routing"
 

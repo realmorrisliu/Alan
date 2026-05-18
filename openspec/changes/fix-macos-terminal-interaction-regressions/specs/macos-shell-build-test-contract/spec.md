@@ -30,6 +30,11 @@ inheritance, and shell child-exit lifecycle changes.
 - **THEN** the setup script normalizes generated GhosttyKit module maps to use `header "ghostty.h"` instead of `umbrella header "ghostty.h"`
 - **AND** shell contract checks reject cached GhosttyKit module maps that would cause Clang umbrella-header warnings for internal `ghostty/vt/*` headers
 
+#### Scenario: Terminal input trace can be toggled live
+- **WHEN** terminal input routing diagnostics are enabled or disabled through user defaults
+- **THEN** alan refreshes the terminal input trace configuration while running without requiring an app restart
+- **AND** shell contract checks prevent the trace helper from caching the user-defaults enabled state for the whole process lifetime
+
 #### Scenario: New tab cwd verification
 - **WHEN** terminal tab creation is changed
 - **THEN** verification covers runtime cwd metadata, pane snapshot cwd fallback, explicit control-plane cwd, and default/home fallback

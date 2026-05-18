@@ -20,6 +20,7 @@
   - 覆盖 shell contract 静态检查，包括 `performKeyEquivalent`、`doCommand`、local AppKit event monitor、`AlanTerminalInputRouter` 存在，以及 `TerminalHostView` 不再持有 focus-click suppression state。
   - 覆盖 `TerminalHostView.keyDown` 不调用 programmatic text injection，物理键盘输入保持在 Ghostty key event path。
   - 覆盖 focus-only mouse routing 使用 `terminalInputIsActive`，也就是 shell selection 和 AppKit first-responder 同时成立，而不是只看 raw first-responder state。
+  - 覆盖 terminal input trace 的 user-defaults 开关会运行中 refresh，避免打开或关闭诊断日志必须重启 alan。
   - 覆盖 GhosttyKit modulemap contract：prepared local artifacts 不能继续使用 `umbrella header "ghostty.h"`，避免 Clang 对 `ghostty/vt/*` internal headers 产生 umbrella-header warnings。
 - `openspec validate fix-macos-terminal-interaction-regressions --strict`
   - Strict validation succeeded after adding the terminal input router requirements and build-test contract coverage.
