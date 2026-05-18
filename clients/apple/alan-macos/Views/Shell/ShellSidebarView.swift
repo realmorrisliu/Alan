@@ -212,7 +212,7 @@ struct ShellSidebarView: View {
                             ShellSpaceSwitcherItem(
                                 title: space.title,
                                 symbolName: spaceSymbol(for: space),
-                                attention: space.attention,
+                                attention: strongestAttention(for: space),
                                 tabCount: space.tabs.count,
                                 isSelected: host.selectedSpace?.spaceID == space.spaceID,
                                 isPreviewed: previewedSpaceID == space.spaceID,
@@ -631,7 +631,7 @@ struct ShellSidebarView: View {
         let title = tabTitle(for: tab)
 
         if let primaryPane,
-           let status = shellTerminalStatusSummary(for: primaryPane)
+           let status = shellTerminalStatusSummary(for: primaryPane, now: activityFreshnessNow)
         {
             return status
         }
@@ -662,9 +662,17 @@ struct ShellSidebarView: View {
     private func strongestAttention(for tab: ShellTab) -> ShellAttentionState? {
         host.shellState.panes
             .filter { $0.tabID == tab.tabID }
-            .map(\.attention)
+            .map { shellEffectiveAttention(for: $0, now: activityFreshnessNow) }
             .sorted { attentionRank(for: $0) > attentionRank(for: $1) }
             .first(where: { $0 != .idle })
+    }
+
+    private func strongestAttention(for space: ShellSpace) -> ShellAttentionState {
+        host.shellState.panes
+            .filter { $0.spaceID == space.spaceID }
+            .map { shellEffectiveAttention(for: $0, now: activityFreshnessNow) }
+            .max(by: { attentionRank(for: $0) < attentionRank(for: $1) })
+            ?? .idle
     }
 
     private func spaceSymbol(for space: ShellSpace) -> String {

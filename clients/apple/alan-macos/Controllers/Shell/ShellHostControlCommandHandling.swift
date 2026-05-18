@@ -19,10 +19,12 @@ extension ShellHostController {
     func routingCandidates(preferredPaneID: String?) -> [AlanShellRoutingCandidate] {
         let preferredPane = preferredPaneID.flatMap { pane(paneID: $0) }
         let focusedPane = self.focusedPane
+        let now = Date()
 
         return shellState.panes.map { candidate in
             var score = 0.0
             var reasons: [String] = []
+            let attention = shellEffectiveAttention(for: candidate, now: now)
 
             if candidate.paneID == preferredPaneID {
                 score += 0.4
@@ -32,10 +34,10 @@ extension ShellHostController {
                 score += 0.3
                 reasons.append("focused")
             }
-            if candidate.attention == .awaitingUser {
+            if attention == .awaitingUser {
                 score += 0.25
                 reasons.append("attention:awaiting_user")
-            } else if candidate.attention == .notable {
+            } else if attention == .notable {
                 score += 0.12
                 reasons.append("attention:notable")
             }

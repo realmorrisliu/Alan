@@ -1,6 +1,7 @@
 import Foundation
 
 #if os(macOS)
+import AppKit
 import SwiftUI
 
 struct ShellAttentionItem: Identifiable, Equatable {
@@ -129,8 +130,11 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     @Published private(set) var terminalRuntime: TerminalHostRuntimeSnapshot = .placeholder
     @Published private(set) var controlPlaneDiagnostics: [String] = []
     @Published private(set) var commandInputRequestID = 0
+    @Published private(set) var activityNotifications: [ShellActivityNotificationRoute] = []
 
     let terminalRuntimeRegistry: TerminalRuntimeRegistry
+    private let appIsActiveProvider: @MainActor () -> Bool
+    private var routedActivityNotificationKeys: Set<String> = []
 
     init(
         shellState: ShellStateSnapshot,
@@ -139,7 +143,8 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         persistenceURL: URL? = nil,
         terminalRuntimeRegistry: TerminalRuntimeRegistry? = nil,
         workspaceManifestStore: ShellWorkspaceManifestStore? = nil,
-        workspaceManifest: ShellWorkspaceManifest? = nil
+        workspaceManifest: ShellWorkspaceManifest? = nil,
+        appIsActiveProvider: @escaping @MainActor () -> Bool = { NSApp.isActive }
     ) {
         self.fileManager = fileManager
         self.paneProjection = ShellPaneProjectionService(fileManager: fileManager)
@@ -153,6 +158,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         self.workspaceManifestStore = workspaceManifestStore
         self.workspaceManifest = workspaceManifest
         self.clipboardWriter = ShellClipboardWriter()
+        self.appIsActiveProvider = appIsActiveProvider
         self.shellState = shellState
         self.terminalRuntimeRegistry =
             terminalRuntimeRegistry
@@ -329,16 +335,18 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     }
 
     var attentionItems: [ShellAttentionItem] {
-        shellState.panes
+        let now = Date()
+        return shellState.panes
             .compactMap { pane in
-                guard pane.attention != .idle else { return nil }
+                let attention = shellEffectiveAttention(for: pane, now: now)
+                guard attention != .idle else { return nil }
                 return ShellAttentionItem(
                     paneID: pane.paneID,
                     spaceID: pane.spaceID,
                     tabID: pane.tabID,
                     title: pane.viewport?.title ?? pane.process?.program ?? "Pane",
                     summary: pane.viewport?.summary ?? "Activity detected",
-                    attention: pane.attention
+                    attention: attention
                 )
             }
             .sorted {
@@ -807,6 +815,12 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
                 processExited: runtimeProcessExited,
                 for: paneID
             )
+            let projectedActivity = runtime.paneMetadata.clearsActivity
+                ? nil
+                : (runtime.paneMetadata.activity ?? pane.activity)
+            if runtimeProcessExited {
+                routeActivityNotificationIfNeeded(from: pane, nextActivity: projectedActivity)
+            }
             if closePaneAfterChildExitIfNeeded(paneID: paneID, processExited: runtimeProcessExited) {
                 return
             }
@@ -848,9 +862,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
                     ),
                     context: projectedContext,
                     viewport: viewport,
-                    activity: runtime.paneMetadata.clearsActivity
-                        ? nil
-                        : (runtime.paneMetadata.activity ?? current.activity),
+                    activity: projectedActivity,
                     alanBinding: projectedBinding
                 )
             }
@@ -873,6 +885,10 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
             processExited: metadataProcessExited,
             for: paneID
         )
+        let projectedActivity = metadata.clearsActivity ? nil : (metadata.activity ?? pane.activity)
+        if metadataProcessExited {
+            routeActivityNotificationIfNeeded(from: pane, nextActivity: projectedActivity)
+        }
         if closePaneAfterChildExitIfNeeded(paneID: paneID, processExited: metadataProcessExited) {
             return
         }
@@ -918,7 +934,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
                 ),
                 context: projectedContext,
                 viewport: viewport,
-                activity: metadata.clearsActivity ? nil : (metadata.activity ?? current.activity),
+                activity: projectedActivity,
                 alanBinding: projectedBinding
             )
         }
@@ -1063,8 +1079,92 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
             panes: updatedPanes
         )
         synchronizeSelection()
+        routeActivityNotificationIfNeeded(from: existingPane, to: transformedPane)
         publishControlPlaneState()
         return true
+    }
+
+    private func routeActivityNotificationIfNeeded(
+        from existingPane: ShellPane,
+        nextActivity: TerminalActivitySnapshot?
+    ) {
+        guard existingPane.activity != nextActivity,
+              let activity = nextActivity,
+              let tab = shellState.tab(tabID: existingPane.tabID)
+        else {
+            return
+        }
+
+        routeActivityNotificationIfNeeded(
+            activity: activity,
+            pane: existingPane,
+            tab: tab
+        )
+    }
+
+    private func routeActivityNotificationIfNeeded(
+        from existingPane: ShellPane,
+        to updatedPane: ShellPane
+    ) {
+        guard existingPane.activity != updatedPane.activity,
+              let activity = updatedPane.activity,
+              let tab = shellState.tab(tabID: updatedPane.tabID)
+        else {
+            return
+        }
+
+        routeActivityNotificationIfNeeded(
+            activity: activity,
+            pane: updatedPane,
+            tab: tab
+        )
+    }
+
+    private func routeActivityNotificationIfNeeded(
+        activity: TerminalActivitySnapshot,
+        pane: ShellPane,
+        tab: ShellTab
+    ) {
+        let key = shellActivityNotificationKey(for: activity, paneID: pane.paneID)
+        guard !routedActivityNotificationKeys.contains(key),
+              let route = shellActivityNotificationRoute(
+                  for: activity,
+                  pane: pane,
+                  tab: tab,
+                  visibility: activityNotificationVisibility(for: pane),
+                  now: .now
+              )
+        else {
+            return
+        }
+
+        routedActivityNotificationKeys.insert(key)
+        activityNotifications.append(route)
+        if activityNotifications.count > 50 {
+            activityNotifications.removeFirst(activityNotifications.count - 50)
+        }
+    }
+
+    private func activityNotificationVisibility(
+        for pane: ShellPane
+    ) -> ShellActivityNotificationVisibility {
+        let isSelectedSpace = pane.spaceID == selectedSpace?.spaceID
+        let isSelectedTab = pane.tabID == selectedTab?.tabID
+        guard appIsActiveProvider() else {
+            return .background
+        }
+        if isSelectedSpace,
+           isSelectedTab,
+           pane.paneID == shellState.focusedPaneID
+        {
+            return .focusedVisible
+        }
+
+        if isSelectedSpace, isSelectedTab {
+            return .visibleUnfocused
+        }
+
+        return .background
     }
 
     private func rebuildSpaces(
@@ -1564,8 +1664,9 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     }
 
     private func strongestAttention(in panes: [ShellPane]) -> ShellAttentionState {
-        panes
-            .map(\.attention)
+        let now = Date()
+        return panes
+            .map { shellEffectiveAttention(for: $0, now: now) }
             .max(by: { Self.attentionRank(for: $0) < Self.attentionRank(for: $1) })
             ?? .idle
     }

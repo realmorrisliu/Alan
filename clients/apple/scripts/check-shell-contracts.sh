@@ -314,6 +314,51 @@ require_pattern \
     "pane.send_text must use the registry delivery result"
 
 require_pattern \
+    "clients/apple/alan-macos/GhosttyLiveHost.swift" \
+    "let isCommandSubmission = isCommandSubmissionText\\(text\\)" \
+    "text-delivered terminal commands must start foreground command duration tracking"
+
+require_pattern \
+    "clients/apple/alan-macos/GhosttyLiveHost.swift" \
+    "private func isCommandSubmissionText\\(_ text: String\\)" \
+    "foreground command detection must include pasted/control text submissions"
+
+require_pattern \
+    "clients/apple/alan-macos/GhosttyLiveHost.swift" \
+    "if foregroundCommandStartedAt == nil" \
+    "foreground command duration tracking must preserve the original command start time"
+
+require_pattern \
+    "clients/apple/alan-macos/GhosttyLiveHost.swift" \
+    "queuesWhileActive: true" \
+    "text-delivered queued commands must extend foreground command duration tracking while another command is active"
+
+require_pattern \
+    "clients/apple/alan-macos/GhosttyLiveHost.swift" \
+    "queuedForegroundCommandSubmissions \\+= commandCount" \
+    "foreground command duration tracking must preserve split-submission queued command counts"
+
+require_pattern \
+    "clients/apple/alan-macos/GhosttyLiveHost.swift" \
+    "private var queuedForegroundCommandSubmissions = 0" \
+    "foreground command duration tracking must retain queued pasted command submissions"
+
+require_pattern \
+    "clients/apple/alan-macos/GhosttyLiveHost.swift" \
+    "private func commandSubmissionCount\\(in text: String\\)" \
+    "foreground command duration tracking must count newline-delimited pasted commands"
+
+require_pattern \
+    "clients/apple/alan-macos/GhosttyLiveHost.swift" \
+    "advanceForegroundCommandTracking" \
+    "foreground command duration tracking must re-arm after queued command completion"
+
+require_pattern \
+    "clients/apple/alan-macos/GhosttyLiveHost.swift" \
+    "hasQueuedForegroundCommand \\? \\.foregroundCommand : \\.inactive" \
+    "queued pasted commands must keep tab activity protected until the final completion"
+
+require_pattern \
     "clients/apple/alan-macos/TerminalPaneView.swift" \
     "\\.id\\(pane\\.paneID\\)" \
     "terminal host views must be keyed by stable pane identity"

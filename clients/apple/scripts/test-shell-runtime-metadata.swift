@@ -43,7 +43,14 @@ private enum ShellRuntimeMetadataTests {
         verifiesFocusedCommandFailureDemotesFromSidebarProjection()
         verifiesCommandFailureAcknowledgementSticksAfterFocus()
         verifiesActivityFreshnessPolicies()
+        verifiesActivityAttentionIsReadTimeOnly()
         verifiesPaneTitleActivityAccessoryLabel()
+        verifiesActivityNotificationPolicyIsLowNoise()
+        verifiesControllerRoutesActivityNotificationsOnce()
+        verifiesControllerRoutesDistinctActivityPayloadsInSameSecond()
+        verifiesInactiveAppRoutesFocusedPaneNotifications()
+        verifiesProcessExitNotificationRoutesBeforeAutoClose()
+        verifiesProcessExitRuntimeNotificationRoutesBeforeAutoClose()
         verifiesTerminalChildExitClosesSplitPane()
         verifiesTerminalChildExitClosesSinglePaneTab()
         verifiesTerminalChildExitCanLeaveEmptyFocusedSpace()
@@ -557,6 +564,11 @@ private enum ShellRuntimeMetadataTests {
         let now = Date(timeIntervalSince1970: 1_779_008_400)
         let success = TerminalActivitySnapshot.commandCompletion(exitCode: 0, now: now)
         let failure = TerminalActivitySnapshot.commandCompletion(exitCode: 2, now: now)
+        let longSuccess = TerminalActivitySnapshot.commandCompletion(
+            exitCode: 0,
+            now: now,
+            durationMilliseconds: 120_000
+        )
 
         expect(success.status == .done, "zero exit code must produce done status")
         expect(!success.isSidebarWorthy, "successful commands must not be sidebar-worthy")
@@ -567,6 +579,10 @@ private enum ShellRuntimeMetadataTests {
         expect(
             !success.isFresh(at: now.addingTimeInterval(9)),
             "successful command completion must become stale after its freshness window"
+        )
+        expect(
+            longSuccess.command?.durationMilliseconds == 120_000,
+            "command completion must preserve measured duration"
         )
         expect(failure.status == .failed, "non-zero exit code must produce failed status")
         expect(failure.command?.exitCode == 2, "command completion must preserve exit code")
@@ -1198,6 +1214,76 @@ private enum ShellRuntimeMetadataTests {
         )
     }
 
+    private static func verifiesActivityAttentionIsReadTimeOnly() {
+        let projection = ShellPaneProjectionService()
+        let now = Date(timeIntervalSince1970: 1_779_008_400)
+        let failure = activity(
+            status: .failed,
+            source: .command,
+            sourceLabel: "Shell",
+            stateLabel: "Command failed 2",
+            updatedAt: "2026-05-17T09:00:00Z",
+            staleAt: "2026-05-17T09:00:30Z"
+        )
+
+        let persistedAttention = projection.projectedAttention(
+            metadataAttention: .idle,
+            processExited: false,
+            binding: nil
+        )
+        let freshPane = pane(
+            context: context(
+                processState: "running",
+                rendererHealth: "ready",
+                surfaceReadiness: "ready",
+                lastCommandExitCode: nil
+            ),
+            viewport: nil,
+            attention: persistedAttention,
+            activity: failure
+        )
+        let legacyStalePane = pane(
+            context: context(
+                processState: "running",
+                rendererHealth: "ready",
+                surfaceReadiness: "ready",
+                lastCommandExitCode: nil
+            ),
+            viewport: nil,
+            attention: .notable,
+            activity: failure
+        )
+        let rendererFailedPane = pane(
+            context: context(
+                processState: "running",
+                rendererHealth: "failed",
+                surfaceReadiness: "renderer_failed",
+                lastCommandExitCode: nil
+            ),
+            viewport: nil,
+            attention: .notable,
+            activity: failure
+        )
+
+        expect(persistedAttention == .idle, "activity attention must not be persisted into pane attention")
+        expect(
+            shellEffectiveAttention(for: freshPane, now: now.addingTimeInterval(10)) == .notable,
+            "fresh failed activity may overlay pane attention at read time"
+        )
+        expect(
+            shellEffectiveAttention(for: freshPane, now: now.addingTimeInterval(31)) == .idle,
+            "stale failed activity must not overlay pane attention"
+        )
+        expect(
+            shellEffectiveAttention(for: legacyStalePane, now: now.addingTimeInterval(31)) == .idle,
+            "legacy stale activity-derived pane attention must be ignored at read time"
+        )
+        expect(
+            shellEffectiveAttention(for: rendererFailedPane, now: now.addingTimeInterval(31)) == .notable,
+            "stale activity must not suppress persistent renderer attention"
+        )
+    }
+
     private static func verifiesPaneTitleActivityAccessoryLabel() {
         let now = Date(timeIntervalSince1970: 1_779_008_400)
         let paneWithProgress = pane(
@@ -1222,6 +1308,369 @@ private enum ShellRuntimeMetadataTests {
         expect(
             shellPaneActivityAccessoryLabel(for: paneWithProgress, now: now.addingTimeInterval(16)) == nil,
             "pane title activity accessory must hide stale progress"
+        )
+    }
+
+    private static func verifiesActivityNotificationPolicyIsLowNoise() {
+        let now = Date(timeIntervalSince1970: 1_779_008_400)
+        let testPane = pane(
+            context: context(
+                processState: "running",
+                rendererHealth: "ready",
+                surfaceReadiness: "ready",
+                lastCommandExitCode: nil
+            ),
+            viewport: nil,
+            attention: .idle
+        )
+        let testTab = ShellTab(
+            tabID: "tab_1",
+            kind: .terminal,
+            title: "alan",
+            paneTree: ShellPaneTreeNode(
+                nodeID: "node_pane_1",
+                kind: .pane,
+                direction: nil,
+                paneID: "pane_1",
+                children: nil
+            )
+        )
+
+        let focusedProgress = TerminalActivitySnapshot.progressActivity(percent: 42, now: now)
+        expect(
+            shellActivityNotificationRoute(
+                for: focusedProgress,
+                pane: testPane,
+                tab: testTab,
+                visibility: .focusedVisible,
+                now: now
+            ) == nil,
+            "focused progress must stay visual-only"
+        )
+
+        let agentNeedsInput = activity(
+            status: .needsInput,
+            source: .codex,
+            sourceLabel: "Codex",
+            stateLabel: "Input needed",
+            agent: .init(
+                kind: .codex,
+                safeSessionLabel: "codex",
+                projectLabel: "alan",
+                workingDirectory: "/Users/morris/Developer/alan"
+            )
+        )
+        let needsInputRoute = shellActivityNotificationRoute(
+            for: agentNeedsInput,
+            pane: testPane,
+            tab: testTab,
+            visibility: .background,
+            now: now
+        )
+        expect(needsInputRoute?.kind == .needsInput, "background agent input must be notification-worthy")
+        expect(needsInputRoute?.attention == .awaitingUser, "agent input must mark tab as awaiting user")
+
+        let focusedSuccess = commandActivity(
+            exitCode: 0,
+            durationMilliseconds: 120_000,
+            updatedAt: "2026-05-17T09:00:00Z"
+        )
+        expect(
+            shellActivityNotificationRoute(
+                for: focusedSuccess,
+                pane: testPane,
+                tab: testTab,
+                visibility: .focusedVisible,
+                now: now
+            ) == nil,
+            "focused command success must not send a notification"
+        )
+
+        let shortBackgroundSuccess = commandActivity(
+            exitCode: 0,
+            durationMilliseconds: 5_000,
+            updatedAt: "2026-05-17T09:00:00Z"
+        )
+        expect(
+            shellActivityNotificationRoute(
+                for: shortBackgroundSuccess,
+                pane: testPane,
+                tab: testTab,
+                visibility: .background,
+                now: now
+            ) == nil,
+            "short background command success must remain quiet"
+        )
+
+        let longBackgroundSuccess = commandActivity(
+            exitCode: 0,
+            durationMilliseconds: 120_000,
+            updatedAt: "2026-05-17T09:00:00Z"
+        )
+        let longCommandRoute = shellActivityNotificationRoute(
+            for: longBackgroundSuccess,
+            pane: testPane,
+            tab: testTab,
+            visibility: .background,
+            now: now
+        )
+        expect(longCommandRoute?.kind == .commandCompleted, "long background command completion must route")
+        expect(longCommandRoute?.attention == .notable, "long command completion must mark the tab notable")
+
+        let realFactoryLongSuccess = TerminalActivitySnapshot.commandCompletion(
+            exitCode: 0,
+            now: now,
+            durationMilliseconds: 120_000
+        )
+        expect(
+            shellActivityNotificationRoute(
+                for: realFactoryLongSuccess,
+                pane: testPane,
+                tab: testTab,
+                visibility: .background,
+                now: now
+            )?.kind == .commandCompleted,
+            "factory-produced long command completion must route"
+        )
+
+        let exited = TerminalActivitySnapshot.processExitedActivity(exitCode: 9, now: now)
+        let exitedRoute = shellActivityNotificationRoute(
+            for: exited,
+            pane: testPane,
+            tab: testTab,
+            visibility: .background,
+            now: now
+        )
+        expect(exitedRoute?.kind == .processExited, "background process exit must route")
+        expect(exitedRoute?.attention == .awaitingUser, "process exit must mark the tab awaiting user")
+    }
+
+    private static func verifiesControllerRoutesActivityNotificationsOnce() {
+        let controller = makeController()
+        _ = controller.openTerminalTab()
+        guard let backgroundPane = controller.shellState.panes.first(where: { $0.paneID != "pane_1" }) else {
+            fail("test setup must create a background pane")
+        }
+        controller.focus(paneID: "pane_1")
+
+        let needsInput = activity(
+            status: .needsInput,
+            source: .codex,
+            sourceLabel: "Codex",
+            stateLabel: "Input needed",
+            agent: .init(
+                kind: .codex,
+                safeSessionLabel: "codex",
+                projectLabel: "alan",
+                workingDirectory: "/Users/morris/Developer/alan"
+            )
+        )
+        controller.updateTerminalMetadata(
+            metadata(title: "codex", cwd: "/repo/app", activity: needsInput),
+            for: backgroundPane.paneID
+        )
+        controller.updateTerminalMetadata(
+            metadata(title: "codex", cwd: "/repo/app", activity: needsInput),
+            for: backgroundPane.paneID
+        )
+
+        expect(
+            controller.activityNotifications.count == 1,
+            "controller must route one notification per activity update"
+        )
+        expect(
+            controller.activityNotifications.first?.kind == .needsInput,
+            "controller notification must preserve the routed activity kind"
+        )
+        expect(
+            controller.shellState.pane(paneID: backgroundPane.paneID)?.attention == .idle,
+            "notification-worthy activity must not persist into pane attention"
+        )
+        expect(
+            controller.shellState.pane(paneID: backgroundPane.paneID).map {
+                shellEffectiveAttention(for: $0, now: Date())
+            } == .awaitingUser,
+            "notification-worthy agent input must overlay its pane awaiting user at read time"
+        )
+    }
+
+    private static func verifiesControllerRoutesDistinctActivityPayloadsInSameSecond() {
+        let controller = makeController()
+        _ = controller.openTerminalTab()
+        guard let backgroundPane = controller.shellState.panes.first(where: { $0.paneID != "pane_1" }) else {
+            fail("test setup must create a background pane")
+        }
+        controller.focus(paneID: "pane_1")
+
+        let firstNeedsInput = activity(
+            status: .needsInput,
+            source: .codex,
+            sourceLabel: "Codex",
+            stateLabel: "Input needed",
+            detailLabel: "Review plan",
+            agent: .init(
+                kind: .codex,
+                safeSessionLabel: "codex",
+                projectLabel: "alan",
+                workingDirectory: "/Users/morris/Developer/alan"
+            ),
+            updatedAt: "2026-05-17T09:00:00Z"
+        )
+        let secondNeedsInput = activity(
+            status: .needsInput,
+            source: .codex,
+            sourceLabel: "Codex",
+            stateLabel: "Input needed",
+            detailLabel: "Approve changes",
+            agent: .init(
+                kind: .codex,
+                safeSessionLabel: "codex",
+                projectLabel: "alan",
+                workingDirectory: "/Users/morris/Developer/alan"
+            ),
+            updatedAt: "2026-05-17T09:00:00Z"
+        )
+
+        controller.updateTerminalMetadata(
+            metadata(title: "codex", cwd: "/repo/app", activity: firstNeedsInput),
+            for: backgroundPane.paneID
+        )
+        controller.updateTerminalMetadata(
+            metadata(title: "codex", cwd: "/repo/app", activity: secondNeedsInput),
+            for: backgroundPane.paneID
+        )
+
+        expect(
+            controller.activityNotifications.count == 2,
+            "distinct same-second activity payloads must each route a notification"
+        )
+        expect(
+            controller.activityNotifications.first?.id != controller.activityNotifications.last?.id,
+            "notification ids must include a payload discriminator beyond the second-level timestamp"
+        )
+    }
+
+    private static func verifiesInactiveAppRoutesFocusedPaneNotifications() {
+        let controller = makeController(appIsActive: false)
+        let needsInput = activity(
+            status: .needsInput,
+            source: .codex,
+            sourceLabel: "Codex",
+            stateLabel: "Input needed",
+            agent: .init(
+                kind: .codex,
+                safeSessionLabel: "codex",
+                projectLabel: "alan",
+                workingDirectory: "/Users/morris/Developer/alan"
+            )
+        )
+
+        controller.updateTerminalMetadata(
+            metadata(title: "codex", cwd: "/repo/app", activity: needsInput),
+            for: "pane_1"
+        )
+
+        expect(
+            controller.activityNotifications.count == 1,
+            "inactive app must route focused pane activity because it is out of view"
+        )
+        expect(
+            controller.activityNotifications.first?.kind == .needsInput,
+            "inactive focused pane notification must preserve the routed activity kind"
+        )
+    }
+
+    private static func verifiesProcessExitNotificationRoutesBeforeAutoClose() {
+        let controller = makeController()
+        _ = controller.openTerminalTab(workingDirectory: "/second")
+        controller.focus(paneID: "pane_1")
+
+        let processExitActivity = TerminalActivitySnapshot.processExitedActivity(
+            exitCode: 0,
+            now: Date(timeIntervalSince1970: 1_779_008_400)
+        )
+
+        controller.updateTerminalMetadata(
+            childExitMetadata(title: "fish", exitCode: 0, activity: processExitActivity),
+            for: "pane_2"
+        )
+
+        expect(controller.pane(paneID: "pane_2") == nil, "child exit must still close the pane")
+        expect(
+            controller.activityNotifications.count == 1,
+            "process-exit activity must route before auto-close removes the pane"
+        )
+        expect(
+            controller.activityNotifications.first?.kind == .processExited,
+            "auto-closed process exit must preserve the notification kind"
+        )
+        expect(
+            controller.activityNotifications.first?.paneID == "pane_2",
+            "auto-closed process exit notification must point at the exiting pane"
+        )
+    }
+
+    private static func verifiesProcessExitRuntimeNotificationRoutesBeforeAutoClose() {
+        let controller = makeController()
+        _ = controller.openTerminalTab(workingDirectory: "/second")
+        controller.focus(paneID: "pane_1")
+        guard let exitingPane = controller.pane(paneID: "pane_2") else {
+            fail("test setup must create a background pane")
+        }
+
+        let processExitActivity = TerminalActivitySnapshot.processExitedActivity(
+            exitCode: 130,
+            now: Date(timeIntervalSince1970: 1_779_008_400)
+        )
+
+        controller.updateTerminalRuntime(
+            TerminalHostRuntimeSnapshot(
+                stage: .windowAttached,
+                paneID: exitingPane.paneID,
+                tabID: exitingPane.tabID,
+                logicalSize: .zero,
+                backingSize: .zero,
+                displayName: "Studio Display",
+                displayID: "display_1",
+                attachedWindowTitle: "alan",
+                isFocused: false,
+                renderer: TerminalRendererSnapshot(
+                    kind: .ghosttyLive,
+                    phase: .surfaceReady,
+                    summary: "surface ready",
+                    detail: nil,
+                    failureReason: nil,
+                    recentEvents: []
+                ),
+                paneMetadata: childExitMetadata(
+                    title: "fish",
+                    exitCode: 130,
+                    activity: processExitActivity
+                ),
+                surfaceState: AlanTerminalSurfaceStateSnapshot(
+                    readiness: .unready(reason: .childExited),
+                    terminalMode: .normalBuffer,
+                    scrollback: .empty,
+                    search: nil,
+                    readonly: false,
+                    secureInput: false,
+                    inputReady: false,
+                    rendererHealth: "surface_ready",
+                    childExited: true,
+                    lastUpdatedAt: Date(timeIntervalSince1970: 2_001)
+                ),
+                lastUpdatedAt: Date(timeIntervalSince1970: 2_002)
+            )
+        )
+
+        expect(controller.pane(paneID: "pane_2") == nil, "runtime child exit must still close the pane")
+        expect(
+            controller.activityNotifications.count == 1,
+            "runtime process-exit activity must route before auto-close removes the pane"
+        )
+        expect(
+            controller.activityNotifications.first?.kind == .processExited,
+            "runtime auto-closed process exit must preserve the notification kind"
         )
     }
 
@@ -1661,7 +2110,8 @@ private enum ShellRuntimeMetadataTests {
         windowID: String = "metadata_test_\(UUID().uuidString)",
         shellState: ShellStateSnapshot? = nil,
         workspaceManifestStore: ShellWorkspaceManifestStore? = nil,
-        workspaceManifest: ShellWorkspaceManifest? = nil
+        workspaceManifest: ShellWorkspaceManifest? = nil,
+        appIsActive: Bool = true
     ) -> ShellHostController {
         let registry = TerminalRuntimeRegistry(runtimeService: FakeAlanTerminalRuntimeService())
         let context = ShellWindowContext.make(
@@ -1676,7 +2126,8 @@ private enum ShellRuntimeMetadataTests {
             persistenceURL: persistenceURL,
             terminalRuntimeRegistry: registry,
             workspaceManifestStore: workspaceManifestStore,
-            workspaceManifest: workspaceManifest
+            workspaceManifest: workspaceManifest,
+            appIsActiveProvider: { appIsActive }
         )
     }
 
@@ -1811,7 +2262,10 @@ private enum ShellRuntimeMetadataTests {
         source: TerminalActivitySourceKind,
         sourceLabel: String,
         stateLabel: String,
+        detailLabel: String? = nil,
         progress: TerminalActivityProgress? = nil,
+        command: TerminalActivityCommandOutcome? = nil,
+        agent: TerminalActivityAgentMetadata? = nil,
         updatedAt: String = "2026-05-17T09:00:00Z",
         staleAt: String? = nil
     ) -> TerminalActivitySnapshot {
@@ -1820,12 +2274,12 @@ private enum ShellRuntimeMetadataTests {
             status: status,
             priority: priority(for: status),
             progress: progress,
-            command: nil,
-            agent: nil,
+            command: command,
+            agent: agent,
             display: TerminalActivityDisplay(
                 sourceLabel: sourceLabel,
                 stateLabel: stateLabel,
-                detailLabel: nil,
+                detailLabel: detailLabel,
                 paneHint: nil
             ),
             freshness: TerminalActivityFreshness(
@@ -1833,6 +2287,26 @@ private enum ShellRuntimeMetadataTests {
                 staleAt: staleAt,
                 expiresAt: nil
             )
+        )
+    }
+
+    private static func commandActivity(
+        exitCode: Int,
+        durationMilliseconds: Int,
+        updatedAt: String
+    ) -> TerminalActivitySnapshot {
+        let succeeded = exitCode == 0
+        return activity(
+            status: succeeded ? .done : .failed,
+            source: .command,
+            sourceLabel: "Shell",
+            stateLabel: succeeded ? "Command succeeded" : "Command failed \(exitCode)",
+            command: TerminalActivityCommandOutcome(
+                exitCode: exitCode,
+                durationMilliseconds: durationMilliseconds,
+                commandText: nil
+            ),
+            updatedAt: updatedAt
         )
     }
 
@@ -1852,7 +2326,8 @@ private enum ShellRuntimeMetadataTests {
     private static func childExitMetadata(
         title: String,
         cwd: String = "/Users/morris/Developer/Alan",
-        exitCode: Int
+        exitCode: Int,
+        activity: TerminalActivitySnapshot? = nil
     ) -> TerminalPaneMetadataSnapshot {
         TerminalPaneMetadataSnapshot(
             title: title,
@@ -1862,7 +2337,8 @@ private enum ShellRuntimeMetadataTests {
             processExited: true,
             lastCommandExitCode: exitCode,
             lastUpdatedAt: Date(timeIntervalSince1970: 3_100),
-            activeTaskState: .inactive
+            activeTaskState: .inactive,
+            activity: activity
         )
     }
 
