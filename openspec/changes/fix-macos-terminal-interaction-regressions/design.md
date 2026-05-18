@@ -29,7 +29,7 @@
 
 1. **终端输入优先走 terminal host，再让明确 app command 截获。**
 
-   Focused pane 的 `TerminalHostView` 应该把非 command-key 的控制键、Escape、Tab、Backspace、功能键、Option/Control 组合键和 Ghostty 识别为 terminal binding 的事件交给 terminal surface。IME 组合输入是这个规则的输入法例外：当 AppKit `NSTextInputClient` 已有 marked text 时，Backspace/Ctrl-H 等 control input 必须先交给 `interpretKeyEvents` 更新 preedit，并抑制组合态控制字符漏到 terminal。Command input 可见时仍然优先处理自己的 Escape/Return/Command-P；`Command-T`、`Command-W` 等显式 app/workspace command 继续走 native command routing。
+   Focused pane 的 `TerminalHostView` 应该把非 command-key 的控制键、Escape、Tab、Backspace、功能键、Option/Control 组合键和 Ghostty 识别为 terminal binding 的事件交给 terminal surface。printable/Shift-printable 物理键仍需要先进入 AppKit `interpretKeyEvents`，让中文/日文/韩文 IME 能启动 composition；但最终 committed text 必须重新包成 Ghostty key event 发送，不能走 programmatic text injection。IME 组合输入是这个规则的输入法例外：当 AppKit `NSTextInputClient` 已有 marked text 时，Backspace/Ctrl-H 等 control input 必须先交给 `interpretKeyEvents` 更新 preedit，并抑制组合态控制字符漏到 terminal。Command input 可见时仍然优先处理自己的 Escape/Return/Command-P；`Command-T`、`Command-W` 等显式 app/workspace command 继续走 native command routing。
 
    备选方案是继续先跑 workspace/native routing，再对缺失快捷键逐个开洞。这会把 Vim/TUI 支持变成无穷补丁列表，也容易再次截获 `Ctrl-*` 这类终端快捷键。
 
@@ -57,6 +57,14 @@
 
    备选方案是在 `routeKey` 中继续追加 `Ctrl-*` 白名单。这个方案无法覆盖 AppKit 先调用 `performKeyEquivalent`/`doCommand` 的路径，也无法解释为什么 fake adapter 测试通过但真实 Vim 仍失败。
 
+6. **键盘、鼠标焦点、拖拽和 selection 策略收敛到单一 terminal input router。**
+
+   `TerminalHostView` 应只承担 AppKit 边界职责：把 `NSEvent`、shell selection 和 marked-text 状态归一化成 terminal input、执行 router 返回的 app command / terminal key / interpret text / consume / fallthrough 结果，并把 Ghostty delivery 保持在 host/surface boundary。物理键盘输入的最终 terminal delivery 必须走 Ghostty key event；`ghostty_surface_text` 只保留给 paste、control-plane 和非物理键盘的 programmatic text injection。焦点转移 click、primary button sequence、normal-buffer selection drag、alternate-screen/mouse-reporting delivery 等策略应由 `TerminalSurfaceController` 内的单一 input router 持有，而不是让 HostView 分别询问 focus-click adapter 和 pointer adapter。
+
+   这个 router 需要显式建模 focus-only primary button sequence：active/key window 中点击未成为 active terminal input 的 split pane 时，left mouse down 只转移 focus；同一 primary sequence 的 drag 和 mouse up 都被 consume；sequence 结束后再恢复正常 selection/mouse routing。Alan 的 active terminal input 必须同时满足 shell pane 被选中和 AppKit first responder 属于该 host，避免 stale first-responder 状态把 pane focus click 误判为 terminal selection drag。这样可以匹配 Ghostty 的用户可见行为，同时保留 alan 的 native scrollback、selection、pane focus 和 surface readiness 策略。
+
+   备选方案是继续保留独立 `FocusClickAdapter`，并在 HostView 的每个 mouse override 里补条件。这个方案短期代码少，但会让 sequence state 分散在 AppKit overrides 和 pointer policy 之间，后续很容易再次出现 “down 被吞掉，drag 仍被当成 selection” 这类跨层 bug。
+
 ## Risks / Trade-offs
 
 - [Risk] 放宽 terminal input ownership 可能让部分 workspace 快捷键在 terminal focused 时不再触发。→ 保留显式 app-reserved Command shortcuts，并用测试覆盖 command input 和 terminal binding 的优先级。
@@ -64,6 +72,7 @@
 - [Risk] child exit 自动关闭 pane/tab 可能误关正在展示退出信息的任务。→ 只对 shell child exited 的 terminal lifecycle 信号生效；如果关闭会违反 final-pane 保护，则进入明确 exited state。
 - [Risk] 真实 Vim 行为很难完全自动化。→ 自动化覆盖 key routing contract，手工验证记录覆盖 `vim`/`nvim` 的实际交互。
 - [Risk] local event monitor 可能在多个 pane host 间重复观察事件。→ monitor 只在 hit-tested owning host 或 focused host 上消费事件，并在 teardown 时移除。
+- [Risk] input router 合并后如果把 AppKit delivery 也一起吞进去，会让测试和 Ghostty bridge 变重。→ router 只返回 policy decision，不直接调用 Ghostty；HostView 继续执行 delivery。
 
 ## Migration Plan
 

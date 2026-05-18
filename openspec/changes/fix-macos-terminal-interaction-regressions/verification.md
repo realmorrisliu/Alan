@@ -1,10 +1,12 @@
 ## Automated Verification
 
 - `bash clients/apple/scripts/test-terminal-surface-controller.sh`
+  - 覆盖 printable physical keys（包括 `a` 和 Vim command-mode `:`）先进入 AppKit text interpretation，让 IME composition 可以启动；HostView 最终仍应把 committed text 重新包成 Ghostty key event，而不是 programmatic text injection。
   - 覆盖 Escape、Tab、Control-W、Option-F 作为 terminal-owned key 的 routing。
   - 覆盖 `Command-T` 仍然走 native New Terminal Tab shortcut。
   - 覆盖 Ghostty-style `performKeyEquivalent`/`doCommand` timestamp redispatch：terminal binding 直接进入 terminal，`Control-/` 归一化为 `Control-_`，普通 Command/Control key equivalent 先让 AppKit responder chain 处理，再在同一 timestamp 重新派发时只送入 terminal 一次。
-  - 覆盖 active/key window 中点击未 focused terminal split pane 的 focus-only 行为，以及 matching left mouse drag / mouse up 的 suppression。
+  - 覆盖 active/key window 中点击未 focused terminal split pane 的 focus-only 行为，以及 matching left mouse down / drag / mouse up 的 suppression；即使 AppKit 在 local monitor 判定 focus-only 后仍派发 native mouseDown，也不会触发 terminal selection press。
+  - 覆盖 `AlanTerminalInputRouter` 是 focus-only primary button sequence、normal-buffer selection drag、alternate-screen/mouse-reporting delivery 和 surface readiness pointer policy 的单一 owner；`TerminalHostView` 只执行 router decision。
   - 覆盖 Backspace 在非组合态仍是 terminal-owned key，但 IME marked text 存在时会进入 `NSTextInputClient`/`interpretKeyEvents`，并抑制组合态 Backspace/Ctrl-H control 字符漏到 terminal。
   - 覆盖 surface handle 的 close request 会被 `TerminalSurfaceController` 转发给 shell owner。
 - `bash clients/apple/scripts/test-shell-runtime-metadata.sh`
@@ -15,11 +17,29 @@
 - `bash clients/apple/scripts/test-terminal-runtime-service.sh`
   - 覆盖 exited runtime 的 text delivery 使用 `terminal_child_exited` 失败码，且不会把 text 送到 surface。
 - `bash clients/apple/scripts/check-shell-contracts.sh`
-  - 覆盖 shell contract 静态检查，包括 `performKeyEquivalent`、`doCommand`、local AppKit event monitor 和 focus-only mouse-drag / mouse-up suppression 结构。
+  - 覆盖 shell contract 静态检查，包括 `performKeyEquivalent`、`doCommand`、local AppKit event monitor、`AlanTerminalInputRouter` 存在，以及 `TerminalHostView` 不再持有 focus-click suppression state。
+  - 覆盖 `TerminalHostView.keyDown` 不调用 programmatic text injection，物理键盘输入保持在 Ghostty key event path。
+  - 覆盖 focus-only mouse routing 使用 `terminalInputIsActive`，也就是 shell selection 和 AppKit first-responder 同时成立，而不是只看 raw first-responder state。
+  - 覆盖 GhosttyKit modulemap contract：prepared local artifacts 不能继续使用 `umbrella header "ghostty.h"`，避免 Clang 对 `ghostty/vt/*` internal headers 产生 umbrella-header warnings。
+- `openspec validate fix-macos-terminal-interaction-regressions --strict`
+  - Strict validation succeeded after adding the terminal input router requirements and build-test contract coverage.
 - `xcodebuild -project clients/apple/alan-macos.xcodeproj -scheme alan-macos -configuration Debug -destination platform=macOS -derivedDataPath /private/tmp/alan-derived-data build`
   - Debug build succeeded. The first build attempt without `-derivedDataPath` failed because the sandbox could not write `~/Library/Developer/Xcode/DerivedData`.
 - `xcodebuild -project clients/apple/alan-macos.xcodeproj -scheme alan-macos -configuration Debug -destination 'platform=macOS' -derivedDataPath /private/tmp/alan-macos-derived-data build`
   - Debug build succeeded after the close-surface callback fix and Ghostty AppKit responder-contract implementation. Xcode still printed CoreSimulator/log-permission noise, but the macOS target completed with `BUILD SUCCEEDED`.
+- `xcodebuild -project clients/apple/alan-macos.xcodeproj -scheme alan-macos -configuration Debug -destination platform=macOS -derivedDataPath /private/tmp/alan-xcode-derived-input-router build`
+  - Debug build succeeded after the terminal input router refactor. Xcode still printed the existing CoreSimulator/log-permission noise and GhosttyKit umbrella-header warnings, but the macOS target completed with `BUILD SUCCEEDED`.
+- `bash clients/apple/scripts/setup-local-ghosttykit.sh`
+  - Refreshed local GhosttyKit artifacts and normalized all generated module maps to `header "ghostty.h"`.
+- `xcodebuild -project clients/apple/alan-macos.xcodeproj -scheme alan-macos -configuration Debug -destination platform=macOS,arch=arm64 -derivedDataPath /private/tmp/alan-xcode-derived-ghosttykit-modulemap build`
+  - Debug build succeeded after the GhosttyKit modulemap normalization.
+  - The previous `GhosttyKit` umbrella-header warnings did not reappear.
+  - The narrower destination removed the previous "Using the first of multiple matching destinations" warning.
+  - Xcode still printed CoreSimulator/cache/log-permission warnings from the local toolchain environment; those are not emitted by alan source or GhosttyKit module maps.
+- `xcodebuild -project clients/apple/alan-macos.xcodeproj -scheme alan-macos -configuration Debug -destination generic/platform=macOS -derivedDataPath /private/tmp/alan-xcode-derived-generic-macos build`
+  - Debug build succeeded with a generic macOS destination, preserving the universal arm64/x86_64 build while avoiding the previous multiple matching destinations warning.
+  - The previous `GhosttyKit` umbrella-header warnings did not reappear.
+  - Xcode still printed CoreSimulator/cache/log-permission warnings from the local toolchain environment; simulator device support was not required for this macOS build.
 
 ## Manual Verification Pending
 

@@ -54,9 +54,55 @@ reject_active_shell_radius_drift() {
     fi
 }
 
+reject_ghosttykit_umbrella_modulemap() {
+    local modulemap
+    while IFS= read -r -d '' modulemap; do
+        if grep -q 'umbrella header "ghostty\.h"' "$modulemap"; then
+            printf 'error: GhosttyKit modulemap must use header "ghostty.h" instead of umbrella header "ghostty.h"\n' >&2
+            printf '       offending modulemap: %s\n' "$modulemap" >&2
+            exit 1
+        fi
+    done < <(find -L "$REPO_ROOT/clients/apple/GhosttyKit.xcframework" -name module.modulemap -type f -print0)
+}
+
+reject_keydown_programmatic_text_delivery() {
+    local file="$REPO_ROOT/clients/apple/alan-macos/TerminalHostView.swift"
+
+    if ! awk '
+        /override func keyDown\(with event: NSEvent\) \{/ {
+            in_keydown = 1
+            depth = 1
+            next
+        }
+
+        in_keydown {
+            if ($0 ~ /sendProgrammaticText[[:space:]]*\(/) {
+                print FILENAME ":" FNR ":" $0 > "/dev/stderr"
+                matched = 1
+            }
+
+            opens = gsub(/\{/, "{")
+            closes = gsub(/\}/, "}")
+            depth += opens - closes
+            if (depth <= 0) {
+                in_keydown = 0
+            }
+        }
+
+        END {
+            exit matched ? 1 : 0
+        }
+    ' "$file"; then
+        printf 'error: TerminalHostView.keyDown must not use programmatic text delivery\n' >&2
+        exit 1
+    fi
+}
+
 "$SCRIPT_DIR/setup-local-ghosttykit.sh" --check >/dev/null
 "$SCRIPT_DIR/check-architecture-maintainability.sh" >/dev/null
 reject_active_shell_radius_drift
+reject_ghosttykit_umbrella_modulemap
+reject_keydown_programmatic_text_delivery
 
 require_pattern \
     "clients/apple/alan-macos/TerminalRuntimeRegistry.swift" \
@@ -120,8 +166,18 @@ require_pattern \
 
 require_pattern \
     "clients/apple/alan-macos/TerminalSurfaceController.swift" \
+    "enum AlanTerminalTextCompositionPolicy" \
+    "terminal IME composing control-character policy must have an explicit owner"
+
+reject_pattern \
+    "clients/apple/alan-macos/TerminalSurfaceController.swift" \
     "final class AlanTerminalInputAdapter" \
-    "terminal keyboard and IME behavior must be normalized through an input adapter"
+    "terminal input routing must not keep a stale input adapter boundary"
+
+require_pattern \
+    "clients/apple/alan-macos/TerminalSurfaceController.swift" \
+    "final class AlanTerminalInputRouter" \
+    "terminal focus and pointer sequence policy must be owned by a single input router"
 
 require_pattern \
     "clients/apple/alan-macos/TerminalSurfaceController.swift" \
@@ -1080,13 +1136,58 @@ require_pattern \
 
 require_pattern \
     "clients/apple/alan-macos/TerminalHostView.swift" \
-    "consumeSuppressedLeftMouseUp" \
-    "terminal focus-only split clicks must suppress the matching mouse-up"
+    "private var terminalInputIsActive: Bool" \
+    "terminal focus-transfer routing must combine shell selection with AppKit first-responder state"
 
 require_pattern \
     "clients/apple/alan-macos/TerminalHostView.swift" \
-    "shouldSuppressLeftMouseDrag" \
-    "terminal focus-only split clicks must suppress matching mouse drags"
+    "terminal-input-trace\\.log" \
+    "terminal input trace logs must write to a stable file by default"
+
+require_pattern \
+    "clients/apple/alan-macos/TerminalHostView.swift" \
+    "ALAN_TERMINAL_INPUT_TRACE" \
+    "terminal input trace logs must be opt-in by environment"
+
+require_pattern \
+    "clients/apple/alan-macos/TerminalHostView.swift" \
+    "ALAN_TERMINAL_INPUT_TRACE_PATH" \
+    "terminal input trace logs must support a file path override"
+
+require_pattern \
+    "clients/apple/alan-macos/TerminalHostView.swift" \
+    "AlanTerminalInputTraceEnabled" \
+    "terminal input trace logs must be opt-in by user defaults"
+
+require_pattern \
+    "clients/apple/alan-macos/TerminalHostView.swift" \
+    "local-leftMouseDown" \
+    "terminal focus-click diagnostics must log local monitor routing"
+
+require_pattern \
+    "clients/apple/alan-macos/TerminalHostView.swift" \
+    "isFirstResponder: terminalInputIsActive" \
+    "focus-only mouse routing must use active terminal input, not raw first-responder state"
+
+require_pattern \
+    "clients/apple/scripts/test-terminal-surface-controller.swift" \
+    "verifiesTerminalInputRouterOwnsFocusOnlyPointerSequence" \
+    "surface controller tests must prove the terminal input router owns focus-only pointer sequences"
+
+reject_pattern \
+    "clients/apple/alan-macos/TerminalHostView.swift" \
+    "FocusClickAdapter|focusClickAdapter|consumeSuppressedLeftMouseUp|shouldSuppressLeftMouseDrag" \
+    "focus-only pointer sequence state must not live in TerminalHostView"
+
+reject_pattern \
+    "clients/apple/alan-macos/TerminalHostView.swift" \
+    "surfaceController\\.sendText" \
+    "physical terminal keyboard code must not use a generic text delivery path"
+
+require_pattern \
+    "clients/apple/alan-macos/GhosttyLiveHost.swift" \
+    "func sendProgrammaticText" \
+    "Ghostty text injection must be named as programmatic text, not physical keyboard input"
 
 require_pattern \
     "clients/apple/alan-macos/TerminalHostView.swift" \

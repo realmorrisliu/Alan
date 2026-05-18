@@ -321,7 +321,7 @@ protocol AlanGhosttyEventSurfaceHandle:
         _ keyEvent: ghostty_input_key_s,
         flags: UnsafeMutablePointer<ghostty_binding_flags_e>?
     ) -> Bool
-    func sendText(_ text: String)
+    func sendProgrammaticText(_ text: String)
     func sendPreedit(_ text: String?)
     func sendMousePosition(x: Double, y: Double, mods: ghostty_input_mods_e)
     func sendMouseButton(
@@ -513,7 +513,7 @@ final class AlanGhosttySurfaceHandle: AlanTerminalSurfaceHandle {
         }
 
 #if canImport(GhosttyKit)
-        liveHost.sendText(text)
+        liveHost.sendProgrammaticText(text)
         return recordDelivery(
             .accepted(
                 byteCount: text.lengthOfBytes(using: .utf8),
@@ -608,8 +608,8 @@ extension AlanGhosttySurfaceHandle: AlanGhosttyEventSurfaceHandle {
         liveHost.keyIsBinding(keyEvent, flags: flags)
     }
 
-    func sendText(_ text: String) {
-        liveHost.sendText(text)
+    func sendProgrammaticText(_ text: String) {
+        liveHost.sendProgrammaticText(text)
     }
 
     func sendPreedit(_ text: String?) {

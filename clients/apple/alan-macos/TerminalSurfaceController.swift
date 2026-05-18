@@ -214,29 +214,15 @@ struct AlanTerminalKeyInput: Equatable {
     let isRepeat: Bool
 }
 
-enum AlanTerminalInputRoutingDecision: Equatable {
+enum AlanTerminalKeyboardRoutingDecision: Equatable {
     case nativeCommand(String)
-    case terminalText(String)
+    case workspaceCommand(ShellWorkspaceCommand)
     case terminalKey
-    case ignored
+    case interpretTextInput
+    case drop
 }
 
-@MainActor
-final class AlanTerminalInputAdapter {
-    func shouldInterpretTextInput(
-        _ decision: AlanTerminalInputRoutingDecision,
-        hasMarkedText: Bool
-    ) -> Bool {
-        switch decision {
-        case .terminalText:
-            return true
-        case .terminalKey:
-            return hasMarkedText
-        case .nativeCommand, .ignored:
-            return false
-        }
-    }
-
+enum AlanTerminalTextCompositionPolicy {
     static func shouldSuppressComposingControlInput(
         _ text: String?,
         composing: Bool
@@ -249,94 +235,6 @@ final class AlanTerminalInputAdapter {
         }
         return scalar.value < 0x20 || scalar.value == 0x7F
     }
-
-    func routeWorkspaceCommand(_ input: AlanTerminalKeyInput) -> ShellWorkspaceCommand? {
-        guard input.phase == .down, !input.isRepeat else { return nil }
-
-        let characters = input.characters?.lowercased()
-        switch input.modifiers {
-        case [.command]:
-            switch characters {
-            case "d":
-                return .splitRight
-            case "t":
-                return .newTerminalTab
-            case "w":
-                return .closeTab
-            default:
-                return nil
-            }
-        case [.command, .shift]:
-            switch characters {
-            case "d":
-                return .splitDown
-            case "w":
-                return .closePane
-            default:
-                return nil
-            }
-        case [.command, .option]:
-            switch characters {
-            case "d":
-                return .splitLeft
-            case "t":
-                return .newAlanTab
-            case "=" where input.keyCode == 0x18:
-                return .equalizeSplits
-            default:
-                return nil
-            }
-        case [.command, .option, .shift]:
-            return characters == "d" ? .splitUp : nil
-        case [.command, .control]:
-            switch input.keyCode {
-            case 0x7B:
-                return .focusLeft
-            case 0x7C:
-                return .focusRight
-            case 0x7E:
-                return .focusUp
-            case 0x7D:
-                return .focusDown
-            default:
-                return nil
-            }
-        default:
-            return nil
-        }
-    }
-
-    func routeKey(_ input: AlanTerminalKeyInput) -> AlanTerminalInputRoutingDecision {
-        if input.phase == .down,
-           input.modifiers == .command,
-           input.characters?.lowercased() == "q"
-        {
-            return .nativeCommand("quit")
-        }
-
-        if input.phase == .down,
-           input.modifiers == .command,
-           input.characters?.lowercased() == "f"
-        {
-            return .nativeCommand("find")
-        }
-
-        guard input.phase == .down else { return .terminalKey }
-        guard input.modifiers.subtracting([.shift]).isEmpty else {
-            return .terminalKey
-        }
-        guard let characters = input.characters, !characters.isEmpty else { return .terminalKey }
-        if characters.count == 1, let scalar = characters.unicodeScalars.first {
-            if scalar.value < 0x20 || scalar.value == 0x7F {
-                return .terminalKey
-            }
-            if scalar.value >= 0xF700 && scalar.value <= 0xF8FF {
-                return .terminalKey
-            }
-        }
-        return .terminalText(characters)
-    }
-
 }
 
 struct AlanTerminalKeyEquivalentInput: Equatable {
@@ -426,49 +324,6 @@ enum AlanTerminalLeftMouseDownRoutingDecision: Equatable {
 }
 
 @MainActor
-final class AlanTerminalFocusClickAdapter {
-    private var suppressNextLeftMouseUp = false
-
-    func routeLeftMouseDown(
-        hitOwnsTerminal: Bool,
-        commandSurfaceVisible: Bool,
-        isFirstResponder: Bool,
-        appIsActive: Bool,
-        windowIsKey: Bool
-    ) -> AlanTerminalLeftMouseDownRoutingDecision {
-        suppressNextLeftMouseUp = false
-
-        guard hitOwnsTerminal, !commandSurfaceVisible else {
-            return .ignored
-        }
-
-        guard !isFirstResponder else {
-            return .deliverToTerminal
-        }
-
-        if appIsActive && windowIsKey {
-            suppressNextLeftMouseUp = true
-            return .focusOnly
-        }
-
-        return .focusAndDeliver
-    }
-
-    func consumeSuppressedLeftMouseUp() -> Bool {
-        guard suppressNextLeftMouseUp else { return false }
-        suppressNextLeftMouseUp = false
-        return true
-    }
-
-    func shouldSuppressLeftMouseDrag() -> Bool {
-        suppressNextLeftMouseUp
-    }
-
-    func resetSuppression() {
-        suppressNextLeftMouseUp = false
-    }
-}
-
 enum AlanTerminalPointerPhase: Equatable {
     case entered
     case moved
@@ -563,6 +418,7 @@ enum AlanTerminalPointerRoutingDecision: Equatable {
     case terminalMouse(AlanTerminalPointerOperation)
     case terminalSelection(AlanTerminalPointerOperation)
     case terminalHover(AlanTerminalPointerOperation)
+    case consumed
     case ignored
 }
 
@@ -644,6 +500,176 @@ final class AlanTerminalPointerAdapter {
         case .alternateScreen, .mouseReporting:
             return .terminalMouse(operation)
         }
+    }
+}
+
+@MainActor
+final class AlanTerminalInputRouter {
+    private enum PrimaryButtonSequence {
+        case idle
+        case suppressingFocusTransfer
+    }
+
+    private let pointerAdapter = AlanTerminalPointerAdapter()
+    private var primaryButtonSequence = PrimaryButtonSequence.idle
+
+    func reset() {
+        primaryButtonSequence = .idle
+    }
+
+    func routeLeftMouseDown(
+        hitOwnsTerminal: Bool,
+        commandSurfaceVisible: Bool,
+        isFirstResponder: Bool,
+        appIsActive: Bool,
+        windowIsKey: Bool
+    ) -> AlanTerminalLeftMouseDownRoutingDecision {
+        primaryButtonSequence = .idle
+
+        guard hitOwnsTerminal, !commandSurfaceVisible else {
+            return .ignored
+        }
+
+        guard !isFirstResponder else {
+            return .deliverToTerminal
+        }
+
+        if appIsActive && windowIsKey {
+            primaryButtonSequence = .suppressingFocusTransfer
+            return .focusOnly
+        }
+
+        return .focusAndDeliver
+    }
+
+    func routeKeyboard(
+        _ input: AlanTerminalKeyInput,
+        hasMarkedText: Bool
+    ) -> AlanTerminalKeyboardRoutingDecision {
+        if let command = routeWorkspaceCommand(input) {
+            return .workspaceCommand(command)
+        }
+
+        if input.phase == .down,
+           input.modifiers == .command,
+           input.characters?.lowercased() == "q"
+        {
+            return .nativeCommand("quit")
+        }
+
+        if input.phase == .down,
+           input.modifiers == .command,
+           input.characters?.lowercased() == "f"
+        {
+            return .nativeCommand("find")
+        }
+
+        guard input.phase == .down else { return .terminalKey }
+
+        if hasMarkedText {
+            return .interpretTextInput
+        }
+
+        if shouldInterpretTextInput(input) {
+            return .interpretTextInput
+        }
+
+        return .terminalKey
+    }
+
+    private func shouldInterpretTextInput(_ input: AlanTerminalKeyInput) -> Bool {
+        guard input.modifiers.subtracting([.shift]).isEmpty else { return false }
+        guard let characters = input.characters, !characters.isEmpty else { return false }
+        if characters.count == 1, let scalar = characters.unicodeScalars.first {
+            if scalar.value < 0x20 || scalar.value == 0x7F {
+                return false
+            }
+            if scalar.value >= 0xF700 && scalar.value <= 0xF8FF {
+                return false
+            }
+        }
+        return true
+    }
+
+    func routeWorkspaceCommand(_ input: AlanTerminalKeyInput) -> ShellWorkspaceCommand? {
+        guard input.phase == .down, !input.isRepeat else { return nil }
+
+        let characters = input.characters?.lowercased()
+        switch input.modifiers {
+        case [.command]:
+            switch characters {
+            case "d":
+                return .splitRight
+            case "t":
+                return .newTerminalTab
+            case "w":
+                return .closeTab
+            default:
+                return nil
+            }
+        case [.command, .shift]:
+            switch characters {
+            case "d":
+                return .splitDown
+            case "w":
+                return .closePane
+            default:
+                return nil
+            }
+        case [.command, .option]:
+            switch characters {
+            case "d":
+                return .splitLeft
+            case "t":
+                return .newAlanTab
+            case "=" where input.keyCode == 0x18:
+                return .equalizeSplits
+            default:
+                return nil
+            }
+        case [.command, .option, .shift]:
+            return characters == "d" ? .splitUp : nil
+        case [.command, .control]:
+            switch input.keyCode {
+            case 0x7B:
+                return .focusLeft
+            case 0x7C:
+                return .focusRight
+            case 0x7E:
+                return .focusUp
+            case 0x7D:
+                return .focusDown
+            default:
+                return nil
+            }
+        default:
+            return nil
+        }
+    }
+
+    func routePointer(
+        _ input: AlanTerminalPointerInput,
+        terminalMode: AlanTerminalMode,
+        surfaceReady: Bool
+    ) -> AlanTerminalPointerRoutingDecision {
+        if shouldConsumePrimaryFocusTransfer(input) {
+            if input.phase == .buttonUp {
+                primaryButtonSequence = .idle
+            }
+            return .consumed
+        }
+
+        return pointerAdapter.routePointer(
+            input,
+            terminalMode: terminalMode,
+            surfaceReady: surfaceReady
+        )
+    }
+
+    private func shouldConsumePrimaryFocusTransfer(_ input: AlanTerminalPointerInput) -> Bool {
+        guard primaryButtonSequence == .suppressingFocusTransfer else { return false }
+        guard input.normalizedButton == .primary else { return false }
+        return input.phase == .buttonDown || input.phase == .drag || input.phase == .buttonUp
     }
 }
 
@@ -928,8 +954,7 @@ final class AlanTerminalMetadataAdapter {
 
 @MainActor
 final class AlanTerminalSurfaceController {
-    let inputAdapter = AlanTerminalInputAdapter()
-    let pointerAdapter = AlanTerminalPointerAdapter()
+    let inputRouter = AlanTerminalInputRouter()
     let scrollbackAdapter = AlanTerminalScrollbackAdapter()
     let nativeScrollViewAdapter = AlanTerminalNativeScrollViewAdapter()
     let metadataAdapter = AlanTerminalMetadataAdapter()
@@ -1121,11 +1146,38 @@ final class AlanTerminalSurfaceController {
     }
 
     func routePointer(_ input: AlanTerminalPointerInput) -> AlanTerminalPointerRoutingDecision {
-        pointerAdapter.routePointer(
+        inputRouter.routePointer(
             input,
             terminalMode: scrollbackAdapter.state.metrics.mode,
             surfaceReady: isSurfaceReady
         )
+    }
+
+    func routeKeyboard(
+        _ input: AlanTerminalKeyInput,
+        hasMarkedText: Bool
+    ) -> AlanTerminalKeyboardRoutingDecision {
+        inputRouter.routeKeyboard(input, hasMarkedText: hasMarkedText)
+    }
+
+    func routeLeftMouseDown(
+        hitOwnsTerminal: Bool,
+        commandSurfaceVisible: Bool,
+        isFirstResponder: Bool,
+        appIsActive: Bool,
+        windowIsKey: Bool
+    ) -> AlanTerminalLeftMouseDownRoutingDecision {
+        inputRouter.routeLeftMouseDown(
+            hitOwnsTerminal: hitOwnsTerminal,
+            commandSurfaceVisible: commandSurfaceVisible,
+            isFirstResponder: isFirstResponder,
+            appIsActive: appIsActive,
+            windowIsKey: windowIsKey
+        )
+    }
+
+    func resetInputRouting() {
+        inputRouter.reset()
     }
 
     @discardableResult
@@ -1234,6 +1286,7 @@ final class AlanTerminalSurfaceController {
         let previousReadonly = readonly
         let previousSecureInput = secureInput
         scrollbackAdapter.reset()
+        inputRouter.reset()
         nativeScrollRowHeight = 1
         latestRenderer = .placeholder
         latestMetadata = .placeholder
@@ -1297,8 +1350,8 @@ extension AlanTerminalSurfaceController {
         ghosttySurfaceHandle?.keyIsBinding(keyEvent, flags: flags) ?? false
     }
 
-    func sendText(_ text: String) {
-        ghosttySurfaceHandle?.sendText(text)
+    func sendProgrammaticText(_ text: String) {
+        ghosttySurfaceHandle?.sendProgrammaticText(text)
     }
 
     func sendPreedit(_ text: String?) {
