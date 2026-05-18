@@ -113,7 +113,7 @@ final class AlanGhosttyLiveHost: NSObject {
         let handled = ghostty_surface_key(surface, keyEvent)
         ghostty_surface_refresh(surface)
         if handled, isCommandSubmissionKey(keyEvent) {
-            markForegroundCommandStarted(commandCount: 1)
+            markForegroundCommandStarted(commandCount: 1, queuesWhileActive: false)
         }
         return handled
     }
@@ -127,7 +127,10 @@ final class AlanGhosttyLiveHost: NSObject {
         guard let surface, !text.isEmpty else { return }
         let isCommandSubmission = isCommandSubmissionText(text)
         if isCommandSubmission {
-            markForegroundCommandStarted(commandCount: commandSubmissionCount(in: text))
+            markForegroundCommandStarted(
+                commandCount: commandSubmissionCount(in: text),
+                queuesWhileActive: true
+            )
         }
         text.withCString { cString in
             ghostty_surface_text(surface, cString, UInt(strlen(cString)))
@@ -962,10 +965,13 @@ final class AlanGhosttyLiveHost: NSObject {
         return count
     }
 
-    private func markForegroundCommandStarted(commandCount: Int) {
+    private func markForegroundCommandStarted(commandCount: Int, queuesWhileActive: Bool) {
+        let commandCount = max(commandCount, 1)
         if foregroundCommandStartedAt == nil {
             foregroundCommandStartedAt = .now
-            queuedForegroundCommandSubmissions = max(commandCount, 1)
+            queuedForegroundCommandSubmissions = commandCount
+        } else if queuesWhileActive {
+            queuedForegroundCommandSubmissions += commandCount
         }
         updateMetadata(attention: .active, activeTaskState: .foregroundCommand)
     }

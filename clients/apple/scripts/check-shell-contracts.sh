@@ -330,6 +330,16 @@ require_pattern \
 
 require_pattern \
     "clients/apple/alan-macos/GhosttyLiveHost.swift" \
+    "queuesWhileActive: true" \
+    "text-delivered queued commands must extend foreground command duration tracking while another command is active"
+
+require_pattern \
+    "clients/apple/alan-macos/GhosttyLiveHost.swift" \
+    "queuedForegroundCommandSubmissions \\+= commandCount" \
+    "foreground command duration tracking must preserve split-submission queued command counts"
+
+require_pattern \
+    "clients/apple/alan-macos/GhosttyLiveHost.swift" \
     "private var queuedForegroundCommandSubmissions = 0" \
     "foreground command duration tracking must retain queued pasted command submissions"
 
