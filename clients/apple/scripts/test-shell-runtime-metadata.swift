@@ -43,7 +43,7 @@ private enum ShellRuntimeMetadataTests {
         verifiesFocusedCommandFailureDemotesFromSidebarProjection()
         verifiesCommandFailureAcknowledgementSticksAfterFocus()
         verifiesActivityFreshnessPolicies()
-        verifiesStaleActivityDoesNotPromotePaneAttention()
+        verifiesActivityAttentionIsReadTimeOnly()
         verifiesPaneTitleActivityAccessoryLabel()
         verifiesActivityNotificationPolicyIsLowNoise()
         verifiesControllerRoutesActivityNotificationsOnce()
@@ -1214,7 +1214,7 @@ private enum ShellRuntimeMetadataTests {
         )
     }
 
-    private static func verifiesStaleActivityDoesNotPromotePaneAttention() {
+    private static func verifiesActivityAttentionIsReadTimeOnly() {
         let projection = ShellPaneProjectionService()
         let now = Date(timeIntervalSince1970: 1_779_008_400)
         let failure = activity(
@@ -1226,23 +1226,62 @@ private enum ShellRuntimeMetadataTests {
             staleAt: "2026-05-17T09:00:30Z"
         )
 
-        let freshAttention = projection.projectedAttention(
+        let persistedAttention = projection.projectedAttention(
             metadataAttention: .idle,
             processExited: false,
-            binding: nil,
-            activity: failure,
-            now: now.addingTimeInterval(10)
+            binding: nil
         )
-        let staleAttention = projection.projectedAttention(
-            metadataAttention: .idle,
-            processExited: false,
-            binding: nil,
-            activity: failure,
-            now: now.addingTimeInterval(31)
+        let freshPane = pane(
+            context: context(
+                processState: "running",
+                rendererHealth: "ready",
+                surfaceReadiness: "ready",
+                lastCommandExitCode: nil
+            ),
+            viewport: nil,
+            attention: persistedAttention,
+            activity: failure
+        )
+        let legacyStalePane = pane(
+            context: context(
+                processState: "running",
+                rendererHealth: "ready",
+                surfaceReadiness: "ready",
+                lastCommandExitCode: nil
+            ),
+            viewport: nil,
+            attention: .notable,
+            activity: failure
+        )
+        let rendererFailedPane = pane(
+            context: context(
+                processState: "running",
+                rendererHealth: "failed",
+                surfaceReadiness: "renderer_failed",
+                lastCommandExitCode: nil
+            ),
+            viewport: nil,
+            attention: .notable,
+            activity: failure
         )
 
-        expect(freshAttention == .notable, "fresh failed activity may promote pane attention")
-        expect(staleAttention == .idle, "stale failed activity must not keep pane attention notable")
+        expect(persistedAttention == .idle, "activity attention must not be persisted into pane attention")
+        expect(
+            shellEffectiveAttention(for: freshPane, now: now.addingTimeInterval(10)) == .notable,
+            "fresh failed activity may overlay pane attention at read time"
+        )
+        expect(
+            shellEffectiveAttention(for: freshPane, now: now.addingTimeInterval(31)) == .idle,
+            "stale failed activity must not overlay pane attention"
+        )
+        expect(
+            shellEffectiveAttention(for: legacyStalePane, now: now.addingTimeInterval(31)) == .idle,
+            "legacy stale activity-derived pane attention must be ignored at read time"
+        )
+        expect(
+            shellEffectiveAttention(for: rendererFailedPane, now: now.addingTimeInterval(31)) == .notable,
+            "stale activity must not suppress persistent renderer attention"
+        )
     }
 
     private static func verifiesPaneTitleActivityAccessoryLabel() {
@@ -1444,8 +1483,14 @@ private enum ShellRuntimeMetadataTests {
             "controller notification must preserve the routed activity kind"
         )
         expect(
-            controller.shellState.pane(paneID: backgroundPane.paneID)?.attention == .awaitingUser,
-            "notification-worthy agent input must mark its pane awaiting user"
+            controller.shellState.pane(paneID: backgroundPane.paneID)?.attention == .idle,
+            "notification-worthy activity must not persist into pane attention"
+        )
+        expect(
+            controller.shellState.pane(paneID: backgroundPane.paneID).map {
+                shellEffectiveAttention(for: $0, now: Date())
+            } == .awaitingUser,
+            "notification-worthy agent input must overlay its pane awaiting user at read time"
         )
     }
 

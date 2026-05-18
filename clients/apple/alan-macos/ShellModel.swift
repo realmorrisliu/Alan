@@ -58,7 +58,7 @@ func shellUserFacingSummary(_ summary: String?) -> String? {
     return trimmed
 }
 
-func shellTerminalStatusSummary(for pane: ShellPane) -> String? {
+func shellTerminalStatusSummary(for pane: ShellPane, now: Date? = nil) -> String? {
     if pane.context?.processState == "exited"
         || pane.context?.surfaceReadiness == "child_exited"
     {
@@ -85,7 +85,7 @@ func shellTerminalStatusSummary(for pane: ShellPane) -> String? {
         return "Starting"
     }
 
-    switch pane.attention {
+    switch shellEffectiveAttention(for: pane, now: now) {
     case .awaitingUser:
         guard let rawSummary = pane.viewport?.summary else { return "Needs attention" }
         return shellUserFacingSummary(rawSummary)
@@ -269,6 +269,65 @@ func shellActivityAttention(for activity: TerminalActivitySnapshot) -> ShellAtte
     }
 }
 
+func shellEffectiveAttention(for pane: ShellPane, now: Date? = nil) -> ShellAttentionState {
+    let storedAttention = pane.attention
+    guard let activity = pane.activity else { return storedAttention }
+
+    if let now,
+       !activity.isFresh(at: now),
+       let activityAttention = shellActivityAttention(for: activity),
+       activityAttention == storedAttention
+    {
+        return shellPersistentAttention(for: pane)
+    }
+
+    if let now, !activity.isFresh(at: now) {
+        return storedAttention
+    }
+
+    guard let activityAttention = shellActivityAttention(for: activity),
+          shellAttentionRank(for: activityAttention) > shellAttentionRank(for: storedAttention)
+    else {
+        return storedAttention
+    }
+
+    return activityAttention
+}
+
+private func shellPersistentAttention(for pane: ShellPane) -> ShellAttentionState {
+    if pane.alanBinding?.pendingYield == true {
+        return .awaitingUser
+    }
+
+    if pane.context?.processState == "exited"
+        || pane.context?.surfaceReadiness == "child_exited"
+    {
+        return .awaitingUser
+    }
+
+    if pane.context?.rendererHealth == "failed"
+        || pane.context?.rendererPhase == "failed"
+        || pane.context?.surfaceReadiness == "renderer_failed"
+    {
+        return .notable
+    }
+
+    return .idle
+}
+
+private func shellAttentionRank(for attention: ShellAttentionState) -> Int {
+    switch attention {
+    case .idle:
+        return 0
+    case .active:
+        return 1
+    case .notable:
+        return 2
+    case .awaitingUser:
+        return 3
+    }
+}
+
 func shellActivityNotificationRoute(
     for activity: TerminalActivitySnapshot,
     pane: ShellPane,
@@ -376,7 +435,7 @@ func shellSidebarTabProjection(
         )
     }
 
-    let fallback = primaryPane.flatMap(shellTerminalStatusSummary(for:))
+    let fallback = primaryPane.flatMap { shellTerminalStatusSummary(for: $0, now: now) }
         ?? primaryPane.flatMap { shellSidebarContextLine(for: $0, title: title) }
         ?? shellFallbackTitle(for: tab.kind)
     return ShellSidebarTabProjection(

@@ -606,20 +606,23 @@ enum AlanShellLocalCommandExecutor {
 }
 
 private func attentionInboxItems(from state: ShellStateSnapshot) -> [AlanShellAttentionInboxItem] {
-    state.panes
+    let now = Date()
+    return state.panes
+        .map { (pane: $0, attention: shellEffectiveAttention(for: $0, now: now)) }
         .filter { $0.attention != .idle }
         .sorted {
             attentionRank(for: $0.attention) == attentionRank(for: $1.attention)
-                ? $0.paneID < $1.paneID
+                ? $0.pane.paneID < $1.pane.paneID
                 : attentionRank(for: $0.attention) > attentionRank(for: $1.attention)
         }
-        .map { pane in
-            AlanShellAttentionInboxItem(
+        .map { item in
+            let pane = item.pane
+            return AlanShellAttentionInboxItem(
                 itemID: "attn_\(pane.paneID)",
                 spaceID: pane.spaceID,
                 tabID: pane.tabID,
                 paneID: pane.paneID,
-                attention: pane.attention,
+                attention: item.attention,
                 summary: pane.viewport?.summary
                     ?? pane.alanBinding.map { $0.pendingYield ? "alan is waiting for user input" : "alan run status: \($0.runStatus)" }
                     ?? pane.process?.program
@@ -634,10 +637,12 @@ private func routingCandidates(
 ) -> [AlanShellRoutingCandidate] {
     let preferredPane = preferredPaneID.flatMap(state.pane(paneID:))
     let focusedPane = state.focusedPaneID.flatMap(state.pane(paneID:))
+    let now = Date()
 
     return state.panes.map { pane in
         var score = 0.0
         var reasons: [String] = []
+        let attention = shellEffectiveAttention(for: pane, now: now)
 
         if pane.paneID == preferredPaneID {
             score += 0.4
@@ -647,10 +652,10 @@ private func routingCandidates(
             score += 0.3
             reasons.append("focused")
         }
-        if pane.attention == .awaitingUser {
+        if attention == .awaitingUser {
             score += 0.25
             reasons.append("attention:awaiting_user")
-        } else if pane.attention == .notable {
+        } else if attention == .notable {
             score += 0.12
             reasons.append("attention:notable")
         }

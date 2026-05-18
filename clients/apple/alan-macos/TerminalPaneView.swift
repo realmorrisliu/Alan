@@ -789,7 +789,7 @@ private struct ShellPaneTitleBarView: View {
             )
         }
 
-        if let status = shellTerminalStatusSummary(for: pane) {
+        if let status = shellTerminalStatusSummary(for: pane, now: activityFreshnessNow) {
             items.append(
                 ShellPaneTitleBarAccessory(
                     id: "status",
@@ -879,7 +879,8 @@ private struct ShellPaneTitleBarView: View {
         {
             return "exclamationmark.triangle"
         }
-        if pane.attention == .awaitingUser || pane.attention == .notable {
+        let attention = shellEffectiveAttention(for: pane, now: activityFreshnessNow)
+        if attention == .awaitingUser || attention == .notable {
             return "bell.badge"
         }
         return "info.circle"
@@ -889,7 +890,7 @@ private struct ShellPaneTitleBarView: View {
         if pane.context?.rendererHealth == "failed"
             || pane.context?.rendererPhase == "failed"
             || pane.context?.surfaceReadiness == "renderer_failed"
-            || pane.attention == .awaitingUser
+            || shellEffectiveAttention(for: pane, now: activityFreshnessNow) == .awaitingUser
         {
             return ShellPalette.attention
         }
@@ -897,7 +898,7 @@ private struct ShellPaneTitleBarView: View {
     }
 
     private func statusTitle(_ status: String) -> String? {
-        if pane.attention == .notable,
+        if shellEffectiveAttention(for: pane, now: activityFreshnessNow) == .notable,
            status == "Terminal bell"
         {
             return nil

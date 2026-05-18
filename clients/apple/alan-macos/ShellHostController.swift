@@ -335,16 +335,18 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     }
 
     var attentionItems: [ShellAttentionItem] {
-        shellState.panes
+        let now = Date()
+        return shellState.panes
             .compactMap { pane in
-                guard pane.attention != .idle else { return nil }
+                let attention = shellEffectiveAttention(for: pane, now: now)
+                guard attention != .idle else { return nil }
                 return ShellAttentionItem(
                     paneID: pane.paneID,
                     spaceID: pane.spaceID,
                     tabID: pane.tabID,
                     title: pane.viewport?.title ?? pane.process?.program ?? "Pane",
                     summary: pane.viewport?.summary ?? "Activity detected",
-                    attention: pane.attention
+                    attention: attention
                 )
             }
             .sorted {
@@ -856,8 +858,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
                         metadataAttention: runtime.paneMetadata.attention,
                         processExited: runtimeProcessExited,
                         binding: projectedBinding,
-                        surfaceState: runtime.surfaceState,
-                        activity: projectedActivity
+                        surfaceState: runtime.surfaceState
                     ),
                     context: projectedContext,
                     viewport: viewport,
@@ -929,8 +930,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
                     metadataAttention: metadata.attention,
                     processExited: metadataProcessExited,
                     binding: projectedBinding,
-                    surfaceState: runtime.surfaceState,
-                    activity: projectedActivity
+                    surfaceState: runtime.surfaceState
                 ),
                 context: projectedContext,
                 viewport: viewport,
@@ -1664,8 +1664,9 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     }
 
     private func strongestAttention(in panes: [ShellPane]) -> ShellAttentionState {
-        panes
-            .map(\.attention)
+        let now = Date()
+        return panes
+            .map { shellEffectiveAttention(for: $0, now: now) }
             .max(by: { Self.attentionRank(for: $0) < Self.attentionRank(for: $1) })
             ?? .idle
     }
