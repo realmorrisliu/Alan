@@ -27,8 +27,8 @@
               }
             }
           ],
-          "image-name" : "Group1.svg",
-          "name" : "Group 1",
+          "image-name" : "alan-logo-mask.svg",
+          "name" : "Alan Logo Mask",
           "position" : {
             "scale" : 1.1,
             "translation-in-points" : [
@@ -53,8 +53,8 @@
         {
           "blend-mode" : "normal",
           "hidden" : false,
-          "image-name" : "alan_logo_2.svg",
-          "name" : "alan_logo 2",
+          "image-name" : "alan-logo-foreground.svg",
+          "name" : "Alan Logo Foreground",
           "opacity-specializations" : [
             {
               "value" : 1
