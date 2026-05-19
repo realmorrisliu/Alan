@@ -1,5 +1,13 @@
-## ADDED Requirements
+# macos-terminal-activity-semantics Specification
 
+## Purpose
+
+Define how Alan normalizes terminal progress, command completion, bell
+attention, Alan session activity, and supported CLI coding-agent lifecycle state
+into pane-scoped activity that can drive terminal-first UI, accessibility, and
+low-noise notifications.
+
+## Requirements
 ### Requirement: Terminal Activity Is Normalized
 Alan SHALL normalize terminal progress, foreground command state, command
 completion, bell attention, Alan session activity, and supported CLI
@@ -195,86 +203,3 @@ sidebar tab rows.
   that a pane title accessory would show
 - **THEN** Alan may suppress the redundant context accessory while preserving
   branch, process, or activity accessories that add distinct information
-
-### Requirement: Semantic Command Boundaries Are Pane Scoped
-Alan SHALL model shell prompt marks, command start, command end, command text,
-output range, exit status, and timestamps as semantic metadata owned by the
-terminal pane when those signals are available.
-
-#### Scenario: Shell integration reports command boundary
-- **WHEN** shell integration or terminal protocol events identify a command
-  start and command end
-- **THEN** Alan records the command boundary and output range for the owning
-  pane without changing terminal rendering or scrollback ownership
-
-#### Scenario: Semantic data is unavailable
-- **WHEN** prompt marks or command boundaries are unavailable because of shell,
-  tmux, ssh, or application mode limitations
-- **THEN** Alan keeps normal terminal behavior and disables semantic-only
-  actions instead of guessing output ranges from screen text
-
-### Requirement: Semantic Terminal Actions Are Focused And Reversible
-Alan SHALL expose prompt navigation, copy-last-command-output, and
-command-output search or browse actions through pane-scoped command paths that
-do not mutate terminal process state.
-
-#### Scenario: User jumps between prompts
-- **WHEN** semantic prompt marks exist for the focused pane and the user invokes
-  previous or next prompt
-- **THEN** Alan scrolls the pane viewport to the target prompt without changing
-  shell focus, split layout, or command history
-
-#### Scenario: User copies last command output
-- **WHEN** a focused pane has a known last command output range and the user
-  invokes copy last output
-- **THEN** Alan copies that output to the system pasteboard without sending text
-  into the terminal application
-
-#### Scenario: User searches command output
-- **WHEN** a focused pane has command output ranges and the user invokes
-  command-output search or browse
-- **THEN** Alan scopes the interaction to that pane and returns focus to the
-  terminal after dismissal
-
-#### Scenario: Command-aware actions are command-menu actions
-- **WHEN** a focused pane has reliable command boundary metadata
-- **THEN** Alan exposes command-aware prompt navigation, copy-last-output, and
-  search-last-output actions through `Go to or Command...` without adding
-  persistent terminal chrome
-
-#### Scenario: Command boundaries are unavailable
-- **WHEN** a focused pane has no reliable command boundary metadata
-- **THEN** Alan falls back to ordinary scrollback search, selection copy, and
-  normal scrollback navigation rather than guessing command ranges from screen
-  text
-
-#### Scenario: No command browser in MVP
-- **WHEN** semantic terminal actions are available
-- **THEN** Alan does not render a command browser, visible command blocks, or
-  persistent command-output segmentation for the MVP
-
-### Requirement: Quick Terminal Uses Normal Terminal Runtime Ownership
-Alan SHALL implement quick terminal behavior as a detached global macOS Peak
-presentation over the existing shell model and terminal runtime service, not as
-an independent terminal runtime owner.
-
-#### Scenario: Quick terminal is summoned
-- **WHEN** the user invokes the quick terminal command
-- **THEN** Alan presents the single global quick-terminal instance using a
-  normal pane runtime, restores its scrollback and process state when available,
-  and focuses terminal input
-
-#### Scenario: Quick terminal is dismissed
-- **WHEN** the user dismisses the quick terminal without closing its terminal
-- **THEN** Alan hides the presentation, preserves the terminal runtime state,
-  and does not mutate normal tab or split runtime ownership
-
-#### Scenario: Quick terminal is closed
-- **WHEN** the user explicitly closes the quick terminal's terminal session
-- **THEN** Alan tears down the underlying pane runtime through the same lifecycle
-  path used by regular terminal panes
-
-#### Scenario: Quick terminal is promoted
-- **WHEN** the user promotes the quick terminal into an Alan space
-- **THEN** Alan transfers ownership of the existing pane runtime into a normal
-  tab in that Space and clears the quick-terminal slot

@@ -2,10 +2,10 @@
 
 Alan's macOS terminal already projects title, cwd, attention, active task, and
 surface state into pane metadata, but advanced terminal workflows now need a
-durable contract for richer activity, semantic command boundaries, and a global
-quick terminal Peak surface. Without a draft owner, Ghostty-style progress,
-Warp-style agent status, prompt navigation, command-output browsing, and
-summonable quick-terminal work can drift into unrelated UI fixes.
+durable contract for richer activity and terminal-agent attention. Without a
+focused owner, Ghostty-style progress, command completion, CLI coding-agent
+status, sidebar tab activity, and notification policy can drift into unrelated
+UI fixes.
 
 ## What Changes
 
@@ -18,13 +18,8 @@ summonable quick-terminal work can drift into unrelated UI fixes.
 - Redesign sidebar tab rows as richer attention/identity rows that show a tab
   title plus either the highest-priority tab activity or a worktree/branch
   context fallback, with hover-only close controls.
-- Add semantic terminal requirements for prompt/command boundaries, current
-  command/output ranges, prompt navigation, copy-last-output, and search/browse
-  flows that build on shell integration and terminal surface state.
-- Add a quick terminal draft contract for a detached global macOS Peak window
-  that can be summoned from any macOS Space, reused as a single instance, and
-  promoted into Alan spaces/tabs without creating a second terminal runtime
-  model.
+- Defer semantic command/output actions to `add-semantic-terminal-actions`.
+- Defer global Peak quick-terminal behavior to `add-quick-terminal-peak`.
 - Keep full Warp-style blocks, Agent View, code review panels, and IDE-like file
   sidebars out of this change.
 
@@ -33,23 +28,17 @@ summonable quick-terminal work can drift into unrelated UI fixes.
 ### New Capabilities
 
 - `macos-terminal-activity-semantics`: Owns terminal activity state, CLI
-  coding-agent status ingestion, semantic command boundaries, prompt navigation,
-  command-output actions, and quick terminal behavior.
+  coding-agent status ingestion, activity freshness, priority, sidebar
+  projection, pane-title projection, and notification behavior.
 
 ### Modified Capabilities
 
 - `macos-terminal-runtime-foundation`: Extends runtime metadata projection from
-  title/cwd/attention/readiness into structured activity, command, and agent
+  title/cwd/attention/readiness into structured activity and agent
   state keyed by stable pane identity.
-- `macos-terminal-surface-parity`: Extends terminal surface parity from
-  scrollback/search/clipboard into semantic command-output browsing and
-  prompt-scoped actions.
 - `macos-shell-ui-ux-conformance`: Adds UI constraints for lightweight activity
-  indicators, progress display, agent status, notification surfaces, semantic
-  terminal controls, and quick terminal presentation.
-- `macos-shell-workspace-interactions`: Adds quick terminal global
-  summon/dismiss, focus restoration, single-instance lifecycle, promotion into
-  tabs/spaces, and command ownership semantics.
+  indicators, progress display, agent status, notification surfaces, and
+  sidebar tab activity rows.
 
 ## Impact
 
@@ -60,8 +49,7 @@ summonable quick-terminal work can drift into unrelated UI fixes.
   `ShellPaneProjectionService.swift`, shell snapshots, persistence, and control
   plane DTOs where activity state becomes observable.
 - Apple shell UI: `TerminalPaneView.swift`, `ShellSidebarView.swift`,
-  `MacShellRootView.swift`, native commands, notification routing, and quick
-  terminal window/panel ownership.
+  `MacShellRootView.swift`, native commands, and notification routing.
 - Tests and contracts: macOS shell contract scripts, focused Swift script tests,
   screenshot/visual review notes for activity/sidebar/titlebar behavior, and
   OpenSpec validation.

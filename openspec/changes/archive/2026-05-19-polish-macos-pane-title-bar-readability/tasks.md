@@ -24,9 +24,9 @@
 
 ## 4. Visual Verification
 
-- [ ] 4.1 Inspect or capture a light-mode single-pane view showing the title remains readable when focused.
-- [ ] 4.2 Inspect or capture light-mode split panes showing title bars integrated with the terminal surface rather than rendered as separate overlay bands.
-- [ ] 4.3 Inspect or capture a narrow split pane showing accessory degradation while title text and close remain visible.
+- [x] 4.1 Inspect or capture a light-mode single-pane view showing the title remains readable when focused.
+- [x] 4.2 Inspect or capture light-mode split panes showing title bars integrated with the terminal surface rather than rendered as separate overlay bands.
+- [x] 4.3 Inspect or capture a narrow split pane showing accessory degradation while title text and close remain visible.
 
 ## 5. Change Validation And Archive Readiness
 
@@ -34,5 +34,5 @@
 - [x] 5.2 Run `openspec validate polish-macos-pane-title-bar-readability --type change --strict --json`.
 - [x] 5.3 Run `openspec validate --all --strict --json`.
 - [x] 5.4 Run the relevant macOS app build command for touched Apple client targets, or document why the local environment cannot complete it.
-- [ ] 5.5 Sync accepted delta requirements into `openspec/specs/` before archive after implementation merges.
+- [x] 5.5 Sync accepted delta requirements into `openspec/specs/` before archive after implementation merges.
 - [x] 5.6 Record implementation verification evidence in the change before archive.

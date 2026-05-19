@@ -1,33 +1,30 @@
 ## ADDED Requirements
 
-### Requirement: Quick Terminal Summon And Dismiss Are Shell Commands
-Quick terminal summon, dismiss, focus, and close operations SHALL route through
-Alan's shared shell command/controller paths so keyboard shortcuts, menu
-commands, command input, and control surfaces converge on the same behavior.
-Alan SHALL expose a configurable global toggle shortcut for quick terminal; the
-draft default shortcut is `Option+Space`.
+### Requirement: Quick Terminal Uses Normal Terminal Runtime Ownership
+Alan SHALL implement quick terminal behavior as a detached global macOS Peak
+presentation over the existing shell model and terminal runtime service, not as
+an independent terminal runtime owner.
 
-#### Scenario: Quick terminal command opens
-- **WHEN** the user invokes quick terminal from a keyboard shortcut, menu,
-  command input, or supported control command
-- **THEN** Alan summons the same quick terminal target through the shared shell
-  controller path and focuses terminal input
+#### Scenario: Quick terminal is summoned
+- **WHEN** the user invokes the quick terminal command
+- **THEN** Alan presents the single global quick-terminal instance using a
+  normal pane runtime, restores its scrollback and process state when available,
+  and focuses terminal input
 
-#### Scenario: Quick terminal global shortcut toggles
-- **WHEN** the quick terminal is visible and the user invokes the quick terminal
-  toggle command again
-- **THEN** Alan hides the quick terminal presentation without closing the
-  underlying terminal runtime
+#### Scenario: Quick terminal is dismissed
+- **WHEN** the user dismisses the quick terminal without closing its terminal
+- **THEN** Alan hides the presentation, preserves the terminal runtime state,
+  and does not mutate normal tab or split runtime ownership
 
-#### Scenario: Quick terminal does not use Escape as hide
-- **WHEN** the quick terminal owns focus and the user presses `Esc`
-- **THEN** Alan treats the key as terminal input unless an Alan-owned nested
-  quick-terminal menu or picker is currently open
+#### Scenario: Quick terminal is closed
+- **WHEN** the user explicitly closes the quick terminal's terminal session
+- **THEN** Alan tears down the underlying pane runtime through the same lifecycle
+  path used by regular terminal panes
 
-#### Scenario: Quick terminal close is explicit
-- **WHEN** the user invokes close while the quick terminal owns focus
-- **THEN** Alan distinguishes hiding the quick terminal presentation from
-  closing the underlying terminal session
+#### Scenario: Quick terminal is promoted
+- **WHEN** the user promotes the quick terminal into an Alan space
+- **THEN** Alan transfers ownership of the existing pane runtime into a normal
+  tab in that Space and clears the quick-terminal slot
 
 ### Requirement: Quick Terminal Has One Global Instance
 The quick terminal SHALL have a deterministic relationship to Alan's spaces,

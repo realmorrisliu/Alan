@@ -32,17 +32,17 @@ SHALL avoid conflicting with alternate-screen or terminal mouse modes.
 - **THEN** prompt navigation does not expose stale normal-buffer prompt marks as
   active application state
 
-### Requirement: Command Output Browse Reuses Search Ownership
-Command-output browse and search flows SHALL reuse pane-scoped terminal search
-ownership instead of introducing a global search panel.
+### Requirement: Command Output Search Reuses Search Ownership
+Command-output search flows SHALL reuse pane-scoped terminal search ownership
+instead of introducing a global search panel.
 
-#### Scenario: Browse command output
-- **WHEN** the user opens command-output browse or search for a focused pane
+#### Scenario: Search command output
+- **WHEN** the user opens command-output search for a focused pane
 - **THEN** Alan scopes the query, match navigation, and dismissal behavior to
   that pane's terminal surface
 
-#### Scenario: Browse dismissed
-- **WHEN** the user dismisses command-output browse or search
+#### Scenario: Search dismissed
+- **WHEN** the user dismisses command-output search
 - **THEN** keyboard focus returns to the terminal pane that owned the
   interaction when available
 
