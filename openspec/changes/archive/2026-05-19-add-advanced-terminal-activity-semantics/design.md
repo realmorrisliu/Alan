@@ -19,8 +19,9 @@ The research target spans three related groups:
   macOS Space while using the same shell and runtime contracts instead of a
   separate terminal model.
 
-This change is intentionally a draft owner for all three groups. The first
-implementation-ready detail pass should focus on A.
+This change now archives the completed A-group implementation. B-group semantic
+terminal actions move to `add-semantic-terminal-actions`; quick terminal moves
+to `add-quick-terminal-peak`.
 
 ## Goals / Non-Goals
 
@@ -34,19 +35,17 @@ implementation-ready detail pass should focus on A.
   bottom status strips.
 - Make sidebar tab rows denser and more useful as tab-level attention/identity
   surfaces while keeping pane title bars responsible for pane-local detail.
-- Define semantic command-boundary behavior that can later power prompt
-  navigation, copy-last-output, and command-output browsing without adopting
-  full Warp-style blocks.
-- Define quick terminal behavior as a presentation and workspace interaction
-  over the existing terminal runtime service.
-- Split future work into phases so A can be refined and implemented before B
-  and quick terminal.
+- Preserve explicit follow-up ownership for semantic command actions and quick
+  terminal without syncing those unimplemented contracts into accepted specs.
 
 **Non-Goals:**
 
 - Implement Warp blocks, Warp Agent View, code review panels, file trees, or
   changes sidebars.
 - Solve remote SSH/mux/cloud terminal persistence in this change.
+- Implement semantic command boundaries, copy-last-output, command-output
+  search, or prompt navigation.
+- Implement global quick-terminal Peak presentation or promotion.
 - Require provider-specific CLI agent plugins for the first draft. Structured
   plugin or hook support can be added per agent after the Alan-side contract is
   stable.
@@ -118,70 +117,7 @@ Alternative considered: parse common TUI output for prompts and status. That is
 fragile across agent releases, localization, themes, terminal widths, and
 alternate-screen rendering.
 
-### 4. Keep semantic terminal behavior lighter than blocks
-
-Alan should model prompt marks, command start/end, command text, output ranges,
-exit status, and search ranges as semantic terminal metadata. It should expose
-focused actions such as jump previous/next prompt, copy last command output,
-and browse/search command output. It should not turn every command into a
-visible card or block by default.
-
-This preserves Alan's terminal-first UI while still making terminal output more
-usable by humans and agents.
-
-Alternative considered: copy Warp's command block model. That would make
-command-level interactions explicit, but it conflicts with Alan's current
-Arc-like shell direction and risks making the terminal feel like an IDE panel.
-
-The B-group MVP should be action-only. When reliable prompt or command boundary
-metadata exists, `Go to or Command...` can expose command-aware actions:
-
-- jump to previous prompt
-- jump to next prompt
-- copy last command output
-- search last command output
-
-When reliable boundary metadata is absent, Alan falls back to ordinary terminal
-behavior such as scrollback search, selection copy, and normal scrollback
-navigation. It must not keep showing precise "last command output" actions while
-guessing from screen text. The MVP does not add a command browser, visible
-command blocks, or terminal output segmentation. It may store recent
-`CommandSegment` metadata to support the actions, but that storage is pane-local
-runtime metadata for the current terminal session rather than a long-term
-command history database.
-
-### 5. Implement quick terminal as a detached global Peak over normal runtimes
-
-Quick terminal should be a detached, globally summonable macOS Peak window, not
-a child popover of Alan's main window. It hosts one global quick-terminal
-pane/runtime and uses the same lifecycle, metadata, activity, clipboard, search,
-and command-routing contracts as regular panes.
-
-The draft default shortcut is a configurable global toggle, initially
-`Option+Space`. When the quick terminal is hidden, invoking the toggle presents
-the same global instance on the current macOS Space and active display without
-forcing Alan's main window to the front. When it is visible, invoking the same
-toggle hides it. `Esc` must remain terminal input and must not dismiss the Peak
-by default. Losing focus also does not hide the Peak; hide is an explicit toggle
-or command.
-
-Hide and show preserve scrollback and process state unless the user explicitly
-closes the quick terminal. If the global quick instance already exists, Alan
-restores that instance and its cwd. If Alan must create a new quick terminal, it
-chooses the cwd from the currently focused Alan pane when available, otherwise
-the last quick-terminal cwd, otherwise the user's home directory.
-
-The Peak can be promoted into a normal Alan space through an `Open in Space`
-affordance. Promotion moves the current quick-terminal runtime into the selected
-Space as a normal tab, hides the Peak, and clears the global quick slot. Alan
-does not copy the terminal process or display the same runtime simultaneously in
-the Peak and a tab.
-
-Alternative considered: create a separate AppKit terminal panel with its own
-runtime owner. That would ship faster but would duplicate lifecycle, focus, and
-metadata behavior.
-
-### 6. Sidebar tab rows are tab-level attention and identity surfaces
+### 4. Sidebar tab rows are tab-level attention and identity surfaces
 
 Sidebar tab rows should become richer work rows, but their job is still quick
 location and attention triage, not pane inspection. A tab row shows:
@@ -213,7 +149,7 @@ replace the subtitle with activity. That would be smaller, but it preserves the
 current low-density feel and keeps forcing status, cwd, branch, and process to
 compete for one field.
 
-### 7. Pane title bars provide pane-local detail
+### 5. Pane title bars provide pane-local detail
 
 Pane title bars keep terminal title as the primary label and use accessories
 for pane-local activity, worktree/cwd, branch, process, and agent/Alan state.
@@ -230,7 +166,7 @@ context. That is useful for identification, but it duplicates common terminal
 titles and makes the tab row feel like a compact inspector instead of an
 attention surface.
 
-### 8. Activity priority is action-first, with progress above generic running
+### 6. Activity priority is action-first, with progress above generic running
 
 Sidebar activity should be source-first in its copy, such as `Codex · Input
 needed`, `Build · 42%`, `Progress · 42%`, or `Shell · Command failed 1`.

@@ -3,12 +3,11 @@
 ### Requirement: Runtime metadata is projected by pane identity
 The runtime service SHALL project terminal title, cwd, process status,
 attention, renderer phase, readiness, delivery diagnostics, terminal activity,
-semantic command state, and CLI coding-agent status into alan shell state using
-stable pane IDs.
+and CLI coding-agent status into alan shell state using stable pane IDs.
 
 #### Scenario: Metadata event from background pane
 - **WHEN** a background pane emits a title, cwd, process, attention,
-  renderer-state, activity, semantic command, or agent-status event
+  renderer-state, activity, or agent-status event
 - **THEN** shell state updates the matching pane record without changing user
   focus
 

@@ -272,24 +272,40 @@ card grid or debug layout.
 ### Requirement: Terminal panes expose narrow title bars
 Each visible macOS terminal pane SHALL include a compact title bar at the top of
 the pane that identifies the terminal and provides a pane-scoped close
-affordance while keeping terminal content visually dominant.
+affordance while keeping terminal content visually dominant. The title bar SHALL
+read as part of the terminal surface rather than as a separate selected chrome
+overlay.
 
 #### Scenario: Single pane title visible
 - **WHEN** a terminal tab contains one visible pane
 - **THEN** the pane shows a narrow title bar above the terminal canvas with a user-facing terminal title and one slim close button
+- **AND** the title bar uses the same terminal-surface background as the canvas rather than a selected/unselected material wash above it
 
 #### Scenario: Split pane titles visible
 - **WHEN** a terminal tab contains multiple visible panes
 - **THEN** every pane leaf shows its own title bar and close button without adding a pane selector strip, card grid, or debug labels
+- **AND** title-bar backgrounds do not create per-pane cards, opaque overlays, or separate toolbar bands above each terminal pane
+
+#### Scenario: Focused title remains readable
+- **WHEN** a pane becomes the focused terminal pane
+- **THEN** the pane title remains visible as text with sufficient foreground contrast against the terminal surface background
+- **AND** focused state does not hide the title, blend it into the title-bar background, or replace it with an icon-only representation
 
 #### Scenario: Long title fits
 - **WHEN** a pane title is long or changes while the pane is visible
 - **THEN** the title truncates within a stable fixed-height title bar without resizing split dividers, sidebar rows, toolbar content, or sibling panes
 
+#### Scenario: Narrow title bar degrades predictably
+- **WHEN** a pane title bar does not have enough width to show all detail
+- **THEN** lower-priority accessories degrade from text plus icon to icon-only or hidden before the title text or close affordance disappear
+- **AND** the title remains text with truncation rather than degrading to icon-only content
+
 ### Requirement: Pane title bars consume terminal metadata
 Pane title bars SHALL consume the current terminal title already projected into
 pane metadata, and SHALL use existing user-facing fallback labels only when the
-terminal title is unavailable.
+terminal title is unavailable. Pane title-bar detail SHALL be presented in
+left-to-right semantic priority order using fit-content item widths where space
+allows.
 
 #### Scenario: Terminal title exists
 - **WHEN** a pane has a non-empty `viewport.title`
@@ -306,6 +322,16 @@ terminal title is unavailable.
 #### Scenario: Metadata stays in title chrome
 - **WHEN** terminal status, branch, attention, or alan binding metadata is useful in the default pane UI
 - **THEN** alan presents it as lightweight pane-title-bar accessories rather than as a persistent bottom status strip below the terminal canvas
+
+#### Scenario: Detail order is semantic
+- **WHEN** a pane title bar has title, activity, status, cwd or worktree, branch, process, alan state, and close detail available
+- **THEN** alan orders visible content from left to right as title, activity/status, cwd or worktree, branch, process or alan state, and close
+- **AND** each visible item uses fit-content width rather than reserving a fixed-width column for every accessory
+
+#### Scenario: Detail fallback preserves priority
+- **WHEN** available title-bar width cannot fit all detail labels
+- **THEN** activity and status detail outrank cwd, worktree, branch, process, and alan detail
+- **AND** cwd, worktree, branch, process, and alan detail can collapse to icon-only or hide before the title text collapses
 
 ### Requirement: Pane close button targets its pane
 The pane title bar close button SHALL close the pane represented by that title
@@ -709,3 +735,115 @@ and window chrome share one transition state.
 #### Scenario: Native traffic-light behavior preserved
 - **WHEN** sidebar or titlebar chrome moves during pinned or floating sidebar transitions
 - **THEN** alan continues using the standard macOS traffic-light controls for close, minimize, and zoom behavior rather than drawing custom replacements
+
+### Requirement: Activity UI Is Compact And Terminal First
+Terminal activity UI SHALL use compact pane title-bar accessories, sidebar tab
+metadata, and accessibility values instead of dashboard panels, persistent
+bottom status strips, or debug labels in the default shell.
+
+#### Scenario: Pane reports progress
+- **WHEN** a pane reports determinate, indeterminate, paused, or failed
+  progress
+- **THEN** Alan presents that state as a lightweight pane title-bar accessory or
+  sidebar activity rail that does not resize the terminal canvas, toolbar
+  content, or split dividers
+
+#### Scenario: Pane reports agent status
+- **WHEN** a pane running a supported CLI coding agent reports running, needs
+  input, complete, or error state
+- **THEN** Alan presents a compact user-facing status in the pane title-bar and
+  sidebar row without exposing raw event names, hook payloads, session IDs, or
+  debug implementation details
+
+#### Scenario: No actionable activity exists
+- **WHEN** a tab has no active, notable, or user-actionable terminal activity
+- **THEN** the sidebar tab row shows worktree and branch context as its
+  secondary line instead of reserving empty activity chrome or showing idle or
+  success states
+
+### Requirement: Sidebar Tab Rows Are Attention-Oriented Work Rows
+Sidebar tab rows SHALL use a richer but restrained layout that helps users
+identify a tab and decide whether it needs attention.
+
+#### Scenario: Tab row default layout
+- **WHEN** Alan renders a sidebar tab row
+- **THEN** the row contains a leading topology or kind slot, a title line, one
+  secondary line that shows activity or worktree/branch context, and an
+  optional progress rail only when the displayed activity owns progress
+
+#### Scenario: Close affordance appears
+- **WHEN** a sidebar tab row is hovered, keyboard-focused, or otherwise
+  interaction-active
+- **THEN** the close affordance appears as a trailing overlay without reserving
+  a permanent layout slot in the row content
+
+#### Scenario: Close affordance is hidden
+- **WHEN** a sidebar tab row is not interaction-active
+- **THEN** title, secondary text, activity, and progress content may occupy the
+  full row width without leaving a fixed empty close-button column
+
+#### Scenario: Split tab leading slot
+- **WHEN** a tab contains multiple visible panes
+- **THEN** the leading slot shows split topology instead of the generic terminal
+  icon, and activating that topology cycles focus through panes in a stable
+  order
+
+#### Scenario: Single-pane leading slot
+- **WHEN** a tab contains one pane
+- **THEN** the leading slot shows the tab kind or supported agent icon rather
+  than a split topology indicator
+
+#### Scenario: Activity takes precedence over context
+- **WHEN** a tab has sidebar-worthy activity
+- **THEN** the secondary line shows the source-first activity copy instead of
+  worktree or branch context
+
+#### Scenario: No activity fallback
+- **WHEN** a tab has no sidebar-worthy activity
+- **THEN** the secondary line uses worktree or repository leaf plus branch when
+  available, with cwd leaf only as a fallback
+
+### Requirement: Pane Title Bars Own Pane Detail
+Pane title bars SHALL keep terminal title as the primary label and expose
+pane-local context through accessories.
+
+#### Scenario: Pane title bar with activity
+- **WHEN** a pane has pane-local activity, cwd or worktree context, branch,
+  process, or supported agent state
+- **THEN** the pane title bar presents that detail as compact accessories while
+  keeping the terminal title as the primary text
+
+#### Scenario: Sidebar and pane title differ
+- **WHEN** the sidebar tab row shows a tab-level activity from another pane
+- **THEN** the focused pane title bar still shows only the focused pane's own
+  local detail and does not mirror unrelated tab-level activity
+
+### Requirement: Activity Notifications Are Low Noise
+System and in-app notifications for terminal activity SHALL be reserved for
+actionable, out-of-view, or user-configured events.
+
+#### Scenario: Background agent needs input
+- **WHEN** a background or unfocused pane's supported coding agent needs user
+  input
+- **THEN** Alan may notify the user and mark the owning tab without stealing
+  focus or opening a new panel
+
+#### Scenario: Foreground progress updates
+- **WHEN** the focused visible pane emits progress updates
+- **THEN** Alan updates visible activity UI without sending system
+  notifications by default
+
+#### Scenario: Long command completes while unfocused
+- **WHEN** a long-running command completes in an unfocused pane and the event
+  meets the notification policy
+- **THEN** Alan may send a concise command-completion notification with success
+  or failure state
+
+#### Scenario: Foreground command succeeds
+- **WHEN** a command succeeds in the focused visible pane
+- **THEN** Alan does not send a system notification by default
+
+#### Scenario: Agent fails in background
+- **WHEN** a supported coding agent reports failure or error in a background or
+  unfocused pane
+- **THEN** Alan may send a concise notification and mark the owning tab

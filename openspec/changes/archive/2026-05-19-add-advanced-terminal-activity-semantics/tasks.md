@@ -73,52 +73,23 @@
   needs-input, command failure, cleared activity showing worktree/branch
   fallback, split leading topology, and hover close overlay.
 
-## 6. B-Group Semantic Terminal Draft Follow-Up
+## 6. Follow-Up Split
 
-- [ ] 6.1 Audit which command-boundary and prompt-mark signals are available from
-  the embedded Ghostty surface and existing shell integration.
-- [ ] 6.2 Define pane-scoped `CommandSegment` storage for prompt ranges, command
-  ranges, output ranges, command text, cwd, exit status, started/ended
-  timestamps, and reliable/unavailable boundary state.
-- [ ] 6.3 Expose command-aware actions through `Go to or Command...` only when
-  reliable boundaries exist: jump previous prompt, jump next prompt, copy last
-  command output, and search last command output.
-- [ ] 6.4 Fall back to ordinary scrollback search, selection copy, visible-range
-  copy, and normal scrollback navigation when reliable boundaries are missing.
-- [ ] 6.5 Keep the MVP action-only: no command browser, no visible command blocks,
-  no persistent output segmentation, and no long-term command history database.
-- [ ] 6.6 Reuse pane-scoped search ownership for search-last-output and fallback
-  scrollback search.
+- [x] 6.1 Move semantic command-boundary and command-output action work to
+  `add-semantic-terminal-actions`.
+- [x] 6.2 Move global quick-terminal Peak work to `add-quick-terminal-peak`.
+- [x] 6.3 Keep this change scoped to the completed activity, sidebar, pane-title,
+  accessibility, and low-noise notification A-group.
 
-## 7. Quick Terminal Draft Follow-Up
+## 7. Verification And Archive Readiness
 
-- [ ] 7.1 Add a single global quick-terminal slot that reuses one terminal
-  runtime across hide/show and summons it onto the current macOS Space/display.
-- [ ] 7.2 Add shared shell command routing for the configurable global toggle
-  shortcut, draft default `Option+Space`, plus explicit show, hide, focus, close,
-  and promote commands.
-- [ ] 7.3 Present the quick terminal through a detached native macOS Peak window
-  that does not depend on or raise Alan's main window and that uses normal
-  terminal runtime service ownership.
-- [ ] 7.4 Preserve quick terminal runtime state across hide/show, keep `Esc`
-  routed to the terminal, avoid focus-loss auto-hide, and tear down the runtime
-  only through explicit close semantics.
-- [ ] 7.5 Apply quick-terminal cwd creation rules: existing instance cwd,
-  focused Alan pane cwd, last quick-terminal cwd, then home.
-- [ ] 7.6 Implement `Open in Space` promotion as a move into the selected Alan
-  Space/tab that hides the Peak and clears the global quick slot.
-- [ ] 7.7 Add focus, display/Space placement, hide/show, close, promote, and
-  hidden-activity notification tests.
-
-## 8. Verification And Archive Readiness
-
-- [x] 8.1 Run focused Swift script tests for activity model, projection, Ghostty
+- [x] 7.1 Run focused Swift script tests for activity model, projection, Ghostty
   source mapping, and CLI agent adapters.
-- [x] 8.2 Run `bash clients/apple/scripts/check-shell-contracts.sh`.
-- [x] 8.3 Run the relevant macOS app build command for the touched Apple client
+- [x] 7.2 Run `bash clients/apple/scripts/check-shell-contracts.sh`.
+- [x] 7.3 Run the relevant macOS app build command for the touched Apple client
   targets.
-- [x] 8.4 Run `git diff --check`.
-- [x] 8.5 Run `openspec validate add-advanced-terminal-activity-semantics --type
+- [x] 7.4 Run `git diff --check`.
+- [x] 7.5 Run `openspec validate add-advanced-terminal-activity-semantics --type
   change --strict --json`.
-- [x] 8.6 Run `openspec validate --all --strict --json`.
-- [ ] 8.7 Sync accepted delta requirements into `openspec/specs/` before archive.
+- [x] 7.6 Run `openspec validate --all --strict --json`.
+- [x] 7.7 Sync accepted delta requirements into `openspec/specs/` before archive.
