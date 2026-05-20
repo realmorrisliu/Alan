@@ -4,6 +4,8 @@ enum ShellActionID: String, CaseIterable, Identifiable, Hashable {
     case newTerminalTab = "shell.tab.new_terminal"
     case newAlanTab = "shell.tab.new_alan"
     case tabClose = "shell.tab.close"
+    case tabSelectPrevious = "shell.tab.select_previous"
+    case tabSelectNext = "shell.tab.select_next"
     case tabPin = "shell.tab.pin"
     case tabUnpin = "shell.tab.unpin"
     case tabUpdatePin = "shell.tab.update_pin"
@@ -82,6 +84,15 @@ struct ShellActionShortcut: Hashable {
     let key: String
     let modifiers: Set<ShellActionModifier>
     let context: ShellActionShortcutContext
+
+    static func spaceSelection(index: Int) -> ShellActionShortcut? {
+        guard (0..<9).contains(index) else { return nil }
+        return ShellActionShortcut(
+            key: String(index + 1),
+            modifiers: [.command, .option],
+            context: .shell
+        )
+    }
 }
 
 enum ShellActionAvailability: Equatable {
@@ -98,6 +109,7 @@ enum ShellActionEffect: Equatable {
     case openTab(ShellLaunchTarget, spaceID: String?)
     case closeTab(String?)
     case closePane(String?)
+    case selectAdjacentTab(Int)
     case selectAdjacentSpace(Int)
     case selectSpaceAt(Int)
     case pinTab(String?)
@@ -121,6 +133,11 @@ struct ShellResolvedAction {
     let descriptor: ShellActionDescriptor?
     let resolvedTarget: ShellResolvedActionTarget
     let availability: ShellActionAvailability
+}
+
+struct ShellKeyboardAction: Equatable {
+    let id: ShellActionID
+    let target: ShellActionTarget
 }
 
 struct ShellActionDescriptor {
@@ -176,10 +193,14 @@ final class ShellActionRegistry {
             }
         }
 
-        let shortcuts = Dictionary(grouping: actions.compactMap { action -> (ShellActionShortcut, ShellActionID)? in
-            guard let shortcut = action.defaultShortcut else { return nil }
-            return (shortcut, action.id)
-        }, by: { $0.0 })
+        let hasDynamicSpaceSelection = actions.contains { $0.id == .spaceSelectByIndex }
+        let shortcutEntries =
+            actions.compactMap { action -> (ShellActionShortcut, ShellActionID)? in
+                guard let shortcut = action.defaultShortcut else { return nil }
+                return (shortcut, action.id)
+            }
+            + (hasDynamicSpaceSelection ? Self.dynamicShortcutEntries() : [])
+        let shortcuts = Dictionary(grouping: shortcutEntries, by: { $0.0 })
 
         for (shortcut, entries) in shortcuts where entries.count > 1 {
             throw ShellActionRegistryError.duplicateShortcut(shortcut, entries.map(\.1))
@@ -190,6 +211,33 @@ final class ShellActionRegistry {
 
     func action(for id: ShellActionID) -> ShellActionDescriptor? {
         actions.first { $0.id == id }
+    }
+
+    func defaultShortcut(
+        for id: ShellActionID,
+        target: ShellActionTarget = .currentSelection
+    ) -> ShellActionShortcut? {
+        if id == .spaceSelectByIndex,
+           case .spaceIndex(let index) = target
+        {
+            return ShellActionShortcut.spaceSelection(index: index)
+        }
+        return action(for: id)?.defaultShortcut
+    }
+
+    func keyboardAction(for shortcut: ShellActionShortcut) -> ShellKeyboardAction? {
+        if let action = actions.first(where: { $0.defaultShortcut == shortcut }) {
+            return ShellKeyboardAction(id: action.id, target: .currentSelection)
+        }
+        if shortcut.context == .shell,
+           shortcut.modifiers == [.command, .option],
+           action(for: .spaceSelectByIndex) != nil,
+           let value = Int(shortcut.key),
+           (1...9).contains(value)
+        {
+            return ShellKeyboardAction(id: .spaceSelectByIndex, target: .spaceIndex(value - 1))
+        }
+        return nil
     }
 
     func resolve(
@@ -325,6 +373,14 @@ final class ShellActionRegistry {
             return baseEffect
         }
     }
+
+    private static func dynamicShortcutEntries() -> [(ShellActionShortcut, ShellActionID)] {
+        (0..<9).compactMap { index in
+            ShellActionShortcut.spaceSelection(index: index).map {
+                ($0, .spaceSelectByIndex)
+            }
+        }
+    }
 }
 
 private let standardActions: [ShellActionDescriptor] = [
@@ -430,6 +486,22 @@ private let standardActions: [ShellActionDescriptor] = [
         availability: selectedTabAvailability
     ),
     ShellActionDescriptor(
+        id: .tabSelectPrevious,
+        title: "Previous Tab",
+        targetKind: .currentSelection,
+        defaultShortcut: ShellActionShortcut(key: "[", modifiers: [.command, .shift], context: .shell),
+        effect: .selectAdjacentTab(-1),
+        availability: multipleTabsAvailability
+    ),
+    ShellActionDescriptor(
+        id: .tabSelectNext,
+        title: "Next Tab",
+        targetKind: .currentSelection,
+        defaultShortcut: ShellActionShortcut(key: "]", modifiers: [.command, .shift], context: .shell),
+        effect: .selectAdjacentTab(1),
+        availability: multipleTabsAvailability
+    ),
+    ShellActionDescriptor(
         id: .findOpen,
         title: "Find",
         targetKind: .pane,
@@ -442,20 +514,23 @@ private let standardActions: [ShellActionDescriptor] = [
         title: "Previous Space",
         targetKind: .space,
         defaultShortcut: ShellActionShortcut(key: "leftArrow", modifiers: [.command, .option], context: .shell),
-        effect: .selectAdjacentSpace(-1)
+        effect: .selectAdjacentSpace(-1),
+        availability: multipleSpacesAvailability
     ),
     ShellActionDescriptor(
         id: .spaceSelectNext,
         title: "Next Space",
         targetKind: .space,
         defaultShortcut: ShellActionShortcut(key: "rightArrow", modifiers: [.command, .option], context: .shell),
-        effect: .selectAdjacentSpace(1)
+        effect: .selectAdjacentSpace(1),
+        availability: multipleSpacesAvailability
     ),
     ShellActionDescriptor(
         id: .spaceSelectByIndex,
         title: "Select Space",
         targetKind: .space,
-        effect: .selectSpaceAt(0)
+        effect: .selectSpaceAt(0),
+        availability: indexedSpaceAvailability
     ),
     ShellActionDescriptor(
         id: .tabPin,
@@ -482,6 +557,11 @@ private let standardActions: [ShellActionDescriptor] = [
         id: .tabMoveLeft,
         title: "Move Tab Left",
         targetKind: .tab,
+        defaultShortcut: ShellActionShortcut(
+            key: "leftArrow",
+            modifiers: [.command, .option, .shift],
+            context: .shell
+        ),
         effect: .disabledPlaceholder,
         availability: disabledPlaceholder("Move Tab Left is not available yet")
     ),
@@ -489,6 +569,11 @@ private let standardActions: [ShellActionDescriptor] = [
         id: .tabMoveRight,
         title: "Move Tab Right",
         targetKind: .tab,
+        defaultShortcut: ShellActionShortcut(
+            key: "rightArrow",
+            modifiers: [.command, .option, .shift],
+            context: .shell
+        ),
         effect: .disabledPlaceholder,
         availability: disabledPlaceholder("Move Tab Right is not available yet")
     ),
@@ -531,6 +616,42 @@ private func selectedTabAvailability(
             ? .unavailable(reason: "No selected tab")
             : .available
     }
+}
+
+private func multipleTabsAvailability(
+    state: ShellStateSnapshot,
+    target: ShellActionTarget
+) -> ShellActionAvailability {
+    guard let selectedSpaceID = state.focusedSpaceID,
+          let selectedSpace = state.space(spaceID: selectedSpaceID),
+          selectedSpace.tabs.count > 1
+    else {
+        return .unavailable(reason: "No adjacent tab")
+    }
+    return state.focusedTabID == nil
+        ? .unavailable(reason: "No selected tab")
+        : .available
+}
+
+private func multipleSpacesAvailability(
+    state: ShellStateSnapshot,
+    target: ShellActionTarget
+) -> ShellActionAvailability {
+    state.spaces.count > 1
+        ? .available
+        : .unavailable(reason: "No adjacent space")
+}
+
+private func indexedSpaceAvailability(
+    state: ShellStateSnapshot,
+    target: ShellActionTarget
+) -> ShellActionAvailability {
+    guard case .spaceIndex(let index) = target else {
+        return .unavailable(reason: "Space index is required")
+    }
+    return state.spaces.indices.contains(index)
+        ? .available
+        : .unavailable(reason: "Space is not available")
 }
 
 private func disabledPlaceholder(

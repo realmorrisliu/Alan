@@ -198,6 +198,15 @@ struct AlanTerminalKeyModifiers: OptionSet, Equatable {
     static let control = AlanTerminalKeyModifiers(rawValue: 1 << 1)
     static let option = AlanTerminalKeyModifiers(rawValue: 1 << 2)
     static let command = AlanTerminalKeyModifiers(rawValue: 1 << 3)
+
+    var shellActionModifiers: Set<ShellActionModifier> {
+        var modifiers = Set<ShellActionModifier>()
+        if contains(.shift) { modifiers.insert(.shift) }
+        if contains(.control) { modifiers.insert(.control) }
+        if contains(.option) { modifiers.insert(.option) }
+        if contains(.command) { modifiers.insert(.command) }
+        return modifiers
+    }
 }
 
 enum AlanTerminalKeyPhase: Equatable {
@@ -216,7 +225,7 @@ struct AlanTerminalKeyInput: Equatable {
 
 enum AlanTerminalKeyboardRoutingDecision: Equatable {
     case nativeCommand(String)
-    case workspaceCommand(ShellWorkspaceCommand)
+    case shellAction(ShellActionID, ShellActionTarget)
     case terminalKey
     case interpretTextInput
     case drop
@@ -546,8 +555,8 @@ final class AlanTerminalInputRouter {
         _ input: AlanTerminalKeyInput,
         hasMarkedText: Bool
     ) -> AlanTerminalKeyboardRoutingDecision {
-        if let command = routeWorkspaceCommand(input) {
-            return .workspaceCommand(command)
+        if let action = routeShellAction(input) {
+            return .shellAction(action.id, action.target)
         }
 
         if input.phase == .down,
@@ -591,60 +600,43 @@ final class AlanTerminalInputRouter {
         return true
     }
 
-    func routeWorkspaceCommand(_ input: AlanTerminalKeyInput) -> ShellWorkspaceCommand? {
+    func routeShellAction(_ input: AlanTerminalKeyInput) -> ShellKeyboardAction? {
         guard input.phase == .down, !input.isRepeat else { return nil }
 
-        let characters = input.characters?.lowercased()
-        switch input.modifiers {
-        case [.command]:
-            switch characters {
-            case "d":
-                return .splitRight
-            case "t":
-                return .newTerminalTab
-            case "w":
-                return .closeTab
-            default:
-                return nil
-            }
-        case [.command, .shift]:
-            switch characters {
-            case "d":
-                return .splitDown
-            case "w":
-                return .closePane
-            default:
-                return nil
-            }
-        case [.command, .option]:
-            switch characters {
-            case "d":
-                return .splitLeft
-            case "t":
-                return .newAlanTab
-            case "=" where input.keyCode == 0x18:
-                return .equalizeSplits
-            default:
-                return nil
-            }
-        case [.command, .option, .shift]:
-            return characters == "d" ? .splitUp : nil
-        case [.command, .control]:
-            switch input.keyCode {
-            case 0x7B:
-                return .focusLeft
-            case 0x7C:
-                return .focusRight
-            case 0x7E:
-                return .focusUp
-            case 0x7D:
-                return .focusDown
-            default:
-                return nil
-            }
+        guard let shortcut = shellActionShortcut(for: input) else { return nil }
+        return ShellActionRegistry.standard.keyboardAction(for: shortcut)
+    }
+
+    private func shellActionShortcut(for input: AlanTerminalKeyInput) -> ShellActionShortcut? {
+        guard let key = shellActionShortcutKey(for: input) else { return nil }
+        return ShellActionShortcut(
+            key: key,
+            modifiers: input.modifiers.shellActionModifiers,
+            context: .shell
+        )
+    }
+
+    private func shellActionShortcutKey(for input: AlanTerminalKeyInput) -> String? {
+        switch input.keyCode {
+        case 0x7B:
+            return "leftArrow"
+        case 0x7C:
+            return "rightArrow"
+        case 0x7E:
+            return "upArrow"
+        case 0x7D:
+            return "downArrow"
         default:
+            break
+        }
+
+        guard let characters = input.characters?.lowercased(), !characters.isEmpty else {
             return nil
         }
+        if input.keyCode == 0x18 {
+            return "="
+        }
+        return characters
     }
 
     func routePointer(

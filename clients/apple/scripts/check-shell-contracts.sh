@@ -609,13 +609,13 @@ require_pattern \
 
 require_pattern \
     "clients/apple/alan-macos/App/AlanMacShellCommands.swift" \
-    "\\.keyboardShortcut\\(\"d\", modifiers: \\.command\\)" \
-    "split right must have a native command-key shortcut"
+    "\\.shellActionKeyboardShortcut\\(host\\.shellActionShortcut\\(\\.paneSplitRight\\)\\)" \
+    "split right menu shortcut must come from the shell action registry"
 
 require_pattern \
     "clients/apple/alan-macos/App/AlanMacShellCommands.swift" \
-    "\\.keyboardShortcut\\(\"d\", modifiers: \\[\\.command, \\.shift\\]\\)" \
-    "split down must have a native command-shift shortcut"
+    "\\.shellActionKeyboardShortcut\\(host\\.shellActionShortcut\\(\\.paneSplitDown\\)\\)" \
+    "split down menu shortcut must come from the shell action registry"
 
 require_pattern \
     "clients/apple/alan-macos/App/AlanMacShellCommands.swift" \
@@ -754,18 +754,18 @@ reject_pattern \
 
 require_pattern \
     "clients/apple/alan-macos/TerminalSurfaceController.swift" \
-    "func routeWorkspaceCommand\\(_ input: AlanTerminalKeyInput\\) -> ShellWorkspaceCommand\\?" \
-    "terminal input routing must recognize alan workspace shortcuts before terminal bindings"
+    "func routeShellAction\\(_ input: AlanTerminalKeyInput\\) -> ShellKeyboardAction\\?" \
+    "terminal input routing must recognize registered shell actions before terminal bindings"
 
 require_pattern \
     "clients/apple/alan-macos/TerminalSurfaceController.swift" \
-    "return \\.newTerminalTab" \
-    "terminal keyboard tab shortcuts must map to the shared shell workspace command vocabulary"
+    "ShellActionRegistry\\.standard\\.keyboardAction" \
+    "terminal keyboard shortcuts must map through the shared shell action registry"
 
 require_pattern \
     "clients/apple/alan-macos/TerminalHostView.swift" \
-    "routeWorkspaceKeyCommandIfNeeded\\(event\\)" \
-    "terminal host key equivalents must give alan workspace shortcuts priority over Ghostty bindings"
+    "routeShellActionKeyIfNeeded\\(event\\)" \
+    "terminal host key equivalents must give alan shell actions priority over Ghostty bindings"
 
 require_pattern \
     "clients/apple/alan-macos/TerminalHostView.swift" \
@@ -789,8 +789,8 @@ require_pattern \
 
 require_pattern \
     "clients/apple/alan-macos/TerminalPaneView.swift" \
-    "host\\.performShellWorkspaceCommand\\(command\\)" \
-    "terminal workspace shortcut routing must enter the shared shell workspace command handler"
+    "host\\.performShellAction\\(actionID, target: target\\)" \
+    "terminal shortcut routing must enter the shared shell action registry handler"
 
 require_pattern \
     "clients/apple/alan-macos/Controllers/Shell/ShellHostControlCommandHandling.swift" \
@@ -1374,8 +1374,8 @@ require_pattern \
 
 require_pattern \
     "clients/apple/alan-macos/TerminalHostView.swift" \
-    "workspaceCommandHandler\\?\\(command\\)" \
-    "terminal workspace shortcuts must leave the AppKit host through the shared command callback"
+    "shellActionHandler\\?\\(actionID, target\\)" \
+    "terminal workspace shortcuts must leave the AppKit host through the shared shell action callback"
 
 require_pattern \
     "clients/apple/alan-macos/Services/Terminal/TerminalHostOverlayPresenter.swift" \

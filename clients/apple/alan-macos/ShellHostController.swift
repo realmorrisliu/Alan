@@ -414,22 +414,46 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         focus(paneID: paneID, requestTerminalFocus: true)
     }
 
-    func selectSpace(at index: Int) {
-        guard spaces.indices.contains(index) else { return }
+    @discardableResult
+    func selectSpace(at index: Int) -> Bool {
+        guard spaces.indices.contains(index) else { return false }
         select(spaceID: spaces[index].spaceID)
+        return true
     }
 
-    func selectAdjacentSpace(offset: Int) {
-        guard !spaces.isEmpty else { return }
+    @discardableResult
+    func selectAdjacentSpace(offset: Int) -> Bool {
+        guard spaces.count > 1 else { return false }
         guard let selectedSpaceID,
               let currentIndex = spaces.firstIndex(where: { $0.spaceID == selectedSpaceID })
         else {
             select(spaceID: spaces[0].spaceID)
-            return
+            return true
         }
 
         let nextIndex = (currentIndex + offset + spaces.count) % spaces.count
         select(spaceID: spaces[nextIndex].spaceID)
+        return true
+    }
+
+    @discardableResult
+    func selectAdjacentTab(offset: Int) -> Bool {
+        guard let selectedSpace,
+              !selectedSpace.tabs.isEmpty
+        else {
+            return false
+        }
+        guard selectedSpace.tabs.count > 1 else { return false }
+        let currentTabID = selectedTab?.tabID ?? selectedSpace.tabs.first?.tabID
+        guard let currentTabID,
+              let currentIndex = selectedSpace.tabs.firstIndex(where: { $0.tabID == currentTabID })
+        else {
+            return false
+        }
+
+        let nextIndex = (currentIndex + offset + selectedSpace.tabs.count) % selectedSpace.tabs.count
+        select(tabID: selectedSpace.tabs[nextIndex].tabID)
+        return true
     }
 
     func focusAttentionItem(_ item: ShellAttentionItem) {
@@ -716,6 +740,13 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         ShellActionRegistry.standard.resolve(id, target: target, state: shellState).availability
     }
 
+    func shellActionShortcut(
+        _ id: ShellActionID,
+        target: ShellActionTarget = .currentSelection
+    ) -> ShellActionShortcut? {
+        ShellActionRegistry.standard.defaultShortcut(for: id, target: target)
+    }
+
     @discardableResult
     func performShellAction(
         _ id: ShellActionID,
@@ -747,12 +778,12 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         case .closePane(let paneID):
             guard let paneID else { return closeSelectedPane() }
             return closePane(paneID: paneID) == .closed
+        case .selectAdjacentTab(let offset):
+            return selectAdjacentTab(offset: offset)
         case .selectAdjacentSpace(let offset):
-            selectAdjacentSpace(offset: offset)
-            return true
+            return selectAdjacentSpace(offset: offset)
         case .selectSpaceAt(let index):
-            selectSpace(at: index)
-            return true
+            return selectSpace(at: index)
         case .pinTab(let tabID):
             return pinTab(tabID: tabID)
         case .unpinTab(let tabID):

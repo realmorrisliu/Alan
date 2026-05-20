@@ -20,6 +20,7 @@ private enum TerminalSurfaceControllerTests {
         verifiesNativeScrollViewForwardsWheelEvents()
         verifiesNativeScrollViewForwardsMouseEvents()
         verifiesInputCommandRouting()
+        verifiesRegistryBackedShellShortcuts()
         verifiesTUIKeyboardRoutingKeepsTerminalOwnedKeysInTerminal()
         verifiesKeyboardPipelineKeepsPhysicalKeysOnGhosttyKeyPath()
         verifiesGhosttyKeyEquivalentRedispatchContract()
@@ -168,7 +169,10 @@ private enum TerminalSurfaceControllerTests {
             ),
             hasMarkedText: false
         )
-        expect(findCommand == .nativeCommand("find"), "command-f must route to pane search")
+        expect(
+            findCommand == .shellAction(.findOpen, .currentSelection),
+            "command-f must route to pane search through the shell action registry"
+        )
 
         let printable = router.routeKeyboard(
             AlanTerminalKeyInput(
@@ -196,8 +200,8 @@ private enum TerminalSurfaceControllerTests {
             hasMarkedText: false
         )
         expect(
-            splitDown == .workspaceCommand(.splitDown),
-            "command-shift-d must route to shell split down before terminal bindings"
+            splitDown == .shellAction(.paneSplitDown, .currentSelection),
+            "command-shift-d must route to registered shell split down before terminal bindings"
         )
 
         let splitRight = router.routeKeyboard(
@@ -211,8 +215,8 @@ private enum TerminalSurfaceControllerTests {
             hasMarkedText: false
         )
         expect(
-            splitRight == .workspaceCommand(.splitRight),
-            "command-d must route to shell split right before terminal bindings"
+            splitRight == .shellAction(.paneSplitRight, .currentSelection),
+            "command-d must route to registered shell split right before terminal bindings"
         )
 
         let focusRight = router.routeKeyboard(
@@ -226,15 +230,94 @@ private enum TerminalSurfaceControllerTests {
             hasMarkedText: false
         )
         expect(
-            focusRight == .workspaceCommand(.focusRight),
-            "command-control-right must route to shell focus right"
+            focusRight == .shellAction(.paneFocusRight, .currentSelection),
+            "command-control-right must route to registered shell focus right"
+        )
+    }
+
+    private static func verifiesRegistryBackedShellShortcuts() {
+        let router = AlanTerminalInputRouter()
+
+        let previousTab = router.routeKeyboard(
+            AlanTerminalKeyInput(
+                characters: "[",
+                keyCode: 33,
+                modifiers: [.command, .shift],
+                phase: .down,
+                isRepeat: false
+            ),
+            hasMarkedText: false
+        )
+        expect(
+            previousTab == .shellAction(.tabSelectPrevious, .currentSelection),
+            "command-shift-[ must route to registered previous-tab action"
+        )
+
+        let nextTab = router.routeKeyboard(
+            AlanTerminalKeyInput(
+                characters: "]",
+                keyCode: 30,
+                modifiers: [.command, .shift],
+                phase: .down,
+                isRepeat: false
+            ),
+            hasMarkedText: false
+        )
+        expect(
+            nextTab == .shellAction(.tabSelectNext, .currentSelection),
+            "command-shift-] must route to registered next-tab action"
+        )
+
+        let moveTabRight = router.routeKeyboard(
+            AlanTerminalKeyInput(
+                characters: nil,
+                keyCode: 0x7C,
+                modifiers: [.command, .option, .shift],
+                phase: .down,
+                isRepeat: false
+            ),
+            hasMarkedText: false
+        )
+        expect(
+            moveTabRight == .shellAction(.tabMoveRight, .currentSelection),
+            "command-option-shift-right must route to registered move-tab-right action"
+        )
+
+        let nextSpace = router.routeKeyboard(
+            AlanTerminalKeyInput(
+                characters: nil,
+                keyCode: 0x7C,
+                modifiers: [.command, .option],
+                phase: .down,
+                isRepeat: false
+            ),
+            hasMarkedText: false
+        )
+        expect(
+            nextSpace == .shellAction(.spaceSelectNext, .currentSelection),
+            "command-option-right must route to registered next-space action"
+        )
+
+        let indexedSpace = router.routeKeyboard(
+            AlanTerminalKeyInput(
+                characters: "2",
+                keyCode: 19,
+                modifiers: [.command, .option],
+                phase: .down,
+                isRepeat: false
+            ),
+            hasMarkedText: false
+        )
+        expect(
+            indexedSpace == .shellAction(.spaceSelectByIndex, .spaceIndex(1)),
+            "command-option-2 must route to the second dynamic space-selection target"
         )
     }
 
     private static func verifiesTUIKeyboardRoutingKeepsTerminalOwnedKeysInTerminal() {
         let router = AlanTerminalInputRouter()
 
-        let controlWWorkspaceCommand = router.routeWorkspaceCommand(
+        let controlWShellAction = router.routeShellAction(
             AlanTerminalKeyInput(
                 characters: "w",
                 keyCode: 13,
@@ -243,7 +326,7 @@ private enum TerminalSurfaceControllerTests {
                 isRepeat: false
             )
         )
-        expect(controlWWorkspaceCommand == nil, "control-w must not be consumed as a workspace command")
+        expect(controlWShellAction == nil, "control-w must not be consumed as a shell action")
 
         let controlW = router.routeKeyboard(
             AlanTerminalKeyInput(
@@ -304,8 +387,8 @@ private enum TerminalSurfaceControllerTests {
             hasMarkedText: false
         )
         expect(
-            commandT == .workspaceCommand(.newTerminalTab),
-            "command-t must remain a native workspace shortcut"
+            commandT == .shellAction(.newTerminalTab, .currentSelection),
+            "command-t must remain a native workspace shortcut through the shell action registry"
         )
     }
 
@@ -395,8 +478,8 @@ private enum TerminalSurfaceControllerTests {
             hasMarkedText: false
         )
         expect(
-            commandT == .workspaceCommand(.newTerminalTab),
-            "Command-T must remain an app workspace command"
+            commandT == .shellAction(.newTerminalTab, .currentSelection),
+            "Command-T must remain an app workspace command through the shell action registry"
         )
 
         let composingBackspace = router.routeKeyboard(
@@ -719,8 +802,8 @@ private enum TerminalSurfaceControllerTests {
             hasMarkedText: true
         )
         expect(
-            findCommand == .nativeCommand("find"),
-            "native command shortcuts must not be reinterpreted as IME text input"
+            findCommand == .shellAction(.findOpen, .currentSelection),
+            "Find shortcuts must not be reinterpreted as IME text input"
         )
 
         expect(
