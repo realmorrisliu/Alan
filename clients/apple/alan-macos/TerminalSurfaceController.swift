@@ -1419,7 +1419,10 @@ final class AlanTerminalSurfaceController {
 
     @discardableResult
     func updateSearchQuery(_ query: String) -> Bool {
-        guard beginSearch() else { return false }
+        let scope = searchAdapter?.state.isActive == true
+            ? (searchAdapter?.state.scope ?? .scrollback)
+            : .scrollback
+        guard beginSearch(scope: scope) else { return false }
         guard searchEngine?.updateSearchQuery(query) == true else { return false }
         searchAdapter?.updateQuery(query)
         return true

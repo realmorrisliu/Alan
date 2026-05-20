@@ -1187,6 +1187,18 @@ private enum TerminalSurfaceControllerTests {
             handle.searchActions == ["start_search"],
             "search-last-output must reuse the terminal search engine"
         )
+        expect(
+            controller.updateSearchQuery("semantic"),
+            "command-output search query changes must update the active find session"
+        )
+        expect(
+            controller.searchAdapter?.state.scope == .some(.commandOutput(outputRange)),
+            "command-output search must preserve its semantic range after query entry"
+        )
+        expect(
+            handle.searchActions.suffix(1) == ["search:semantic"],
+            "command-output search query changes must reach the terminal search engine"
+        )
     }
 
     private static func verifiesSemanticCommandFallbacksAndInvalidation() {
