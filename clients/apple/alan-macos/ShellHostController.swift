@@ -705,6 +705,65 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         }
     }
 
+    func shellActionTitle(_ id: ShellActionID) -> String {
+        ShellActionRegistry.standard.action(for: id)?.title ?? "Unavailable"
+    }
+
+    func shellActionAvailability(
+        _ id: ShellActionID,
+        target: ShellActionTarget = .currentSelection
+    ) -> ShellActionAvailability {
+        ShellActionRegistry.standard.resolve(id, target: target, state: shellState).availability
+    }
+
+    @discardableResult
+    func performShellAction(
+        _ id: ShellActionID,
+        target: ShellActionTarget = .currentSelection
+    ) -> ShellActionExecutionResult {
+        ShellActionRegistry.standard.execute(
+            id,
+            target: target,
+            state: shellState
+        ) { [weak self] effect in
+            self?.performShellActionEffect(effect) ?? false
+        }
+    }
+
+    private func performShellActionEffect(_ effect: ShellActionEffect) -> Bool {
+        switch effect {
+        case .workspaceCommand(let command):
+            return performShellWorkspaceCommand(command)
+        case .openTab(let launchTarget, let spaceID):
+            switch launchTarget {
+            case .shell:
+                return openTerminalTab(in: spaceID) != nil
+            case .alan:
+                return openAlanTab(in: spaceID) != nil
+            }
+        case .closeTab(let tabID):
+            guard let tabID else { return closeSelectedTab() }
+            return closeTab(tabID: tabID) == .closed
+        case .closePane(let paneID):
+            guard let paneID else { return closeSelectedPane() }
+            return closePane(paneID: paneID) == .closed
+        case .selectAdjacentSpace(let offset):
+            selectAdjacentSpace(offset: offset)
+            return true
+        case .selectSpaceAt(let index):
+            selectSpace(at: index)
+            return true
+        case .pinTab(let tabID):
+            return pinTab(tabID: tabID)
+        case .unpinTab(let tabID):
+            return unpinTab(tabID: tabID)
+        case .updatePinnedTab(let tabID):
+            return updatePinnedTabSnapshot(tabID: tabID)
+        case .disabledPlaceholder:
+            return false
+        }
+    }
+
     @discardableResult
     func resizeSplit(splitNodeID: String, ratio: Double, persist: Bool = true) -> Bool {
         let result: ShellStateMutationResult

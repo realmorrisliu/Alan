@@ -23,13 +23,13 @@ struct AlanMacShellCommands: Commands {
         }
 
         CommandMenu("Shell") {
-            Button("New Terminal Tab") {
-                host.performShellWorkspaceCommand(.newTerminalTab)
+            Button(host.shellActionTitle(.newTerminalTab)) {
+                host.performShellAction(.newTerminalTab)
             }
             .keyboardShortcut("t", modifiers: .command)
 
-            Button("New alan tab") {
-                host.performShellWorkspaceCommand(.newAlanTab)
+            Button(host.shellActionTitle(.newAlanTab)) {
+                host.performShellAction(.newAlanTab)
             }
             .keyboardShortcut("t", modifiers: [.command, .option])
 
@@ -40,64 +40,74 @@ struct AlanMacShellCommands: Commands {
 
             Divider()
 
-            Button("Split Right") {
-                host.performShellWorkspaceCommand(.splitRight)
+            Button(host.shellActionTitle(.paneSplitRight)) {
+                host.performShellAction(.paneSplitRight)
             }
             .keyboardShortcut("d", modifiers: .command)
+            .disabled(!host.shellActionAvailability(.paneSplitRight).isAvailable)
 
-            Button("Split Down") {
-                host.performShellWorkspaceCommand(.splitDown)
+            Button(host.shellActionTitle(.paneSplitDown)) {
+                host.performShellAction(.paneSplitDown)
             }
             .keyboardShortcut("d", modifiers: [.command, .shift])
+            .disabled(!host.shellActionAvailability(.paneSplitDown).isAvailable)
 
-            Button("Split Left") {
-                host.performShellWorkspaceCommand(.splitLeft)
+            Button(host.shellActionTitle(.paneSplitLeft)) {
+                host.performShellAction(.paneSplitLeft)
             }
             .keyboardShortcut("d", modifiers: [.command, .option])
+            .disabled(!host.shellActionAvailability(.paneSplitLeft).isAvailable)
 
-            Button("Split Up") {
-                host.performShellWorkspaceCommand(.splitUp)
+            Button(host.shellActionTitle(.paneSplitUp)) {
+                host.performShellAction(.paneSplitUp)
             }
             .keyboardShortcut("d", modifiers: [.command, .option, .shift])
+            .disabled(!host.shellActionAvailability(.paneSplitUp).isAvailable)
 
-            Button("Equalize Splits") {
-                host.performShellWorkspaceCommand(.equalizeSplits)
+            Button(host.shellActionTitle(.paneEqualizeSplits)) {
+                host.performShellAction(.paneEqualizeSplits)
             }
             .keyboardShortcut("=", modifiers: [.command, .option])
 
             Divider()
 
-            Button("Focus Pane Left") {
-                host.performShellWorkspaceCommand(.focusLeft)
+            Button(host.shellActionTitle(.paneFocusLeft)) {
+                host.performShellAction(.paneFocusLeft)
             }
             .keyboardShortcut(.leftArrow, modifiers: [.command, .control])
+            .disabled(!host.shellActionAvailability(.paneFocusLeft).isAvailable)
 
-            Button("Focus Pane Right") {
-                host.performShellWorkspaceCommand(.focusRight)
+            Button(host.shellActionTitle(.paneFocusRight)) {
+                host.performShellAction(.paneFocusRight)
             }
             .keyboardShortcut(.rightArrow, modifiers: [.command, .control])
+            .disabled(!host.shellActionAvailability(.paneFocusRight).isAvailable)
 
-            Button("Focus Pane Up") {
-                host.performShellWorkspaceCommand(.focusUp)
+            Button(host.shellActionTitle(.paneFocusUp)) {
+                host.performShellAction(.paneFocusUp)
             }
             .keyboardShortcut(.upArrow, modifiers: [.command, .control])
+            .disabled(!host.shellActionAvailability(.paneFocusUp).isAvailable)
 
-            Button("Focus Pane Down") {
-                host.performShellWorkspaceCommand(.focusDown)
+            Button(host.shellActionTitle(.paneFocusDown)) {
+                host.performShellAction(.paneFocusDown)
             }
             .keyboardShortcut(.downArrow, modifiers: [.command, .control])
+            .disabled(!host.shellActionAvailability(.paneFocusDown).isAvailable)
 
             Divider()
 
-            Button("Close Pane") {
-                host.performShellWorkspaceCommand(.closePane)
+            Button(host.shellActionTitle(.paneClose)) {
+                host.performShellAction(.paneClose)
             }
             .keyboardShortcut("w", modifiers: [.command, .shift])
+            .disabled(!host.shellActionAvailability(.paneClose).isAvailable)
 
-            Button("Close Tab") {
-                host.performShellWorkspaceCommand(.closeTab)
+            Button(host.shellActionTitle(.tabClose)) {
+                host.performShellAction(.tabClose)
             }
             .keyboardShortcut("w", modifiers: .command)
+            .disabled(!host.shellActionAvailability(.tabClose).isAvailable)
         }
     }
 

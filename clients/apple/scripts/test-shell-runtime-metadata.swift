@@ -22,6 +22,7 @@ private enum ShellRuntimeMetadataTests {
         verifiesPaneTitleBarSuppressesInternalTitles()
         verifiesOpeningTabSkipsStaleRuntimePaneIDs()
         verifiesOpeningTerminalTabInheritsFocusedRuntimeCwd()
+        verifiesShellActionNewTerminalTabInheritsFocusedRuntimeCwd()
         verifiesOpeningTerminalTabFallsBackToFocusedPaneSnapshotCwd()
         verifiesOpeningTerminalTabHonorsExplicitCwd()
         verifiesTerminalActivityProjectsByPaneID()
@@ -468,6 +469,19 @@ private enum ShellRuntimeMetadataTests {
         expect(
             controller.selectedPane?.cwd == "/repo/app",
             "new terminal tabs must inherit the focused pane runtime cwd"
+        )
+    }
+
+    private static func verifiesShellActionNewTerminalTabInheritsFocusedRuntimeCwd() {
+        let controller = makeController()
+        controller.updateTerminalMetadata(metadata(title: "cwd update", cwd: "/repo/app"), for: "pane_1")
+
+        let result = controller.performShellAction(.newTerminalTab)
+
+        expect(result == .executed, "registry new-terminal action must execute")
+        expect(
+            controller.selectedPane?.cwd == "/repo/app",
+            "registry new-terminal action must inherit the focused pane runtime cwd"
         )
     }
 

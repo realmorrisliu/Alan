@@ -585,7 +585,12 @@ require_pattern \
 require_pattern \
     "clients/apple/alan-macos/ShellHostController.swift" \
     "func performShellWorkspaceCommand\\(_ command: ShellWorkspaceCommand\\)" \
-    "menu, keyboard, and command UI actions must route through one shell command entry point"
+    "command UI and terminal-local workspace actions must keep the shared shell command entry point"
+
+require_pattern \
+    "clients/apple/alan-macos/ShellHostController.swift" \
+    "func performShellAction\\(" \
+    "native menu, context menu, and shell keyboard actions must enter the shell action registry"
 
 require_pattern \
     "clients/apple/alan-macos/ShellHostController.swift" \
@@ -614,8 +619,8 @@ require_pattern \
 
 require_pattern \
     "clients/apple/alan-macos/App/AlanMacShellCommands.swift" \
-    "host\\.performShellWorkspaceCommand\\(\\.closeTab\\)" \
-    "native menu close actions must use the shared shell workspace command vocabulary"
+    "host\\.performShellAction\\(\\.tabClose\\)" \
+    "native menu close actions must use the shell action registry"
 
 require_pattern \
     "clients/apple/alan-macos/Views/Shell/ShellCommandTabView.swift" \
