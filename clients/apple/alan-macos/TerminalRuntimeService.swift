@@ -831,6 +831,7 @@ final class FakeAlanTerminalSurfaceHandle: AlanTerminalSurfaceHandle {
     var deliveryResult: TerminalRuntimeDeliveryResult?
     var searchActionsShouldSucceed = true
     var scrollActionsShouldSucceed = true
+    var commandOutputTextByRange: [AlanTerminalBufferRange: String] = [:]
     var selectedText: String?
     var ready = true
     private var searchUpdateHandler: ((AlanTerminalSearchEngineUpdate) -> Void)?
@@ -1015,6 +1016,12 @@ extension FakeAlanTerminalSurfaceHandle: AlanTerminalSelectionEngine {
 
     func hasSelection() -> Bool {
         selectedText?.isEmpty == false
+    }
+}
+
+extension FakeAlanTerminalSurfaceHandle: AlanTerminalCommandBufferEngine {
+    func readText(in range: AlanTerminalBufferRange) -> String? {
+        commandOutputTextByRange[range]
     }
 }
 

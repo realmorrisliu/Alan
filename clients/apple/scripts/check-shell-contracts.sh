@@ -232,6 +232,53 @@ require_tab_organization_sidebar_contract() {
     fi
 }
 
+require_semantic_terminal_actions_contract() {
+    require_pattern \
+        "clients/apple/alan-macos/TerminalSurfaceController.swift" \
+        "struct AlanTerminalCommandSegment" \
+        "semantic terminal command metadata must have pane-scoped command segment storage"
+
+    require_pattern \
+        "clients/apple/alan-macos/TerminalSurfaceController.swift" \
+        "enum AlanTerminalCommandBoundaryState" \
+        "semantic terminal command actions must model boundary reliability explicitly"
+
+    require_pattern \
+        "clients/apple/alan-macos/TerminalSurfaceController.swift" \
+        "protocol AlanTerminalCommandBufferEngine" \
+        "copy-last-output must read from a pane-owned command buffer range"
+
+    require_pattern \
+        "clients/apple/alan-macos/TerminalSurfaceController.swift" \
+        "scrollbackAdapter\\.state\\.metrics\\.mode == \\.normalBuffer" \
+        "semantic prompt/output actions must be gated to the normal terminal buffer"
+
+    require_pattern \
+        "clients/apple/alan-macos/Views/Shell/ShellCommandTabView.swift" \
+        "requiresSemanticCommandBoundaries" \
+        "command-aware terminal actions must stay gated behind reliable command boundaries"
+
+    require_pattern \
+        "clients/apple/alan-macos/Views/Shell/ShellCommandTabView.swift" \
+        "semanticCommandsAvailable: host\\.focusedPaneHasReliableSemanticCommands" \
+        "Go to or Command actions must resolve semantic terminal commands only for reliable focused panes"
+
+    require_pattern \
+        "clients/apple/scripts/test-terminal-surface-controller.swift" \
+        "verifiesSemanticCommandActionsUseReliablePaneBoundaries" \
+        "surface controller tests must prove semantic command actions use reliable pane boundaries"
+
+    require_pattern \
+        "clients/apple/scripts/test-terminal-surface-controller.swift" \
+        "verifiesSemanticCommandFallbacksAndInvalidation" \
+        "surface controller tests must prove semantic command fallback and invalidation behavior"
+
+    reject_pattern \
+        "clients/apple/alan-macos" \
+        "CommandBrowser|CommandBlock|CommandOutputSegment|commandBrowser|commandBlocks|outputSegmentation|visibleCommandBlocks" \
+        "semantic terminal MVP must not add command browsers, visible command blocks, or persistent output segmentation"
+}
+
 "$SCRIPT_DIR/setup-local-ghosttykit.sh" --check >/dev/null
 "$SCRIPT_DIR/check-architecture-maintainability.sh" >/dev/null
 reject_active_shell_radius_drift
@@ -241,6 +288,7 @@ require_title_bar_full_width_hit_area
 require_pane_title_bar_trailing_close
 require_active_complex_split_count_contrast
 require_tab_organization_sidebar_contract
+require_semantic_terminal_actions_contract
 
 require_pattern \
     "clients/apple/alan-macos/TerminalRuntimeRegistry.swift" \

@@ -32,6 +32,8 @@ private enum TerminalSurfaceControllerTests {
         verifiesPaneScopedSearchState()
         verifiesSearchActionsReachSurfaceEngine()
         verifiesScrollbackActionsReachSurfaceEngine()
+        verifiesSemanticCommandActionsUseReliablePaneBoundaries()
+        verifiesSemanticCommandFallbacksAndInvalidation()
         verifiesBindClearsStaleScrollbackState()
         verifiesSurfaceCloseRequestIsForwarded()
         verifiesSurfaceSnapshotEqualityIgnoresTimestamp()
@@ -1106,6 +1108,160 @@ private enum TerminalSurfaceControllerTests {
         )
     }
 
+    private static func verifiesSemanticCommandActionsUseReliablePaneBoundaries() {
+        let handle = FakeAlanTerminalSurfaceHandle(paneID: "pane_1")
+        let outputRange = AlanTerminalBufferRange(lowerBound: 24, upperBound: 32)
+        handle.commandOutputTextByRange[outputRange] = "semantic output\n"
+        let controller = AlanTerminalSurfaceController()
+        controller.bind(surfaceHandle: handle, paneID: "pane_1")
+        handle.emitScrollbackUpdate(
+            AlanTerminalScrollbackMetrics(
+                totalRows: 120,
+                visibleRows: 20,
+                firstVisibleRow: 40,
+                mode: .normalBuffer
+            )
+        )
+        controller.updateSemanticCommands(
+            AlanTerminalSemanticCommandState(
+                paneID: "pane_1",
+                boundaryState: .reliable,
+                segments: [
+                    commandSegment(
+                        id: "cmd_1",
+                        prompt: 8..<9,
+                        command: 9..<10,
+                        output: 10..<18
+                    ),
+                    commandSegment(
+                        id: "cmd_2",
+                        prompt: AlanTerminalBufferRange(22..<23),
+                        command: AlanTerminalBufferRange(23..<24),
+                        output: outputRange
+                    ),
+                ],
+                lastUpdatedAt: Date(timeIntervalSince1970: 10)
+            )
+        )
+
+        expect(
+            controller.surfaceStateSnapshot.semanticCommands.hasReliableCommandBoundaries,
+            "semantic command state must be visible in pane-scoped surface metadata"
+        )
+        expect(
+            controller.navigateSemanticPrompt(.previous),
+            "previous prompt navigation must use semantic prompt marks"
+        )
+        expect(
+            handle.scrollActions.last == "scroll_to_row:22",
+            "previous prompt navigation must scroll to the nearest prompt row"
+        )
+        expect(
+            controller.navigateSemanticPrompt(.next),
+            "next prompt navigation must use semantic prompt marks"
+        )
+        expect(
+            handle.scrollActions.last == "scroll_to_row:8",
+            "next prompt navigation must wrap to the first prompt row when needed"
+        )
+
+        let pasteboard = RecordingTerminalPasteboardWriter()
+        expect(
+            controller.copyLastCommandOutput(to: pasteboard),
+            "copy-last-output must copy a reliable command output range"
+        )
+        expect(
+            pasteboard.string == "semantic output\n",
+            "copy-last-output must read pane-owned output range text"
+        )
+
+        expect(
+            controller.beginLastCommandOutputSearch(),
+            "search-last-output must start the pane-owned search interaction"
+        )
+        expect(
+            controller.searchAdapter?.state.scope == .some(.commandOutput(outputRange)),
+            "search-last-output must record command-output scope in pane search state"
+        )
+        expect(
+            handle.searchActions == ["start_search"],
+            "search-last-output must reuse the terminal search engine"
+        )
+    }
+
+    private static func verifiesSemanticCommandFallbacksAndInvalidation() {
+        let handle = FakeAlanTerminalSurfaceHandle(paneID: "pane_1")
+        handle.selectedText = "selected fallback"
+        let controller = AlanTerminalSurfaceController()
+        controller.bind(surfaceHandle: handle, paneID: "pane_1")
+        handle.emitScrollbackUpdate(
+            AlanTerminalScrollbackMetrics(
+                totalRows: 80,
+                visibleRows: 20,
+                firstVisibleRow: 10,
+                mode: .normalBuffer
+            )
+        )
+
+        let pasteboard = RecordingTerminalPasteboardWriter()
+        expect(
+            controller.copyLastCommandOutput(to: pasteboard),
+            "copy-last-output must fall back to selection copy when boundaries are unavailable"
+        )
+        expect(
+            pasteboard.string == "selected fallback",
+            "copy fallback must not guess command output from visible text"
+        )
+
+        expect(
+            controller.beginLastCommandOutputSearch(),
+            "search-last-output must fall back to ordinary pane search when output range is unavailable"
+        )
+        expect(
+            controller.searchAdapter?.state.scope == .some(.scrollback),
+            "unavailable command-output search must keep ordinary scrollback scope"
+        )
+
+        controller.updateSemanticCommands(
+            AlanTerminalSemanticCommandState(
+                paneID: "pane_1",
+                boundaryState: .reliable,
+                segments: [
+                    commandSegment(
+                        id: "cmd_1",
+                        prompt: 4..<5,
+                        command: 5..<6,
+                        output: 6..<9
+                    ),
+                ],
+                lastUpdatedAt: Date(timeIntervalSince1970: 20)
+            )
+        )
+        handle.emitScrollbackUpdate(
+            AlanTerminalScrollbackMetrics(
+                totalRows: 80,
+                visibleRows: 20,
+                firstVisibleRow: 10,
+                mode: .alternateScreen
+            )
+        )
+        expect(
+            controller.navigateSemanticPrompt(.previous) == false,
+            "alternate-screen mode must suppress stale normal-buffer prompt navigation"
+        )
+
+        controller.invalidateSemanticCommands(reason: "tmux pane changed")
+        expect(
+            controller.surfaceStateSnapshot.semanticCommands.reliableSegments.isEmpty,
+            "invalidated command boundaries must stop exposing semantic-only actions"
+        )
+        controller.detach()
+        expect(
+            controller.surfaceStateSnapshot.semanticCommands == .placeholder,
+            "detached terminal surfaces must clear semantic command metadata"
+        )
+    }
+
     private static func verifiesBindClearsStaleScrollbackState() {
         let firstHandle = FakeAlanTerminalSurfaceHandle(paneID: "pane_1")
         let secondHandle = FakeAlanTerminalSurfaceHandle(paneID: "pane_2")
@@ -1215,6 +1371,7 @@ private enum TerminalSurfaceControllerTests {
             terminalMode: older.terminalMode,
             scrollback: older.scrollback,
             search: older.search,
+            semanticCommands: older.semanticCommands,
             readonly: older.readonly,
             secureInput: older.secureInput,
             inputReady: older.inputReady,
@@ -1226,6 +1383,40 @@ private enum TerminalSurfaceControllerTests {
         expect(
             older.equalsIgnoringTimestamp(newer),
             "runtime snapshot diffing must ignore surface timestamp churn"
+        )
+    }
+
+    private static func commandSegment(
+        id: String,
+        prompt: Range<Int>,
+        command: Range<Int>,
+        output: Range<Int>
+    ) -> AlanTerminalCommandSegment {
+        commandSegment(
+            id: id,
+            prompt: AlanTerminalBufferRange(prompt),
+            command: AlanTerminalBufferRange(command),
+            output: AlanTerminalBufferRange(output)
+        )
+    }
+
+    private static func commandSegment(
+        id: String,
+        prompt: AlanTerminalBufferRange,
+        command: AlanTerminalBufferRange,
+        output: AlanTerminalBufferRange
+    ) -> AlanTerminalCommandSegment {
+        AlanTerminalCommandSegment(
+            id: id,
+            promptRange: prompt,
+            commandRange: command,
+            outputRange: output,
+            commandText: "echo \(id)",
+            workingDirectory: "/tmp",
+            exitStatus: 0,
+            startedAt: Date(timeIntervalSince1970: 1),
+            endedAt: Date(timeIntervalSince1970: 2),
+            boundaryState: .reliable
         )
     }
 

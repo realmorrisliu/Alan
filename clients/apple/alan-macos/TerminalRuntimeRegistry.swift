@@ -145,6 +145,24 @@ final class TerminalRuntimeRegistry: ObservableObject {
     }
 
     @discardableResult
+    func beginLastCommandOutputSearch(for paneID: String) -> Bool {
+        hostViewsByPaneID[paneID]?.beginLastCommandOutputSearch() ?? false
+    }
+
+    @discardableResult
+    func navigateSemanticPrompt(
+        for paneID: String,
+        direction: AlanTerminalPromptNavigationDirection
+    ) -> Bool {
+        hostViewsByPaneID[paneID]?.navigateSemanticPrompt(direction) ?? false
+    }
+
+    @discardableResult
+    func copyLastCommandOutput(for paneID: String) -> Bool {
+        hostViewsByPaneID[paneID]?.copyLastCommandOutput() ?? false
+    }
+
+    @discardableResult
     func updateFindQuery(for paneID: String, query: String) -> Bool {
         hostViewsByPaneID[paneID]?.updateFindQuery(query) ?? false
     }

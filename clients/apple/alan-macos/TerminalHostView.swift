@@ -1606,6 +1606,24 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
         return true
     }
 
+    func beginLastCommandOutputSearch() -> Bool {
+        guard surfaceController.beginLastCommandOutputSearch() else { return false }
+        syncOverlayVisibility()
+        publishRuntimeSnapshot()
+        return true
+    }
+
+    func navigateSemanticPrompt(_ direction: AlanTerminalPromptNavigationDirection) -> Bool {
+        guard surfaceController.navigateSemanticPrompt(direction) else { return false }
+        syncNativeScrollback()
+        publishRuntimeSnapshot()
+        return true
+    }
+
+    func copyLastCommandOutput() -> Bool {
+        surfaceController.copyLastCommandOutput(to: .general)
+    }
+
     @discardableResult
     func updateFindQuery(_ query: String) -> Bool {
         guard surfaceController.updateSearchQuery(query) else { return false }
