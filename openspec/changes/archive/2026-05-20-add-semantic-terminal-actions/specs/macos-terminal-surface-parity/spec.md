@@ -10,6 +10,12 @@ for the owning pane and only when command boundary metadata is available.
 - **THEN** the terminal surface copies that range from the pane buffer to the
   pasteboard without sending printable input to the terminal process
 
+#### Scenario: Latest command output is empty
+- **WHEN** the focused terminal pane has a reliable latest command output range
+  that contains no rows
+- **THEN** Alan treats that empty range as the latest command output instead of
+  copying or searching output from an older command
+
 #### Scenario: Command output range is unknown
 - **WHEN** the focused terminal pane does not have a reliable command output
   range
