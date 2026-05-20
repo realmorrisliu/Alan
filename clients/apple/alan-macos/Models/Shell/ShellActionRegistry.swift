@@ -1,0 +1,540 @@
+import Foundation
+
+enum ShellActionID: String, CaseIterable, Identifiable, Hashable {
+    case newTerminalTab = "shell.tab.new_terminal"
+    case newAlanTab = "shell.tab.new_alan"
+    case tabClose = "shell.tab.close"
+    case tabPin = "shell.tab.pin"
+    case tabUnpin = "shell.tab.unpin"
+    case tabUpdatePin = "shell.tab.update_pin"
+    case tabMoveLeft = "shell.tab.move_left"
+    case tabMoveRight = "shell.tab.move_right"
+    case tabMoveToSpace = "shell.tab.move_to_space"
+    case paneSplitLeft = "shell.pane.split_left"
+    case paneSplitRight = "shell.pane.split_right"
+    case paneSplitUp = "shell.pane.split_up"
+    case paneSplitDown = "shell.pane.split_down"
+    case paneFocusLeft = "shell.pane.focus_left"
+    case paneFocusRight = "shell.pane.focus_right"
+    case paneFocusUp = "shell.pane.focus_up"
+    case paneFocusDown = "shell.pane.focus_down"
+    case paneEqualizeSplits = "shell.pane.equalize_splits"
+    case paneClose = "shell.pane.close"
+    case findOpen = "shell.find.open"
+    case spaceSelectPrevious = "shell.space.select_previous"
+    case spaceSelectNext = "shell.space.select_next"
+    case spaceSelectByIndex = "shell.space.select_by_index"
+    case commandInputOpen = "shell.command_input.open"
+
+    var id: String { rawValue }
+}
+
+enum ShellActionTargetKind: Equatable {
+    case currentSelection
+    case tab
+    case pane
+    case space
+    case destinationSpace
+}
+
+enum ShellActionTarget: Equatable {
+    case currentSelection
+    case contextTab(String)
+    case contextPane(String)
+    case contextSpace(String)
+    case spaceIndex(Int)
+    case tabToSpace(tabID: String, spaceID: String)
+}
+
+enum ShellResolvedActionTarget: Equatable {
+    case selection(spaceID: String?, tabID: String?, paneID: String?)
+    case tab(String)
+    case pane(String)
+    case space(String)
+    case spaceIndex(Int)
+    case tabToSpace(tabID: String, spaceID: String)
+    case unresolved
+}
+
+enum ShellActionSurface: String, Equatable {
+    case menuBar = "menu_bar"
+    case contextMenu = "context_menu"
+    case keyboard
+}
+
+enum ShellActionModifier: String, CaseIterable, Hashable, Comparable {
+    case command
+    case option
+    case shift
+    case control
+
+    static func < (lhs: ShellActionModifier, rhs: ShellActionModifier) -> Bool {
+        lhs.rawValue < rhs.rawValue
+    }
+}
+
+enum ShellActionShortcutContext: String, Hashable {
+    case shell
+    case terminalFind = "terminal_find"
+}
+
+struct ShellActionShortcut: Hashable {
+    let key: String
+    let modifiers: Set<ShellActionModifier>
+    let context: ShellActionShortcutContext
+}
+
+enum ShellActionAvailability: Equatable {
+    case available
+    case unavailable(reason: String)
+
+    var isAvailable: Bool {
+        self == .available
+    }
+}
+
+enum ShellActionEffect: Equatable {
+    case workspaceCommand(ShellWorkspaceCommand)
+    case openTab(ShellLaunchTarget, spaceID: String?)
+    case closeTab(String?)
+    case closePane(String?)
+    case selectAdjacentSpace(Int)
+    case selectSpaceAt(Int)
+    case pinTab(String?)
+    case unpinTab(String?)
+    case updatePinnedTab(String?)
+    case disabledPlaceholder
+}
+
+enum ShellActionExecutionResult: Equatable {
+    case executed
+    case failed(reason: String)
+    case unavailable(reason: String)
+}
+
+enum ShellActionRegistryError: Error, Equatable {
+    case duplicateActionID(ShellActionID)
+    case duplicateShortcut(ShellActionShortcut, [ShellActionID])
+}
+
+struct ShellResolvedAction {
+    let descriptor: ShellActionDescriptor?
+    let resolvedTarget: ShellResolvedActionTarget
+    let availability: ShellActionAvailability
+}
+
+struct ShellActionDescriptor {
+    let id: ShellActionID
+    let title: String
+    let targetKind: ShellActionTargetKind
+    let defaultShortcut: ShellActionShortcut?
+    let effect: ShellActionEffect
+    private let availabilityEvaluator: (ShellStateSnapshot, ShellActionTarget) -> ShellActionAvailability
+
+    init(
+        id: ShellActionID,
+        title: String,
+        targetKind: ShellActionTargetKind,
+        defaultShortcut: ShellActionShortcut? = nil,
+        effect: ShellActionEffect,
+        availability: @escaping (ShellStateSnapshot, ShellActionTarget) -> ShellActionAvailability = {
+            _, _ in .available
+        }
+    ) {
+        self.id = id
+        self.title = title
+        self.targetKind = targetKind
+        self.defaultShortcut = defaultShortcut
+        self.effect = effect
+        availabilityEvaluator = availability
+    }
+
+    func availability(
+        state: ShellStateSnapshot,
+        target: ShellActionTarget
+    ) -> ShellActionAvailability {
+        availabilityEvaluator(state, target)
+    }
+}
+
+final class ShellActionRegistry {
+    let actions: [ShellActionDescriptor]
+
+    static let standard: ShellActionRegistry = {
+        do {
+            return try ShellActionRegistry(actions: standardActions)
+        } catch {
+            preconditionFailure("Invalid shell action registry: \(error)")
+        }
+    }()
+
+    init(actions: [ShellActionDescriptor]) throws {
+        var actionIDs = Set<ShellActionID>()
+        for action in actions {
+            guard actionIDs.insert(action.id).inserted else {
+                throw ShellActionRegistryError.duplicateActionID(action.id)
+            }
+        }
+
+        let shortcuts = Dictionary(grouping: actions.compactMap { action -> (ShellActionShortcut, ShellActionID)? in
+            guard let shortcut = action.defaultShortcut else { return nil }
+            return (shortcut, action.id)
+        }, by: { $0.0 })
+
+        for (shortcut, entries) in shortcuts where entries.count > 1 {
+            throw ShellActionRegistryError.duplicateShortcut(shortcut, entries.map(\.1))
+        }
+
+        self.actions = actions
+    }
+
+    func action(for id: ShellActionID) -> ShellActionDescriptor? {
+        actions.first { $0.id == id }
+    }
+
+    func resolve(
+        _ id: ShellActionID,
+        target: ShellActionTarget,
+        state: ShellStateSnapshot
+    ) -> ShellResolvedAction {
+        guard let descriptor = action(for: id) else {
+            return ShellResolvedAction(
+                descriptor: nil,
+                resolvedTarget: .unresolved,
+                availability: .unavailable(reason: "Action is not registered")
+            )
+        }
+
+        let resolvedTarget = Self.resolveTarget(
+            descriptor.targetKind,
+            target: target,
+            state: state
+        )
+        let availability = descriptor.availability(state: state, target: target)
+        return ShellResolvedAction(
+            descriptor: descriptor,
+            resolvedTarget: resolvedTarget,
+            availability: availability
+        )
+    }
+
+    func execute(
+        _ id: ShellActionID,
+        target: ShellActionTarget,
+        state: ShellStateSnapshot,
+        handler: (ShellActionEffect) -> Bool
+    ) -> ShellActionExecutionResult {
+        let resolved = resolve(id, target: target, state: state)
+        guard let descriptor = resolved.descriptor else {
+            return .unavailable(reason: "Action is not registered")
+        }
+        guard case .available = resolved.availability else {
+            if case .unavailable(let reason) = resolved.availability {
+                return .unavailable(reason: reason)
+            }
+            return .unavailable(reason: "Action is unavailable")
+        }
+
+        let effect = Self.effect(descriptor.effect, resolvedTarget: resolved.resolvedTarget)
+        guard handler(effect) else {
+            return .failed(reason: "Action handler failed")
+        }
+        return .executed
+    }
+
+    private static func resolveTarget(
+        _ targetKind: ShellActionTargetKind,
+        target: ShellActionTarget,
+        state: ShellStateSnapshot
+    ) -> ShellResolvedActionTarget {
+        switch targetKind {
+        case .currentSelection:
+            return .selection(
+                spaceID: state.focusedSpaceID,
+                tabID: state.focusedTabID,
+                paneID: state.focusedPaneID
+            )
+        case .tab:
+            if case .contextTab(let tabID) = target {
+                return .tab(tabID)
+            }
+            return state.focusedTabID.map(ShellResolvedActionTarget.tab) ?? .unresolved
+        case .pane:
+            if case .contextPane(let paneID) = target {
+                return .pane(paneID)
+            }
+            return state.focusedPaneID.map(ShellResolvedActionTarget.pane) ?? .unresolved
+        case .space:
+            switch target {
+            case .contextSpace(let spaceID):
+                return .space(spaceID)
+            case .spaceIndex(let index):
+                return .spaceIndex(index)
+            default:
+                return state.focusedSpaceID.map(ShellResolvedActionTarget.space) ?? .unresolved
+            }
+        case .destinationSpace:
+            guard case .tabToSpace(let tabID, let spaceID) = target else {
+                return .unresolved
+            }
+            return .tabToSpace(tabID: tabID, spaceID: spaceID)
+        }
+    }
+
+    private static func effect(
+        _ baseEffect: ShellActionEffect,
+        resolvedTarget: ShellResolvedActionTarget
+    ) -> ShellActionEffect {
+        switch baseEffect {
+        case .pinTab:
+            if case .tab(let tabID) = resolvedTarget {
+                return .pinTab(tabID)
+            }
+            return .pinTab(nil)
+        case .unpinTab:
+            if case .tab(let tabID) = resolvedTarget {
+                return .unpinTab(tabID)
+            }
+            return .unpinTab(nil)
+        case .updatePinnedTab:
+            if case .tab(let tabID) = resolvedTarget {
+                return .updatePinnedTab(tabID)
+            }
+            return .updatePinnedTab(nil)
+        case .closeTab:
+            if case .tab(let tabID) = resolvedTarget {
+                return .closeTab(tabID)
+            }
+            return .closeTab(nil)
+        case .closePane:
+            if case .pane(let paneID) = resolvedTarget {
+                return .closePane(paneID)
+            }
+            return .closePane(nil)
+        case .openTab(let launchTarget, _):
+            if case .space(let spaceID) = resolvedTarget {
+                return .openTab(launchTarget, spaceID: spaceID)
+            }
+            return baseEffect
+        case .selectSpaceAt:
+            if case .spaceIndex(let index) = resolvedTarget {
+                return .selectSpaceAt(index)
+            }
+            return baseEffect
+        default:
+            return baseEffect
+        }
+    }
+}
+
+private let standardActions: [ShellActionDescriptor] = [
+    ShellActionDescriptor(
+        id: .newTerminalTab,
+        title: "New Terminal Tab",
+        targetKind: .space,
+        defaultShortcut: ShellActionShortcut(key: "t", modifiers: [.command], context: .shell),
+        effect: .openTab(.shell, spaceID: nil)
+    ),
+    ShellActionDescriptor(
+        id: .newAlanTab,
+        title: "New alan tab",
+        targetKind: .space,
+        defaultShortcut: ShellActionShortcut(key: "t", modifiers: [.command, .option], context: .shell),
+        effect: .openTab(.alan, spaceID: nil)
+    ),
+    ShellActionDescriptor(
+        id: .paneSplitRight,
+        title: "Split Right",
+        targetKind: .pane,
+        defaultShortcut: ShellActionShortcut(key: "d", modifiers: [.command], context: .shell),
+        effect: .workspaceCommand(.splitRight),
+        availability: focusedPaneAvailability
+    ),
+    ShellActionDescriptor(
+        id: .paneSplitDown,
+        title: "Split Down",
+        targetKind: .pane,
+        defaultShortcut: ShellActionShortcut(key: "d", modifiers: [.command, .shift], context: .shell),
+        effect: .workspaceCommand(.splitDown),
+        availability: focusedPaneAvailability
+    ),
+    ShellActionDescriptor(
+        id: .paneSplitLeft,
+        title: "Split Left",
+        targetKind: .pane,
+        defaultShortcut: ShellActionShortcut(key: "d", modifiers: [.command, .option], context: .shell),
+        effect: .workspaceCommand(.splitLeft),
+        availability: focusedPaneAvailability
+    ),
+    ShellActionDescriptor(
+        id: .paneSplitUp,
+        title: "Split Up",
+        targetKind: .pane,
+        defaultShortcut: ShellActionShortcut(key: "d", modifiers: [.command, .option, .shift], context: .shell),
+        effect: .workspaceCommand(.splitUp),
+        availability: focusedPaneAvailability
+    ),
+    ShellActionDescriptor(
+        id: .paneEqualizeSplits,
+        title: "Equalize Splits",
+        targetKind: .currentSelection,
+        defaultShortcut: ShellActionShortcut(key: "=", modifiers: [.command, .option], context: .shell),
+        effect: .workspaceCommand(.equalizeSplits)
+    ),
+    ShellActionDescriptor(
+        id: .paneFocusLeft,
+        title: "Focus Pane Left",
+        targetKind: .pane,
+        defaultShortcut: ShellActionShortcut(key: "leftArrow", modifiers: [.command, .control], context: .shell),
+        effect: .workspaceCommand(.focusLeft),
+        availability: focusedPaneAvailability
+    ),
+    ShellActionDescriptor(
+        id: .paneFocusRight,
+        title: "Focus Pane Right",
+        targetKind: .pane,
+        defaultShortcut: ShellActionShortcut(key: "rightArrow", modifiers: [.command, .control], context: .shell),
+        effect: .workspaceCommand(.focusRight),
+        availability: focusedPaneAvailability
+    ),
+    ShellActionDescriptor(
+        id: .paneFocusUp,
+        title: "Focus Pane Up",
+        targetKind: .pane,
+        defaultShortcut: ShellActionShortcut(key: "upArrow", modifiers: [.command, .control], context: .shell),
+        effect: .workspaceCommand(.focusUp),
+        availability: focusedPaneAvailability
+    ),
+    ShellActionDescriptor(
+        id: .paneFocusDown,
+        title: "Focus Pane Down",
+        targetKind: .pane,
+        defaultShortcut: ShellActionShortcut(key: "downArrow", modifiers: [.command, .control], context: .shell),
+        effect: .workspaceCommand(.focusDown),
+        availability: focusedPaneAvailability
+    ),
+    ShellActionDescriptor(
+        id: .paneClose,
+        title: "Close Pane",
+        targetKind: .pane,
+        defaultShortcut: ShellActionShortcut(key: "w", modifiers: [.command, .shift], context: .shell),
+        effect: .closePane(nil),
+        availability: focusedPaneAvailability
+    ),
+    ShellActionDescriptor(
+        id: .tabClose,
+        title: "Close Tab",
+        targetKind: .tab,
+        defaultShortcut: ShellActionShortcut(key: "w", modifiers: [.command], context: .shell),
+        effect: .closeTab(nil),
+        availability: selectedTabAvailability
+    ),
+    ShellActionDescriptor(
+        id: .findOpen,
+        title: "Find",
+        targetKind: .pane,
+        defaultShortcut: ShellActionShortcut(key: "f", modifiers: [.command], context: .shell),
+        effect: .disabledPlaceholder,
+        availability: focusedPaneAvailability
+    ),
+    ShellActionDescriptor(
+        id: .spaceSelectPrevious,
+        title: "Previous Space",
+        targetKind: .space,
+        defaultShortcut: ShellActionShortcut(key: "leftArrow", modifiers: [.command, .option], context: .shell),
+        effect: .selectAdjacentSpace(-1)
+    ),
+    ShellActionDescriptor(
+        id: .spaceSelectNext,
+        title: "Next Space",
+        targetKind: .space,
+        defaultShortcut: ShellActionShortcut(key: "rightArrow", modifiers: [.command, .option], context: .shell),
+        effect: .selectAdjacentSpace(1)
+    ),
+    ShellActionDescriptor(
+        id: .spaceSelectByIndex,
+        title: "Select Space",
+        targetKind: .space,
+        effect: .selectSpaceAt(0)
+    ),
+    ShellActionDescriptor(
+        id: .tabPin,
+        title: "Pin Tab",
+        targetKind: .tab,
+        effect: .pinTab(nil),
+        availability: selectedTabAvailability
+    ),
+    ShellActionDescriptor(
+        id: .tabUnpin,
+        title: "Unpin Tab",
+        targetKind: .tab,
+        effect: .unpinTab(nil),
+        availability: selectedTabAvailability
+    ),
+    ShellActionDescriptor(
+        id: .tabUpdatePin,
+        title: "Update Pin",
+        targetKind: .tab,
+        effect: .updatePinnedTab(nil),
+        availability: selectedTabAvailability
+    ),
+    ShellActionDescriptor(
+        id: .tabMoveLeft,
+        title: "Move Tab Left",
+        targetKind: .tab,
+        effect: .disabledPlaceholder,
+        availability: disabledPlaceholder("Move Tab Left is not available yet")
+    ),
+    ShellActionDescriptor(
+        id: .tabMoveRight,
+        title: "Move Tab Right",
+        targetKind: .tab,
+        effect: .disabledPlaceholder,
+        availability: disabledPlaceholder("Move Tab Right is not available yet")
+    ),
+    ShellActionDescriptor(
+        id: .tabMoveToSpace,
+        title: "Move Tab to Space...",
+        targetKind: .destinationSpace,
+        effect: .disabledPlaceholder,
+        availability: disabledPlaceholder("Move Tab to Space is not available yet")
+    ),
+]
+
+private func focusedPaneAvailability(
+    state: ShellStateSnapshot,
+    target: ShellActionTarget
+) -> ShellActionAvailability {
+    switch target {
+    case .contextPane(let paneID):
+        return state.pane(paneID: paneID) == nil
+            ? .unavailable(reason: "Pane is not available")
+            : .available
+    default:
+        return state.focusedPaneID == nil
+            ? .unavailable(reason: "No focused pane")
+            : .available
+    }
+}
+
+private func selectedTabAvailability(
+    state: ShellStateSnapshot,
+    target: ShellActionTarget
+) -> ShellActionAvailability {
+    switch target {
+    case .contextTab(let tabID):
+        return state.tab(tabID: tabID) == nil
+            ? .unavailable(reason: "Tab is not available")
+            : .available
+    default:
+        return state.focusedTabID == nil
+            ? .unavailable(reason: "No selected tab")
+            : .available
+    }
+}
+
+private func disabledPlaceholder(
+    _ reason: String
+) -> (ShellStateSnapshot, ShellActionTarget) -> ShellActionAvailability {
+    { _, _ in .unavailable(reason: reason) }
+}

@@ -170,7 +170,10 @@ struct ShellSidebarView: View {
                             title: "New Tab",
                             systemImage: "plus",
                             action: {
-                                _ = host.openTerminalTab(in: space.spaceID)
+                                host.performShellAction(
+                                    .newTerminalTab,
+                                    target: .contextSpace(space.spaceID)
+                                )
                             }
                         )
                         .help("Create a tab in this space")
@@ -487,8 +490,7 @@ struct ShellSidebarView: View {
     }
 
     private func close(tab: ShellTab) {
-        host.select(tabID: tab.tabID)
-        _ = host.closeSelectedTab()
+        host.performShellAction(.tabClose, target: .contextTab(tab.tabID))
     }
 
     private func focusPane(_ paneID: String, in tab: ShellTab) {
@@ -542,29 +544,34 @@ struct ShellSidebarView: View {
             hoveredTabID = isHovering ? tab.tabID : nil
         }
         .contextMenu {
-            Button("New Tab") {
-                _ = host.openTerminalTab()
+            Button(host.shellActionTitle(.newTerminalTab)) {
+                host.performShellAction(.newTerminalTab)
             }
-            Button("Open in alan") {
-                _ = host.openAlanTab()
+            Button(host.shellActionTitle(.newAlanTab)) {
+                host.performShellAction(.newAlanTab)
             }
             Divider()
             if host.isTabPinned(tabID: tab.tabID) {
-                Button("Update Pin") {
-                    _ = host.updatePinnedTabSnapshot(tabID: tab.tabID)
+                Button(host.shellActionTitle(.tabUpdatePin)) {
+                    host.performShellAction(.tabUpdatePin, target: .contextTab(tab.tabID))
                 }
-                Button("Unpin Tab") {
-                    _ = host.unpinTab(tabID: tab.tabID)
+                .disabled(!host.shellActionAvailability(.tabUpdatePin, target: .contextTab(tab.tabID)).isAvailable)
+
+                Button(host.shellActionTitle(.tabUnpin)) {
+                    host.performShellAction(.tabUnpin, target: .contextTab(tab.tabID))
                 }
+                .disabled(!host.shellActionAvailability(.tabUnpin, target: .contextTab(tab.tabID)).isAvailable)
             } else {
-                Button("Pin Tab") {
-                    _ = host.pinTab(tabID: tab.tabID)
+                Button(host.shellActionTitle(.tabPin)) {
+                    host.performShellAction(.tabPin, target: .contextTab(tab.tabID))
                 }
+                .disabled(!host.shellActionAvailability(.tabPin, target: .contextTab(tab.tabID)).isAvailable)
             }
             Divider()
-            Button("Close Tab", role: .destructive) {
+            Button(host.shellActionTitle(.tabClose), role: .destructive) {
                 close(tab: tab)
             }
+            .disabled(!host.shellActionAvailability(.tabClose, target: .contextTab(tab.tabID)).isAvailable)
         }
     }
 

@@ -68,6 +68,7 @@
 		00000000000000000000003B /* Support/ShellSidebarSpaceContentPager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000013B /* Support/ShellSidebarSpaceContentPager.swift */; };
 		00000000000000000000003C /* Support/AlanCommandLineToolInstaller.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000013C /* Support/AlanCommandLineToolInstaller.swift */; };
 		00000000000000000000003D /* Support/ShellSidebarPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000013D /* Support/ShellSidebarPresentation.swift */; };
+		00000000000000000000003E /* Models/Shell/ShellActionRegistry.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000013E /* Models/Shell/ShellActionRegistry.swift */; };
 		00000000000000000000003F /* AppIcon.icon in Resources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000013F /* AppIcon.icon */; };
 /* End PBXBuildFile section */
 
@@ -134,6 +135,7 @@
 		00000000000000000000013B /* Support/ShellSidebarSpaceContentPager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Support/ShellSidebarSpaceContentPager.swift; sourceTree = "<group>"; };
 		00000000000000000000013C /* Support/AlanCommandLineToolInstaller.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Support/AlanCommandLineToolInstaller.swift; sourceTree = "<group>"; };
 		00000000000000000000013D /* Support/ShellSidebarPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Support/ShellSidebarPresentation.swift; sourceTree = "<group>"; };
+		00000000000000000000013E /* Models/Shell/ShellActionRegistry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models/Shell/ShellActionRegistry.swift; sourceTree = "<group>"; };
 		00000000000000000000013F /* AppIcon.icon */ = {isa = PBXFileReference; lastKnownFileType = folder.iconcomposer.icon; path = AppIcon.icon; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -281,6 +283,7 @@
 				000000000000000000000139 /* Models/Shell/ShellWorkspaceManifest.swift */,
 				000000000000000000000123 /* Models/Shell/ShellTreeMutations.swift */,
 				000000000000000000000124 /* Models/Shell/ShellStateMutations.swift */,
+				00000000000000000000013E /* Models/Shell/ShellActionRegistry.swift */,
 			);
 			name = Models/Shell;
 			sourceTree = "<group>";
@@ -457,6 +460,7 @@
 				000000000000000000000022 /* Models/Shell/ShellSnapshots.swift in Sources */,
 				000000000000000000000023 /* Models/Shell/ShellTreeMutations.swift in Sources */,
 				000000000000000000000024 /* Models/Shell/ShellStateMutations.swift in Sources */,
+				00000000000000000000003E /* Models/Shell/ShellActionRegistry.swift in Sources */,
 				000000000000000000000025 /* Services/Shell/ShellPaneProjectionService.swift in Sources */,
 				000000000000000000000026 /* Services/Shell/ShellStatePersistenceStore.swift in Sources */,
 				000000000000000000000027 /* Services/Terminal/TerminalHostRuntimeReporter.swift in Sources */,

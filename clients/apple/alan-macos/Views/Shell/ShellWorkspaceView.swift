@@ -25,18 +25,18 @@ struct ShellSpaceKeyboardShortcuts: View {
     var body: some View {
         VStack(spacing: 0) {
             Button("") {
-                host.selectAdjacentSpace(offset: -1)
+                host.performShellAction(.spaceSelectPrevious)
             }
             .keyboardShortcut(.leftArrow, modifiers: [.command, .option])
 
             Button("") {
-                host.selectAdjacentSpace(offset: 1)
+                host.performShellAction(.spaceSelectNext)
             }
             .keyboardShortcut(.rightArrow, modifiers: [.command, .option])
 
             ForEach(Array(host.spaces.prefix(9).enumerated()), id: \.element.spaceID) { index, _ in
                 Button("") {
-                    host.selectSpace(at: index)
+                    host.performShellAction(.spaceSelectByIndex, target: .spaceIndex(index))
                 }
                 .keyboardShortcut(
                     KeyEquivalent(Character(String(index + 1))),
