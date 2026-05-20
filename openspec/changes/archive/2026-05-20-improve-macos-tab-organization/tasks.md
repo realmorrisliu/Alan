@@ -63,6 +63,6 @@
 
 - [x] 6.1 Confirm the final UI stays Arc-like and does not introduce tab folders,
   global pinned tabs, heavy section headers, or Command UI scope.
-- [ ] 6.2 Before archive, sync accepted delta requirements into
+- [x] 6.2 Before archive, sync accepted delta requirements into
   `openspec/specs/`.
-- [ ] 6.3 Archive the OpenSpec change after implementation merges.
+- [x] 6.3 Archive the OpenSpec change after implementation merges.

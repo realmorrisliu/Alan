@@ -4,7 +4,6 @@
 Defines macOS shell workspace persistence, including workspace manifest restore
 authority, corrupt-manifest recovery, durable Spaces, pinned Tab snapshots,
 unpinned Tab lifecycle, active-task retention, and shell-state projection.
-
 ## Requirements
 ### Requirement: Workspace manifest is the restore authority
 The macOS shell SHALL use a versioned workspace manifest as the authoritative source for restoring Spaces, Tabs, pin snapshots, Tab lifecycle metadata, and the last selected Space/Tab across app restarts.
@@ -127,3 +126,45 @@ The macOS shell SHALL keep `ShellStateSnapshot` as the current UI/control-plane/
 - **WHEN** Alan for macOS restarts after publishing a shell state file in the previous process
 - **THEN** alan restores Spaces and Tabs from the workspace manifest
 - **AND** terminal runtimes are newly created rather than restored from the old shell state process snapshot
+
+### Requirement: Tab Organization Mutations Persist Immediately
+The macOS shell SHALL persist Tab reorder, pin/unpin, and Move to Space
+mutations to the workspace manifest immediately after the mutation is accepted.
+
+#### Scenario: Tab is reordered
+- **WHEN** the user reorders a Tab inside a Space section
+- **THEN** alan writes the new per-Space Tab order to the workspace manifest
+
+#### Scenario: Tab is pinned by drag
+- **WHEN** the user drags an Unpinned Tab into the Pinned section
+- **THEN** alan writes the pinned state and the current pin snapshot to the
+  workspace manifest
+
+#### Scenario: Tab is unpinned by drag
+- **WHEN** the user drags a Pinned Tab into the Unpinned section
+- **THEN** alan writes the unpinned state and updated section order to the
+  workspace manifest
+
+#### Scenario: Tab moves to another Space
+- **WHEN** a Tab is moved to a different Space
+- **THEN** alan writes the source Space order, target Space order, Tab Space
+  ownership, pin state, and selected Space/Tab outcome to the manifest
+
+### Requirement: Organization Preserves Runtime Identity
+The macOS shell SHALL preserve Tab, pane, split tree, and terminal runtime
+identity across reorder, pin/unpin, and Move to Space mutations.
+
+#### Scenario: Tab is reordered
+- **WHEN** a Tab changes order inside its Space
+- **THEN** its Tab ID, pane IDs, split tree, terminal runtime handles, scrollback,
+  metadata, and queued delivery state remain attached to the same Tab
+
+#### Scenario: Tab changes pin state
+- **WHEN** a Tab is pinned or unpinned
+- **THEN** alan changes organization metadata without restarting terminal
+  runtimes or recreating pane identities
+
+#### Scenario: Tab moves across Spaces
+- **WHEN** a Tab moves to another Space
+- **THEN** the moved Tab keeps its Tab ID, pane IDs, split tree, terminal
+  runtime handles, scrollback, metadata, and queued delivery state
