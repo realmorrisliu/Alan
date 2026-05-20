@@ -27,21 +27,19 @@ struct ShellSpaceKeyboardShortcuts: View {
             Button("") {
                 host.performShellAction(.spaceSelectPrevious)
             }
-            .keyboardShortcut(.leftArrow, modifiers: [.command, .option])
+            .shellActionKeyboardShortcut(host.shellActionShortcut(.spaceSelectPrevious))
 
             Button("") {
                 host.performShellAction(.spaceSelectNext)
             }
-            .keyboardShortcut(.rightArrow, modifiers: [.command, .option])
+            .shellActionKeyboardShortcut(host.shellActionShortcut(.spaceSelectNext))
 
             ForEach(Array(host.spaces.prefix(9).enumerated()), id: \.element.spaceID) { index, _ in
+                let target = ShellActionTarget.spaceIndex(index)
                 Button("") {
-                    host.performShellAction(.spaceSelectByIndex, target: .spaceIndex(index))
+                    host.performShellAction(.spaceSelectByIndex, target: target)
                 }
-                .keyboardShortcut(
-                    KeyEquivalent(Character(String(index + 1))),
-                    modifiers: [.command, .option]
-                )
+                .shellActionKeyboardShortcut(host.shellActionShortcut(.spaceSelectByIndex, target: target))
             }
         }
         .labelsHidden()

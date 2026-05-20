@@ -26,12 +26,12 @@ struct AlanMacShellCommands: Commands {
             Button(host.shellActionTitle(.newTerminalTab)) {
                 host.performShellAction(.newTerminalTab)
             }
-            .keyboardShortcut("t", modifiers: .command)
+            .shellActionKeyboardShortcut(host.shellActionShortcut(.newTerminalTab))
 
             Button(host.shellActionTitle(.newAlanTab)) {
                 host.performShellAction(.newAlanTab)
             }
-            .keyboardShortcut("t", modifiers: [.command, .option])
+            .shellActionKeyboardShortcut(host.shellActionShortcut(.newAlanTab))
 
             Button("Ask alan...") {
                 host.requestCommandInput()
@@ -43,70 +43,96 @@ struct AlanMacShellCommands: Commands {
             Button(host.shellActionTitle(.paneSplitRight)) {
                 host.performShellAction(.paneSplitRight)
             }
-            .keyboardShortcut("d", modifiers: .command)
+            .shellActionKeyboardShortcut(host.shellActionShortcut(.paneSplitRight))
             .disabled(!host.shellActionAvailability(.paneSplitRight).isAvailable)
 
             Button(host.shellActionTitle(.paneSplitDown)) {
                 host.performShellAction(.paneSplitDown)
             }
-            .keyboardShortcut("d", modifiers: [.command, .shift])
+            .shellActionKeyboardShortcut(host.shellActionShortcut(.paneSplitDown))
             .disabled(!host.shellActionAvailability(.paneSplitDown).isAvailable)
 
             Button(host.shellActionTitle(.paneSplitLeft)) {
                 host.performShellAction(.paneSplitLeft)
             }
-            .keyboardShortcut("d", modifiers: [.command, .option])
+            .shellActionKeyboardShortcut(host.shellActionShortcut(.paneSplitLeft))
             .disabled(!host.shellActionAvailability(.paneSplitLeft).isAvailable)
 
             Button(host.shellActionTitle(.paneSplitUp)) {
                 host.performShellAction(.paneSplitUp)
             }
-            .keyboardShortcut("d", modifiers: [.command, .option, .shift])
+            .shellActionKeyboardShortcut(host.shellActionShortcut(.paneSplitUp))
             .disabled(!host.shellActionAvailability(.paneSplitUp).isAvailable)
 
             Button(host.shellActionTitle(.paneEqualizeSplits)) {
                 host.performShellAction(.paneEqualizeSplits)
             }
-            .keyboardShortcut("=", modifiers: [.command, .option])
+            .shellActionKeyboardShortcut(host.shellActionShortcut(.paneEqualizeSplits))
 
             Divider()
 
             Button(host.shellActionTitle(.paneFocusLeft)) {
                 host.performShellAction(.paneFocusLeft)
             }
-            .keyboardShortcut(.leftArrow, modifiers: [.command, .control])
+            .shellActionKeyboardShortcut(host.shellActionShortcut(.paneFocusLeft))
             .disabled(!host.shellActionAvailability(.paneFocusLeft).isAvailable)
 
             Button(host.shellActionTitle(.paneFocusRight)) {
                 host.performShellAction(.paneFocusRight)
             }
-            .keyboardShortcut(.rightArrow, modifiers: [.command, .control])
+            .shellActionKeyboardShortcut(host.shellActionShortcut(.paneFocusRight))
             .disabled(!host.shellActionAvailability(.paneFocusRight).isAvailable)
 
             Button(host.shellActionTitle(.paneFocusUp)) {
                 host.performShellAction(.paneFocusUp)
             }
-            .keyboardShortcut(.upArrow, modifiers: [.command, .control])
+            .shellActionKeyboardShortcut(host.shellActionShortcut(.paneFocusUp))
             .disabled(!host.shellActionAvailability(.paneFocusUp).isAvailable)
 
             Button(host.shellActionTitle(.paneFocusDown)) {
                 host.performShellAction(.paneFocusDown)
             }
-            .keyboardShortcut(.downArrow, modifiers: [.command, .control])
+            .shellActionKeyboardShortcut(host.shellActionShortcut(.paneFocusDown))
             .disabled(!host.shellActionAvailability(.paneFocusDown).isAvailable)
+
+            Divider()
+
+            Button(host.shellActionTitle(.tabSelectPrevious)) {
+                host.performShellAction(.tabSelectPrevious)
+            }
+            .shellActionKeyboardShortcut(host.shellActionShortcut(.tabSelectPrevious))
+            .disabled(!host.shellActionAvailability(.tabSelectPrevious).isAvailable)
+
+            Button(host.shellActionTitle(.tabSelectNext)) {
+                host.performShellAction(.tabSelectNext)
+            }
+            .shellActionKeyboardShortcut(host.shellActionShortcut(.tabSelectNext))
+            .disabled(!host.shellActionAvailability(.tabSelectNext).isAvailable)
+
+            Button(host.shellActionTitle(.tabMoveLeft)) {
+                host.performShellAction(.tabMoveLeft)
+            }
+            .shellActionKeyboardShortcut(host.shellActionShortcut(.tabMoveLeft))
+            .disabled(!host.shellActionAvailability(.tabMoveLeft).isAvailable)
+
+            Button(host.shellActionTitle(.tabMoveRight)) {
+                host.performShellAction(.tabMoveRight)
+            }
+            .shellActionKeyboardShortcut(host.shellActionShortcut(.tabMoveRight))
+            .disabled(!host.shellActionAvailability(.tabMoveRight).isAvailable)
 
             Divider()
 
             Button(host.shellActionTitle(.paneClose)) {
                 host.performShellAction(.paneClose)
             }
-            .keyboardShortcut("w", modifiers: [.command, .shift])
+            .shellActionKeyboardShortcut(host.shellActionShortcut(.paneClose))
             .disabled(!host.shellActionAvailability(.paneClose).isAvailable)
 
             Button(host.shellActionTitle(.tabClose)) {
                 host.performShellAction(.tabClose)
             }
-            .keyboardShortcut("w", modifiers: .command)
+            .shellActionKeyboardShortcut(host.shellActionShortcut(.tabClose))
             .disabled(!host.shellActionAvailability(.tabClose).isAvailable)
         }
     }
@@ -147,6 +173,52 @@ struct AlanMacShellCommands: Commands {
             alert.alertStyle = .warning
             alert.addButton(withTitle: "OK")
             alert.runModal()
+        }
+    }
+}
+
+extension View {
+    @ViewBuilder
+    func shellActionKeyboardShortcut(_ shortcut: ShellActionShortcut?) -> some View {
+        if let shortcut,
+           let keyEquivalent = shortcut.swiftUIKeyEquivalent
+        {
+            keyboardShortcut(keyEquivalent, modifiers: shortcut.swiftUIModifiers)
+        } else {
+            self
+        }
+    }
+}
+
+extension ShellActionShortcut {
+    var swiftUIKeyEquivalent: KeyEquivalent? {
+        switch key {
+        case "leftArrow":
+            return .leftArrow
+        case "rightArrow":
+            return .rightArrow
+        case "upArrow":
+            return .upArrow
+        case "downArrow":
+            return .downArrow
+        default:
+            guard key.count == 1, let character = key.first else { return nil }
+            return KeyEquivalent(character)
+        }
+    }
+
+    var swiftUIModifiers: EventModifiers {
+        modifiers.reduce(into: EventModifiers()) { result, modifier in
+            switch modifier {
+            case .command:
+                result.insert(.command)
+            case .option:
+                result.insert(.option)
+            case .shift:
+                result.insert(.shift)
+            case .control:
+                result.insert(.control)
+            }
         }
     }
 }

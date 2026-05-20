@@ -421,8 +421,8 @@ private struct ShellPaneTreeLayoutView: View {
                     isSelected: selectedPaneID == pane.paneID,
                     runtimeRegistry: host.terminalRuntimeRegistry,
                     activationDelegate: host,
-                    onWorkspaceCommand: { command in
-                        host.performShellWorkspaceCommand(command)
+                    onShellAction: { actionID, target in
+                        host.performShellAction(actionID, target: target)
                     },
                     onCommandInput: {
                         host.requestCommandInput()
@@ -605,7 +605,7 @@ private struct ShellTerminalLeafView: View {
     let isSelected: Bool
     let runtimeRegistry: TerminalRuntimeRegistry
     let activationDelegate: TerminalHostActivationDelegate?
-    let onWorkspaceCommand: (ShellWorkspaceCommand) -> Void
+    let onShellAction: (ShellActionID, ShellActionTarget) -> Void
     let onCommandInput: () -> Void
     let onClosePane: () -> Void
     let onRuntimeUpdate: (TerminalHostRuntimeSnapshot) -> Void
@@ -630,7 +630,7 @@ private struct ShellTerminalLeafView: View {
                     isSelected: isSelected,
                     runtimeRegistry: runtimeRegistry,
                     activationDelegate: activationDelegate,
-                    onWorkspaceCommand: onWorkspaceCommand,
+                    onShellAction: onShellAction,
                     onCommandInput: onCommandInput,
                     onCloseRequest: { requiresConfirmation in
                         guard !requiresConfirmation else { return }

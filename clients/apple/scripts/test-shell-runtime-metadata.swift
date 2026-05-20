@@ -64,7 +64,9 @@ private enum ShellRuntimeMetadataTests {
         verifiesTerminalChildExitCanLeaveEmptyFocusedSpace()
         verifiesClosingTabReleasesTerminalRuntime()
         verifiesTabSelectionCommitsAuthoritativeFocus()
+        verifiesShellActionTabNavigationTargetsCurrentSelection()
         verifiesSpaceSelectionCommitsAuthoritativeFocus()
+        verifiesShellActionSpaceSelectionReportsMissingTargets()
         verifiesSplitTabSelectionUsesStablePaneWithoutChangingLayout()
         verifiesWorkspaceManifestStartupRestoresPinnedSnapshot()
         verifiesClosingLastTabLeavesSelectedSpaceEmptyAndPersistsManifest()
@@ -2077,7 +2079,7 @@ private enum ShellRuntimeMetadataTests {
             bootProfile: controller.bootProfile(for: targetPane),
             isSelected: false,
             activationDelegate: nil,
-            onWorkspaceCommand: nil,
+            onShellAction: nil,
             onCommandInput: nil,
             onCloseRequest: nil,
             onRuntimeUpdate: { _ in },
@@ -2102,6 +2104,24 @@ private enum ShellRuntimeMetadataTests {
         )
     }
 
+    private static func verifiesShellActionTabNavigationTargetsCurrentSelection() {
+        let controller = makeController()
+        _ = controller.openTerminalTab()
+        _ = controller.openTerminalTab()
+
+        let result = controller.performShellAction(.tabSelectPrevious, target: .contextTab("tab_main"))
+
+        expect(result == .executed, "previous-tab shortcut action must execute with multiple tabs")
+        expect(
+            controller.selectedTabID == "tab_2",
+            "keyboard tab navigation must use the current selected tab, not a context-menu tab target"
+        )
+        expect(
+            controller.shellState.focusedPaneID == "pane_2",
+            "keyboard tab navigation must commit focus for the selected tab"
+        )
+    }
+
     private static func verifiesSpaceSelectionCommitsAuthoritativeFocus() {
         let controller = makeController()
         _ = controller.createTerminalSpace(title: "Second", workingDirectory: "/tmp")
@@ -2115,7 +2135,7 @@ private enum ShellRuntimeMetadataTests {
             bootProfile: controller.bootProfile(for: targetPane),
             isSelected: false,
             activationDelegate: nil,
-            onWorkspaceCommand: nil,
+            onShellAction: nil,
             onCommandInput: nil,
             onCloseRequest: nil,
             onRuntimeUpdate: { _ in },
@@ -2142,6 +2162,22 @@ private enum ShellRuntimeMetadataTests {
         expect(
             targetHostView.focusCount == 1,
             "space selection must request focus for the target terminal runtime"
+        )
+    }
+
+    private static func verifiesShellActionSpaceSelectionReportsMissingTargets() {
+        let controller = makeController()
+        let selectedSpaceBefore = controller.selectedSpaceID
+
+        let result = controller.performShellAction(.spaceSelectByIndex, target: .spaceIndex(8))
+
+        expect(
+            result == .unavailable(reason: "Space is not available"),
+            "missing numeric space shortcuts must report a stable unavailable reason"
+        )
+        expect(
+            controller.selectedSpaceID == selectedSpaceBefore,
+            "missing numeric space shortcuts must not change the selected space"
         )
     }
 

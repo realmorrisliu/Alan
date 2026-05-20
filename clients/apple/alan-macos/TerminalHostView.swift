@@ -22,7 +22,7 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
     private var bootProfile: AlanShellBootProfile?
     private var isSelected = false
     private weak var activationDelegate: TerminalHostActivationDelegate?
-    private var workspaceCommandHandler: ((ShellWorkspaceCommand) -> Void)?
+    private var shellActionHandler: ((ShellActionID, ShellActionTarget) -> Void)?
     private var commandInputHandler: (() -> Void)?
     private var closeRequestHandler: ((Bool) -> Void)?
     private var runtimeObserver: ((TerminalHostRuntimeSnapshot) -> Void)?
@@ -140,7 +140,7 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
         isSelected: Bool,
         surfaceHandle: AlanTerminalSurfaceHandle?,
         activationDelegate: TerminalHostActivationDelegate?,
-        onWorkspaceCommand: ((ShellWorkspaceCommand) -> Void)?,
+        onShellAction: ((ShellActionID, ShellActionTarget) -> Void)?,
         onCommandInput: (() -> Void)?,
         onCloseRequest: ((Bool) -> Void)?,
         onRuntimeUpdate: @escaping (TerminalHostRuntimeSnapshot) -> Void,
@@ -154,7 +154,7 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
         self.isSelected = isSelected
         surfaceController.bind(surfaceHandle: surfaceHandle, paneID: pane?.paneID)
         self.activationDelegate = activationDelegate
-        workspaceCommandHandler = onWorkspaceCommand
+        shellActionHandler = onShellAction
         commandInputHandler = onCommandInput
         closeRequestHandler = onCloseRequest
         runtimeObserver = onRuntimeUpdate
@@ -945,7 +945,7 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
         if routeCommandInputKeyIfNeeded(event) {
             return true
         }
-        if routeWorkspaceKeyCommandIfNeeded(event) {
+        if routeShellActionKeyIfNeeded(event) {
             return true
         }
         if routeNativeKeyCommandIfNeeded(event) {
@@ -989,7 +989,7 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
         if routeCommandInputKeyIfNeeded(event) {
             return
         }
-        if routeWorkspaceKeyCommandIfNeeded(event) {
+        if routeShellActionKeyIfNeeded(event) {
             return
         }
         if routeNativeKeyCommandIfNeeded(event) {
@@ -1015,8 +1015,12 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
         )
 
         switch keyboardDecision {
-        case .workspaceCommand(let command):
-            workspaceCommandHandler?(command)
+        case .shellAction(let actionID, let target):
+            if actionID == .findOpen {
+                _ = beginFindInteraction()
+            } else {
+                shellActionHandler?(actionID, target)
+            }
             return
         case .nativeCommand("find"):
             _ = beginFindInteraction()
@@ -1370,19 +1374,22 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
             return beginFindInteraction()
         case .nativeCommand("quit"):
             return false
-        case .nativeCommand, .workspaceCommand, .terminalKey, .interpretTextInput, .drop:
+        case .nativeCommand, .shellAction, .terminalKey, .interpretTextInput, .drop:
             return false
         }
     }
 
-    private func routeWorkspaceKeyCommandIfNeeded(_ event: NSEvent) -> Bool {
-        guard case .workspaceCommand(let command) = surfaceController.routeKeyboard(
+    private func routeShellActionKeyIfNeeded(_ event: NSEvent) -> Bool {
+        guard case .shellAction(let actionID, let target) = surfaceController.routeKeyboard(
             terminalKeyInput(for: event),
             hasMarkedText: markedText.length > 0
         ) else {
             return false
         }
-        workspaceCommandHandler?(command)
+        if actionID == .findOpen {
+            return beginFindInteraction()
+        }
+        shellActionHandler?(actionID, target)
         return true
     }
 
