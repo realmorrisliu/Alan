@@ -198,6 +198,30 @@ require_active_complex_split_count_contrast() {
     fi
 }
 
+require_tab_organization_sidebar_contract() {
+    local file="$REPO_ROOT/clients/apple/alan-macos/Views/Shell/ShellSidebarView.swift"
+
+    require_pattern \
+        "clients/apple/alan-macos/Views/Shell/ShellSidebarView.swift" \
+        "ShellSidebarTabDragState\\.dragThreshold" \
+        "tab rows must use an explicit drag threshold so short clicks keep selecting tabs"
+
+    require_pattern \
+        "clients/apple/alan-macos/Views/Shell/ShellSidebarView.swift" \
+        "ShellSidebarTabInsertionLine" \
+        "tab row drag/drop must expose a direct insertion preview"
+
+    require_pattern \
+        "clients/apple/alan-macos/Views/Shell/ShellSidebarView.swift" \
+        "\\.tabToSpace\\(" \
+        "tab context menus must target the clicked tab when moving to another space"
+
+    if grep -Eq 'Text\("(Pinned|Unpinned)"\)' "$file"; then
+        printf 'error: tab organization sections must avoid heavy visible section headers\n' >&2
+        exit 1
+    fi
+}
+
 "$SCRIPT_DIR/setup-local-ghosttykit.sh" --check >/dev/null
 "$SCRIPT_DIR/check-architecture-maintainability.sh" >/dev/null
 reject_active_shell_radius_drift
@@ -206,6 +230,7 @@ reject_keydown_programmatic_text_delivery
 require_title_bar_full_width_hit_area
 require_pane_title_bar_trailing_close
 require_active_complex_split_count_contrast
+require_tab_organization_sidebar_contract
 
 require_pattern \
     "clients/apple/alan-macos/TerminalRuntimeRegistry.swift" \

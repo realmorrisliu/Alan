@@ -399,7 +399,7 @@ final class AlanShellSocketServer {
 private extension AlanShellControlCommandKind {
     var requiresHostHandler: Bool {
         switch self {
-        case .spaceCreate, .spaceOpenAlan, .tabOpen, .paneSplit, .agentActivity:
+        case .spaceCreate, .spaceOpenAlan, .tabOpen, .tabPin, .paneSplit, .agentActivity:
             return true
         default:
             return false

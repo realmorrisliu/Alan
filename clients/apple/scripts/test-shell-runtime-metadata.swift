@@ -72,6 +72,7 @@ private enum ShellRuntimeMetadataTests {
         verifiesClosingLastTabLeavesSelectedSpaceEmptyAndPersistsManifest()
         verifiesExplicitSpaceDeletionRemovesManifestSpace()
         verifiesPinSnapshotIsExplicitAndDoesNotTrackTransientChanges()
+        verifiesTabOrganizationPersistsOrderPinAndSpaceOwnership()
         verifiesManifestActiveTaskProjection()
         print("Shell runtime metadata tests passed.")
     }
@@ -2373,6 +2374,60 @@ private enum ShellRuntimeMetadataTests {
         expect(
             updatedTab?.pinSnapshot?.panes.first(where: { $0.paneID == "pane_1" })?.cwd == "/moved",
             "update-pin must replace pin cwd snapshot"
+        )
+    }
+
+    private static func verifiesTabOrganizationPersistsOrderPinAndSpaceOwnership() {
+        let windowID = "manifest_tab_org_\(UUID().uuidString)"
+        let manifestURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(windowID)-workspace.json")
+        let store = ShellWorkspaceManifestStore(manifestURL: manifestURL)
+        let controller = makeController(
+            windowID: windowID,
+            workspaceManifestStore: store,
+            workspaceManifest: ShellWorkspaceManifest.defaultManifest(
+                windowID: windowID,
+                defaultWorkingDirectory: "/tmp",
+                now: Date(timeIntervalSince1970: 60)
+            )
+        )
+
+        guard let secondTabID = controller.openTerminalTab(title: "Second"),
+              let targetSpaceID = controller.createTerminalSpace(title: "Target")
+        else {
+            fail("tab organization setup must create a second tab and target space")
+        }
+
+        guard let secondPaneID = controller.shellState.panes(in: secondTabID).first?.paneID else {
+            fail("second tab must have a pane")
+        }
+        controller.focus(paneID: secondPaneID)
+        expect(controller.pinTab(tabID: secondTabID), "pinning organization action must be accepted")
+        expect(
+            controller.moveTabToSpace(tabID: secondTabID, targetSpaceID: targetSpaceID),
+            "move-tab-to-space organization action must be accepted"
+        )
+
+        guard let savedManifest = decodeManifest(at: manifestURL),
+              let targetSpace = savedManifest.spaces.first(where: { $0.spaceID == targetSpaceID }),
+              let movedTab = targetSpace.tabs.first(where: { $0.tabID == secondTabID })
+        else {
+            fail("tab organization must persist the moved tab in the target space")
+        }
+
+        expect(movedTab.isPinned, "move-tab-to-space must preserve pin state")
+        expect(movedTab.pinSnapshot != nil, "pinning through organization must persist a pin snapshot")
+        expect(
+            targetSpace.tabs.filter(\.isPinned).map(\.tabID).last == secondTabID,
+            "moved pinned tab must be inserted in the target pinned section"
+        )
+        expect(
+            savedManifest.spaces.first?.tabs.allSatisfy { $0.tabID != secondTabID } == true,
+            "source space order must remove the moved tab"
+        )
+        expect(
+            savedManifest.selectedSpaceID == targetSpaceID && savedManifest.selectedTabID == secondTabID,
+            "moving the selected tab must persist the followed selection"
         )
     }
 

@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 #if os(macOS)
 struct ShellSidebarView: View {
@@ -16,6 +17,8 @@ struct ShellSidebarView: View {
     @State private var isCommandLauncherHovered = false
     @State private var tabListScrollOffsetY: CGFloat = 0
     @State private var activityFreshnessNow = Date()
+    @State private var activeTabDrag: ShellSidebarTabDragState?
+    @State private var tabInsertionPreview: ShellSidebarTabInsertionTarget?
 
     init(
         host: ShellHostController,
@@ -163,25 +166,20 @@ struct ShellSidebarView: View {
             }
             .frame(height: 0)
 
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: 0) {
                 if let space = space(for: spaceID) {
-                    if space.tabs.isEmpty {
-                        ShellCompactEmptyAction(
-                            title: "New Tab",
-                            systemImage: "plus",
-                            action: {
-                                host.performShellAction(
-                                    .newTerminalTab,
-                                    target: .contextSpace(space.spaceID)
-                                )
-                            }
-                        )
-                        .help("Create a tab in this space")
-                    } else {
-                        ForEach(space.tabs) { tab in
-                            tabListRow(for: tab)
+                    tabOrganizationSections(for: space)
+                    ShellCompactEmptyAction(
+                        title: "New Tab",
+                        systemImage: "plus",
+                        action: {
+                            host.performShellAction(
+                                .newTerminalTab,
+                                target: .contextSpace(space.spaceID)
+                            )
                         }
-                    }
+                    )
+                    .help("Create a tab in this space")
                 } else {
                     ShellCompactEmptyAction(
                         title: "New Space",
@@ -202,6 +200,83 @@ struct ShellSidebarView: View {
             guard spaceID == sourceSpaceID else { return }
             tabListScrollOffsetY = offsetY
         }
+    }
+
+    @ViewBuilder
+    private func tabOrganizationSections(for space: ShellSpace) -> some View {
+        let pinnedTabs = space.pinnedTabs
+        let unpinnedTabs = space.unpinnedTabs
+
+        if !pinnedTabs.isEmpty {
+            tabRows(
+                pinnedTabs,
+                in: space,
+                section: .pinned
+            )
+        }
+
+        if !pinnedTabs.isEmpty && !unpinnedTabs.isEmpty {
+            ShellSidebarTabSectionDivider()
+                .padding(.vertical, 4)
+        }
+
+        tabRows(
+            unpinnedTabs,
+            in: space,
+            section: .unpinned
+        )
+    }
+
+    @ViewBuilder
+    private func tabRows(
+        _ tabs: [ShellTab],
+        in space: ShellSpace,
+        section: ShellTabOrganizationSection
+    ) -> some View {
+        ForEach(Array(tabs.enumerated()), id: \.element.id) { index, tab in
+            insertionPreviewLine(
+                spaceID: space.spaceID,
+                section: section,
+                index: index
+            )
+            tabListRow(for: tab, in: space, section: section, index: index)
+        }
+
+        insertionPreviewLine(
+            spaceID: space.spaceID,
+            section: section,
+            index: tabs.count
+        )
+        .frame(height: tabs.isEmpty ? 8 : 4)
+        .onDrop(
+            of: [.plainText],
+            delegate: ShellSidebarTabDropDelegate(
+                target: ShellSidebarTabInsertionTarget(
+                    spaceID: space.spaceID,
+                    section: section,
+                    index: tabs.count
+                ),
+                activeDrag: $activeTabDrag,
+                preview: $tabInsertionPreview,
+                host: host
+            )
+        )
+    }
+
+    @ViewBuilder
+    private func insertionPreviewLine(
+        spaceID: String,
+        section: ShellTabOrganizationSection,
+        index: Int
+    ) -> some View {
+        let target = ShellSidebarTabInsertionTarget(
+            spaceID: spaceID,
+            section: section,
+            index: index
+        )
+        ShellSidebarTabInsertionLine(
+            isVisible: tabInsertionPreview == target
+        )
     }
 
     private var spaceDock: some View {
@@ -505,7 +580,12 @@ struct ShellSidebarView: View {
     }
 
     @ViewBuilder
-    private func tabListRow(for tab: ShellTab) -> some View {
+    private func tabListRow(
+        for tab: ShellTab,
+        in space: ShellSpace,
+        section: ShellTabOrganizationSection,
+        index: Int
+    ) -> some View {
         let isSelected = host.selectedTab?.tabID == tab.tabID
         let isHovered = hoveredTabID == tab.tabID
         let projection = shellSidebarTabProjection(
@@ -543,12 +623,38 @@ struct ShellSidebarView: View {
         .onHover { isHovering in
             hoveredTabID = isHovering ? tab.tabID : nil
         }
+        .simultaneousGesture(
+            DragGesture(minimumDistance: ShellSidebarTabDragState.dragThreshold)
+                .onChanged { _ in
+                    beginTabDragIfNeeded(tab: tab, space: space, section: section, index: index)
+                }
+                .onEnded { _ in
+                    scheduleTabDragCleanup()
+                }
+        )
+        .onDrag {
+            beginTabDragIfNeeded(tab: tab, space: space, section: section, index: index)
+            return NSItemProvider(object: tab.tabID as NSString)
+        }
+        .onDrop(
+            of: [.plainText],
+            delegate: ShellSidebarTabDropDelegate(
+                target: ShellSidebarTabInsertionTarget(
+                    spaceID: space.spaceID,
+                    section: section,
+                    index: index
+                ),
+                activeDrag: $activeTabDrag,
+                preview: $tabInsertionPreview,
+                host: host
+            )
+        )
         .contextMenu {
             Button(host.shellActionTitle(.newTerminalTab)) {
-                host.performShellAction(.newTerminalTab)
+                host.performShellAction(.newTerminalTab, target: .contextSpace(space.spaceID))
             }
             Button(host.shellActionTitle(.newAlanTab)) {
-                host.performShellAction(.newAlanTab)
+                host.performShellAction(.newAlanTab, target: .contextSpace(space.spaceID))
             }
             Divider()
             if host.isTabPinned(tabID: tab.tabID) {
@@ -567,11 +673,64 @@ struct ShellSidebarView: View {
                 }
                 .disabled(!host.shellActionAvailability(.tabPin, target: .contextTab(tab.tabID)).isAvailable)
             }
+            if host.spaces.count > 1 {
+                Menu(host.shellActionTitle(.tabMoveToSpace)) {
+                    ForEach(host.spaces.filter { $0.spaceID != space.spaceID }) { targetSpace in
+                        Button(targetSpace.title) {
+                            host.performShellAction(
+                                .tabMoveToSpace,
+                                target: .tabToSpace(
+                                    tabID: tab.tabID,
+                                    spaceID: targetSpace.spaceID
+                                )
+                            )
+                        }
+                        .disabled(
+                            !host.shellActionAvailability(
+                                .tabMoveToSpace,
+                                target: .tabToSpace(
+                                    tabID: tab.tabID,
+                                    spaceID: targetSpace.spaceID
+                                )
+                            ).isAvailable
+                        )
+                    }
+                }
+            }
             Divider()
             Button(host.shellActionTitle(.tabClose), role: .destructive) {
                 close(tab: tab)
             }
             .disabled(!host.shellActionAvailability(.tabClose, target: .contextTab(tab.tabID)).isAvailable)
+        }
+    }
+
+    private func beginTabDragIfNeeded(
+        tab: ShellTab,
+        space: ShellSpace,
+        section: ShellTabOrganizationSection,
+        index: Int
+    ) {
+        let nextDrag = ShellSidebarTabDragState(
+            tabID: tab.tabID,
+            sourceSpaceID: space.spaceID,
+            sourceSection: section,
+            sourceIndex: index
+        )
+        if activeTabDrag != nextDrag {
+            activeTabDrag = nextDrag
+        }
+    }
+
+    private func clearTabDragPreview() {
+        activeTabDrag = nil
+        tabInsertionPreview = nil
+    }
+
+    private func scheduleTabDragCleanup() {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+            guard tabInsertionPreview == nil else { return }
+            activeTabDrag = nil
         }
     }
 
@@ -704,6 +863,108 @@ private struct ShellSidebarTabListOffsetPreferenceKey: PreferenceKey {
 
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
         value = nextValue()
+    }
+}
+
+private struct ShellSidebarTabDragState: Equatable {
+    static let dragThreshold: CGFloat = 7
+
+    let tabID: String
+    let sourceSpaceID: String
+    let sourceSection: ShellTabOrganizationSection
+    let sourceIndex: Int
+}
+
+private struct ShellSidebarTabInsertionTarget: Equatable {
+    let spaceID: String
+    let section: ShellTabOrganizationSection
+    let index: Int
+}
+
+private struct ShellSidebarTabDropDelegate: DropDelegate {
+    let target: ShellSidebarTabInsertionTarget
+    @Binding var activeDrag: ShellSidebarTabDragState?
+    @Binding var preview: ShellSidebarTabInsertionTarget?
+    let host: ShellHostController
+
+    func dropEntered(info: DropInfo) {
+        preview = resolvedTarget(for: info)
+    }
+
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        preview = resolvedTarget(for: info)
+        return DropProposal(operation: .move)
+    }
+
+    func dropExited(info: DropInfo) {
+        if preview == target {
+            preview = nil
+        }
+    }
+
+    func performDrop(info: DropInfo) -> Bool {
+        guard let activeDrag else {
+            preview = nil
+            return false
+        }
+
+        let insertionTarget = resolvedTarget(for: info)
+        preview = nil
+        self.activeDrag = nil
+
+        if activeDrag.sourceSpaceID == insertionTarget.spaceID,
+           activeDrag.sourceSection == insertionTarget.section,
+           activeDrag.sourceIndex == insertionTarget.index
+        {
+            return true
+        }
+
+        return host.reorderTab(
+            tabID: activeDrag.tabID,
+            targetSpaceID: insertionTarget.spaceID,
+            section: insertionTarget.section,
+            index: insertionTarget.index
+        )
+    }
+
+    private func resolvedTarget(for info: DropInfo) -> ShellSidebarTabInsertionTarget {
+        let rowMidpoint: CGFloat = 24
+        let sectionCount = host.shellState
+            .space(spaceID: target.spaceID)?
+            .tabs(in: target.section)
+            .count ?? target.index
+        let adjustedIndex = info.location.y > rowMidpoint
+            ? target.index + 1
+            : target.index
+        return ShellSidebarTabInsertionTarget(
+            spaceID: target.spaceID,
+            section: target.section,
+            index: min(max(adjustedIndex, 0), sectionCount)
+        )
+    }
+}
+
+private struct ShellSidebarTabSectionDivider: View {
+    var body: some View {
+        Rectangle()
+            .fill(ShellPalette.line.opacity(0.18))
+            .frame(height: 0.5)
+            .padding(.horizontal, ShellSidebarMetrics.rowInset + 4)
+            .allowsHitTesting(false)
+    }
+}
+
+private struct ShellSidebarTabInsertionLine: View {
+    let isVisible: Bool
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: ShellRadii.micro, style: .continuous)
+            .fill(ShellPalette.accent.opacity(isVisible ? 0.72 : 0))
+            .frame(height: 2)
+            .padding(.horizontal, ShellSidebarMetrics.rowInset + 2)
+            .padding(.vertical, isVisible ? 3 : 0)
+            .animation(.easeOut(duration: 0.10), value: isVisible)
+            .accessibilityHidden(true)
     }
 }
 

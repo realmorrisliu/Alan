@@ -15,8 +15,9 @@ private enum ShellActionRegistryTests {
         try verifiesShortcutConflictsAreRejected()
         try verifiesDynamicSpaceShortcutConflictsAreRejected()
         try verifiesContextTabTargetDoesNotSelectTabFirst()
-        try verifiesUnavailableActionDoesNotExecuteHandler()
+        try verifiesMoveToSpaceRequiresExplicitTarget()
         try verifiesUnavailableShortcutActionDoesNotExecuteHandler()
+        try verifiesMoveTabShortcutRoutesHandler()
         try verifiesCommandInputRemainsOutOfRegistry()
         print("Shell action registry tests passed.")
     }
@@ -232,7 +233,7 @@ private enum ShellActionRegistryTests {
         )
     }
 
-    private static func verifiesUnavailableActionDoesNotExecuteHandler() throws {
+    private static func verifiesMoveToSpaceRequiresExplicitTarget() throws {
         let state = ShellStateSnapshot.bootstrapDefault(workingDirectory: "/tmp")
         var handledEffects: [ShellActionEffect] = []
 
@@ -246,8 +247,8 @@ private enum ShellActionRegistryTests {
         }
 
         expect(
-            result == .unavailable(reason: "Move Tab to Space is not available yet"),
-            "placeholder actions must be disabled"
+            result == .unavailable(reason: "Move target is required"),
+            "move-tab-to-space must require an explicit tab and destination space target"
         )
         expect(handledEffects.isEmpty, "unavailable actions must not execute handlers")
     }
@@ -270,10 +271,36 @@ private enum ShellActionRegistryTests {
         }
 
         expect(
-            result == .unavailable(reason: "Move Tab Left is not available yet"),
-            "disabled move-tab shortcuts must report a stable unavailable reason"
+            result == .unavailable(reason: "No adjacent tab in section"),
+            "move-tab shortcuts must report a stable unavailable reason at section edges"
         )
         expect(handledEffects.isEmpty, "disabled move-tab shortcuts must not mutate state")
+    }
+
+    private static func verifiesMoveTabShortcutRoutesHandler() throws {
+        var state = ShellStateSnapshot.bootstrapDefault(workingDirectory: "/tmp")
+        state = try state.openingTab(
+            launchTarget: .shell,
+            in: "space_main",
+            title: "Second",
+            workingDirectory: "/tmp"
+        ).state
+
+        var handledEffects: [ShellActionEffect] = []
+        let result = ShellActionRegistry.standard.execute(
+            .tabMoveLeft,
+            target: .currentSelection,
+            state: state
+        ) { effect in
+            handledEffects.append(effect)
+            return true
+        }
+
+        expect(result == .executed, "move-tab-left must execute when an adjacent tab exists")
+        expect(
+            handledEffects == [.moveTab(state.focusedTabID, offset: -1)],
+            "move-tab-left must route the selected tab and offset to the handler"
+        )
     }
 
     private static func verifiesCommandInputRemainsOutOfRegistry() throws {
@@ -284,8 +311,8 @@ private enum ShellActionRegistryTests {
             ShellActionRegistry.standard.action(for: .tabMoveToSpace)?.availability(
                 state: ShellStateSnapshot.bootstrapDefault(workingDirectory: "/tmp"),
                 target: .currentSelection
-            ) == .unavailable(reason: "Move Tab to Space is not available yet"),
-            "future tab organization actions must be registered as disabled placeholders"
+            ) == .unavailable(reason: "Move target is required"),
+            "move-tab-to-space must stay explicit and avoid implicit current-space targets"
         )
     }
 }

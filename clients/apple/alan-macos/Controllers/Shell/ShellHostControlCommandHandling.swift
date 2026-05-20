@@ -103,8 +103,12 @@ extension ShellHostController {
         candidates: [AlanShellRoutingCandidate]? = nil,
         events: [AlanShellEventEnvelope]? = nil,
         spaceID: String? = nil,
+        sourceSpaceID: String? = nil,
+        targetSpaceID: String? = nil,
         tabID: String? = nil,
         paneID: String? = nil,
+        section: ShellTabOrganizationSection? = nil,
+        index: Int? = nil,
         acceptedBytes: Int? = nil,
         deliveryCode: String? = nil,
         runtimePhase: String? = nil,
@@ -126,8 +130,12 @@ extension ShellHostController {
             events: events,
             focusedPaneID: shellState.focusedPaneID,
             spaceID: spaceID,
+            sourceSpaceID: sourceSpaceID,
+            targetSpaceID: targetSpaceID,
             tabID: tabID,
             paneID: paneID,
+            section: section,
+            index: index,
             acceptedBytes: acceptedBytes,
             deliveryCode: deliveryCode,
             runtimePhase: runtimePhase,
@@ -242,6 +250,154 @@ extension ShellHostController {
                     errorMessage: "alan terminal workspace must keep at least one tab open."
                 )
             }
+
+        case .tabPin:
+            let tabID = command.tabID ?? selectedTabID
+            guard let tabID else {
+                return response(
+                    requestID: command.requestID,
+                    applied: false,
+                    errorCode: "tab_required",
+                    errorMessage: "tab_id is required."
+                )
+            }
+            let sourceLocation = shellState.tabOrganizationLocation(tabID: tabID)
+            guard pinTab(tabID: tabID),
+                  let currentLocation = shellState.tabOrganizationLocation(tabID: tabID)
+            else {
+                return response(
+                    requestID: command.requestID,
+                    applied: false,
+                    tabID: tabID,
+                    errorCode: "tab_not_found",
+                    errorMessage: "The requested tab does not exist."
+                )
+            }
+            return response(
+                requestID: command.requestID,
+                applied: true,
+                spaceID: currentLocation.spaceID,
+                sourceSpaceID: sourceLocation?.spaceID,
+                tabID: tabID,
+                paneID: shellState.focusedPaneID,
+                section: currentLocation.section,
+                index: currentLocation.index
+            )
+
+        case .tabUnpin:
+            let tabID = command.tabID ?? selectedTabID
+            guard let tabID else {
+                return response(
+                    requestID: command.requestID,
+                    applied: false,
+                    errorCode: "tab_required",
+                    errorMessage: "tab_id is required."
+                )
+            }
+            let sourceLocation = shellState.tabOrganizationLocation(tabID: tabID)
+            guard unpinTab(tabID: tabID),
+                  let currentLocation = shellState.tabOrganizationLocation(tabID: tabID)
+            else {
+                return response(
+                    requestID: command.requestID,
+                    applied: false,
+                    tabID: tabID,
+                    errorCode: "tab_not_found",
+                    errorMessage: "The requested tab does not exist."
+                )
+            }
+            return response(
+                requestID: command.requestID,
+                applied: true,
+                spaceID: currentLocation.spaceID,
+                sourceSpaceID: sourceLocation?.spaceID,
+                tabID: tabID,
+                paneID: shellState.focusedPaneID,
+                section: currentLocation.section,
+                index: currentLocation.index
+            )
+
+        case .tabReorder:
+            guard let tabID = command.tabID,
+                  let section = command.section,
+                  let index = command.index
+            else {
+                return response(
+                    requestID: command.requestID,
+                    applied: false,
+                    tabID: command.tabID,
+                    errorCode: "tab_reorder_target_required",
+                    errorMessage: "tab_id, section, and index are required."
+                )
+            }
+            let sourceLocation = shellState.tabOrganizationLocation(tabID: tabID)
+            guard reorderTab(
+                tabID: tabID,
+                targetSpaceID: command.spaceID,
+                section: section,
+                index: index
+            ),
+            let currentLocation = shellState.tabOrganizationLocation(tabID: tabID)
+            else {
+                return response(
+                    requestID: command.requestID,
+                    applied: false,
+                    spaceID: command.spaceID,
+                    tabID: tabID,
+                    section: section,
+                    index: index,
+                    errorCode: "invalid_tab_organization_target",
+                    errorMessage: "The requested tab organization target is not available."
+                )
+            }
+            return response(
+                requestID: command.requestID,
+                applied: true,
+                spaceID: currentLocation.spaceID,
+                sourceSpaceID: sourceLocation?.spaceID,
+                targetSpaceID: command.spaceID,
+                tabID: tabID,
+                paneID: shellState.focusedPaneID,
+                section: currentLocation.section,
+                index: currentLocation.index
+            )
+
+        case .tabMoveToSpace:
+            guard let tabID = command.tabID,
+                  let targetSpaceID = command.targetSpaceID ?? command.spaceID
+            else {
+                return response(
+                    requestID: command.requestID,
+                    applied: false,
+                    tabID: command.tabID,
+                    errorCode: "tab_move_target_required",
+                    errorMessage: "tab_id and target_space_id are required."
+                )
+            }
+            let sourceLocation = shellState.tabOrganizationLocation(tabID: tabID)
+            guard moveTabToSpace(tabID: tabID, targetSpaceID: targetSpaceID),
+                  let currentLocation = shellState.tabOrganizationLocation(tabID: tabID)
+            else {
+                return response(
+                    requestID: command.requestID,
+                    applied: false,
+                    targetSpaceID: targetSpaceID,
+                    tabID: tabID,
+                    errorCode: "invalid_move_target",
+                    errorMessage: "The requested tab could not be moved to the target space."
+                )
+            }
+            return response(
+                requestID: command.requestID,
+                applied: true,
+                spaceID: currentLocation.spaceID,
+                sourceSpaceID: sourceLocation?.spaceID,
+                targetSpaceID: targetSpaceID,
+                tabID: tabID,
+                paneID: shellState.focusedPaneID,
+                section: currentLocation.section,
+                index: currentLocation.index
+            )
 
         case .paneList:
             return response(
