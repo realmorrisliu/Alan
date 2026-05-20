@@ -148,6 +148,183 @@ enum AlanShellLocalCommandExecutor {
                 return nil
             }
 
+        case .tabPin:
+            guard let tabID = command.tabID ?? state.focusedTabID else {
+                return AlanShellLocalCommandResult(
+                    response: response(
+                        for: command,
+                        state: state,
+                        applied: false,
+                        errorCode: "tab_required",
+                        errorMessage: "tab_id is required."
+                    ),
+                    updatedState: nil,
+                    sideEffect: nil
+                )
+            }
+            do {
+                let result = try state.pinningTab(tabID)
+                let location = result.state.tabOrganizationLocation(tabID: tabID)
+                return AlanShellLocalCommandResult(
+                    response: response(
+                        for: command,
+                        state: result.state,
+                        applied: true,
+                        spaceID: location?.spaceID,
+                        tabID: tabID,
+                        paneID: result.state.focusedPaneID,
+                        section: location?.section,
+                        index: location?.index
+                    ),
+                    updatedState: result.state,
+                    sideEffect: nil
+                )
+            } catch let error as ShellStateMutationError {
+                return AlanShellLocalCommandResult(
+                    response: failureResponse(for: error, command: command, state: state),
+                    updatedState: nil,
+                    sideEffect: nil
+                )
+            } catch {
+                return nil
+            }
+
+        case .tabUnpin:
+            guard let tabID = command.tabID ?? state.focusedTabID else {
+                return AlanShellLocalCommandResult(
+                    response: response(
+                        for: command,
+                        state: state,
+                        applied: false,
+                        errorCode: "tab_required",
+                        errorMessage: "tab_id is required."
+                    ),
+                    updatedState: nil,
+                    sideEffect: nil
+                )
+            }
+            do {
+                let result = try state.unpinningTab(tabID)
+                let location = result.state.tabOrganizationLocation(tabID: tabID)
+                return AlanShellLocalCommandResult(
+                    response: response(
+                        for: command,
+                        state: result.state,
+                        applied: true,
+                        spaceID: location?.spaceID,
+                        tabID: tabID,
+                        paneID: result.state.focusedPaneID,
+                        section: location?.section,
+                        index: location?.index
+                    ),
+                    updatedState: result.state,
+                    sideEffect: nil
+                )
+            } catch let error as ShellStateMutationError {
+                return AlanShellLocalCommandResult(
+                    response: failureResponse(for: error, command: command, state: state),
+                    updatedState: nil,
+                    sideEffect: nil
+                )
+            } catch {
+                return nil
+            }
+
+        case .tabReorder:
+            guard let tabID = command.tabID,
+                  let section = command.section,
+                  let index = command.index
+            else {
+                return AlanShellLocalCommandResult(
+                    response: response(
+                        for: command,
+                        state: state,
+                        applied: false,
+                        tabID: command.tabID,
+                        errorCode: "tab_reorder_target_required",
+                        errorMessage: "tab_id, section, and index are required."
+                    ),
+                    updatedState: nil,
+                    sideEffect: nil
+                )
+            }
+            do {
+                let result = try state.organizingTab(
+                    tabID: tabID,
+                    targetSpaceID: command.spaceID,
+                    section: section,
+                    index: index
+                )
+                let location = result.state.tabOrganizationLocation(tabID: tabID)
+                return AlanShellLocalCommandResult(
+                    response: response(
+                        for: command,
+                        state: result.state,
+                        applied: true,
+                        spaceID: location?.spaceID,
+                        tabID: tabID,
+                        paneID: result.state.focusedPaneID,
+                        section: location?.section,
+                        index: location?.index
+                    ),
+                    updatedState: result.state,
+                    sideEffect: nil
+                )
+            } catch let error as ShellStateMutationError {
+                return AlanShellLocalCommandResult(
+                    response: failureResponse(for: error, command: command, state: state),
+                    updatedState: nil,
+                    sideEffect: nil
+                )
+            } catch {
+                return nil
+            }
+
+        case .tabMoveToSpace:
+            guard let tabID = command.tabID,
+                  let targetSpaceID = command.targetSpaceID ?? command.spaceID
+            else {
+                return AlanShellLocalCommandResult(
+                    response: response(
+                        for: command,
+                        state: state,
+                        applied: false,
+                        tabID: command.tabID,
+                        errorCode: "tab_move_target_required",
+                        errorMessage: "tab_id and target_space_id are required."
+                    ),
+                    updatedState: nil,
+                    sideEffect: nil
+                )
+            }
+            do {
+                let result = try state.movingTabToSpace(tabID: tabID, targetSpaceID: targetSpaceID)
+                let location = result.state.tabOrganizationLocation(tabID: tabID)
+                return AlanShellLocalCommandResult(
+                    response: response(
+                        for: command,
+                        state: result.state,
+                        applied: true,
+                        spaceID: location?.spaceID,
+                        targetSpaceID: targetSpaceID,
+                        tabID: tabID,
+                        paneID: result.state.focusedPaneID,
+                        section: location?.section,
+                        index: location?.index
+                    ),
+                    updatedState: result.state,
+                    sideEffect: nil
+                )
+            } catch let error as ShellStateMutationError {
+                return AlanShellLocalCommandResult(
+                    response: failureResponse(for: error, command: command, state: state),
+                    updatedState: nil,
+                    sideEffect: nil
+                )
+            } catch {
+                return nil
+            }
+
         case .paneList:
             return AlanShellLocalCommandResult(
                 response: response(
@@ -624,6 +801,16 @@ enum AlanShellLocalCommandExecutor {
                 errorCode: error.rawValue,
                 errorMessage: "The pane cannot be moved onto its current tab."
             )
+        case .invalidTabOrganizationTarget:
+            return response(
+                for: command,
+                state: state,
+                applied: false,
+                spaceID: command.spaceID,
+                tabID: command.tabID,
+                errorCode: error.rawValue,
+                errorMessage: "The requested tab organization target is not available."
+            )
         }
     }
 
@@ -640,8 +827,12 @@ enum AlanShellLocalCommandExecutor {
         candidates: [AlanShellRoutingCandidate]? = nil,
         events: [AlanShellEventEnvelope]? = nil,
         spaceID: String? = nil,
+        sourceSpaceID: String? = nil,
+        targetSpaceID: String? = nil,
         tabID: String? = nil,
         paneID: String? = nil,
+        section: ShellTabOrganizationSection? = nil,
+        index: Int? = nil,
         acceptedBytes: Int? = nil,
         deliveryCode: String? = nil,
         runtimePhase: String? = nil,
@@ -663,8 +854,12 @@ enum AlanShellLocalCommandExecutor {
             events: events,
             focusedPaneID: state.focusedPaneID,
             spaceID: spaceID,
+            sourceSpaceID: sourceSpaceID,
+            targetSpaceID: targetSpaceID,
             tabID: tabID,
             paneID: paneID,
+            section: section,
+            index: index,
             acceptedBytes: acceptedBytes,
             deliveryCode: deliveryCode,
             runtimePhase: runtimePhase,

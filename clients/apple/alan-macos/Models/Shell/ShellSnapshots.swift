@@ -444,6 +444,7 @@ struct ShellTab: Identifiable, Codable, Equatable {
     let kind: ShellTabKind
     let title: String?
     let paneTree: ShellPaneTreeNode
+    let isPinned: Bool
 
     var id: String { tabID }
 
@@ -452,6 +453,32 @@ struct ShellTab: Identifiable, Codable, Equatable {
         case kind
         case title
         case paneTree = "pane_tree"
+        case isPinned = "is_pinned"
+    }
+
+    init(
+        tabID: String,
+        kind: ShellTabKind,
+        title: String?,
+        paneTree: ShellPaneTreeNode,
+        isPinned: Bool = false
+    ) {
+        self.tabID = tabID
+        self.kind = kind
+        self.title = title
+        self.paneTree = paneTree
+        self.isPinned = isPinned
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            tabID: try container.decode(String.self, forKey: .tabID),
+            kind: try container.decode(ShellTabKind.self, forKey: .kind),
+            title: try container.decodeIfPresent(String.self, forKey: .title),
+            paneTree: try container.decode(ShellPaneTreeNode.self, forKey: .paneTree),
+            isPinned: try container.decodeIfPresent(Bool.self, forKey: .isPinned) ?? false
+        )
     }
 }
 
@@ -508,6 +535,29 @@ extension ShellTab {
     func contains(paneID: String) -> Bool {
         paneTree.contains(paneID: paneID)
     }
+
+    var organizationSection: ShellTabOrganizationSection {
+        isPinned ? .pinned : .unpinned
+    }
+}
+
+extension ShellSpace {
+    var pinnedTabs: [ShellTab] {
+        tabs.filter(\.isPinned)
+    }
+
+    var unpinnedTabs: [ShellTab] {
+        tabs.filter { !$0.isPinned }
+    }
+
+    func tabs(in section: ShellTabOrganizationSection) -> [ShellTab] {
+        switch section {
+        case .pinned:
+            return pinnedTabs
+        case .unpinned:
+            return unpinnedTabs
+        }
+    }
 }
 
 extension ShellStateSnapshot {
@@ -541,5 +591,25 @@ extension ShellStateSnapshot {
             return panes
         }
         return panes.filter { $0.tabID == tabID }
+    }
+
+    func tabOrganizationLocation(tabID: String) -> ShellTabOrganizationLocation? {
+        for space in spaces {
+            if let pinnedIndex = space.pinnedTabs.firstIndex(where: { $0.tabID == tabID }) {
+                return ShellTabOrganizationLocation(
+                    spaceID: space.spaceID,
+                    section: .pinned,
+                    index: pinnedIndex
+                )
+            }
+            if let unpinnedIndex = space.unpinnedTabs.firstIndex(where: { $0.tabID == tabID }) {
+                return ShellTabOrganizationLocation(
+                    spaceID: space.spaceID,
+                    section: .unpinned,
+                    index: unpinnedIndex
+                )
+            }
+        }
+        return nil
     }
 }

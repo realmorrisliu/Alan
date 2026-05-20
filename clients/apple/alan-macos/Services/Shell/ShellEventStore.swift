@@ -122,6 +122,12 @@ final class AlanShellEventStore {
             )
         }
 
+        recordTabOrganizationChanges(
+            previousState: previousState,
+            currentState: currentState,
+            commonTabIDs: previousTabs.intersection(currentTabs)
+        )
+
         let allPaneIDs = Set(previousPanesByID.keys).union(currentPanesByID.keys)
         for paneID in allPaneIDs.sorted() {
             let previousPane = previousPanesByID[paneID]
@@ -151,6 +157,50 @@ final class AlanShellEventStore {
                     ]
                 )
             }
+        }
+    }
+
+    private func recordTabOrganizationChanges(
+        previousState: ShellStateSnapshot,
+        currentState: ShellStateSnapshot,
+        commonTabIDs: Set<String>
+    ) {
+        for tabID in commonTabIDs.sorted() {
+            guard let previousLocation = previousState.tabOrganizationLocation(tabID: tabID),
+                  let currentLocation = currentState.tabOrganizationLocation(tabID: tabID),
+                  previousLocation != currentLocation
+            else {
+                continue
+            }
+
+            let eventType: String
+            if previousLocation.spaceID != currentLocation.spaceID {
+                eventType = "tab.moved_to_space"
+            } else if previousLocation.section != currentLocation.section {
+                eventType = "tab.pin_changed"
+            } else {
+                eventType = "tab.reordered"
+            }
+
+            append(
+                type: eventType,
+                spaceID: currentLocation.spaceID,
+                tabID: tabID,
+                paneID: currentState.tab(tabID: tabID)?.paneTree.paneIDs.first,
+                payload: [
+                    "tab_id": .string(tabID),
+                    "previous_space_id": .string(previousLocation.spaceID),
+                    "current_space_id": .string(currentLocation.spaceID),
+                    "previous_section": .string(previousLocation.section.rawValue),
+                    "current_section": .string(currentLocation.section.rawValue),
+                    "previous_index": .number(Double(previousLocation.index)),
+                    "current_index": .number(Double(currentLocation.index)),
+                    "previous_pinned": .bool(previousLocation.section == .pinned),
+                    "current_pinned": .bool(currentLocation.section == .pinned),
+                    "focused_space_id": .string(currentState.focusedSpaceID ?? ""),
+                    "focused_tab_id": .string(currentState.focusedTabID ?? "")
+                ]
+            )
         }
     }
 

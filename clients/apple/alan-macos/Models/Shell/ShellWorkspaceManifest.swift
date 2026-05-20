@@ -259,7 +259,7 @@ struct ShellWorkspaceMaterializer {
         var panes: [ShellPane] = []
 
         for space in spaces {
-            let shellTabs = space.tabs.map { tabRecord -> ShellTab in
+            let shellTabs = organizedTabs(space.tabs).map { tabRecord -> ShellTab in
                 let restoreSnapshot = tabRecord.restoreSnapshot(
                     defaultWorkingDirectory: defaultWorkingDirectory
                 )
@@ -280,7 +280,8 @@ struct ShellWorkspaceMaterializer {
                     tabID: tabRecord.tabID,
                     kind: tabRecord.kind,
                     title: tabRecord.title,
-                    paneTree: restoreSnapshot.paneTree
+                    paneTree: restoreSnapshot.paneTree,
+                    isPinned: tabRecord.isPinned
                 )
             }
 
@@ -345,6 +346,12 @@ struct ShellWorkspaceMaterializer {
             ),
             alanBinding: nil
         )
+    }
+
+    private static func organizedTabs(
+        _ tabs: [ShellWorkspaceTabRecord]
+    ) -> [ShellWorkspaceTabRecord] {
+        tabs.filter(\.isPinned) + tabs.filter { !$0.isPinned }
     }
 
     private static func strongestAttention(

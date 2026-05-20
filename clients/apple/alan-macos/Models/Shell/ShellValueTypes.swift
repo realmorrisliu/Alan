@@ -13,6 +13,23 @@ enum ShellTabKind: String, Codable, CaseIterable {
     case log
 }
 
+enum ShellTabOrganizationSection: String, Codable, CaseIterable {
+    case pinned
+    case unpinned
+}
+
+struct ShellTabOrganizationLocation: Codable, Equatable {
+    let spaceID: String
+    let section: ShellTabOrganizationSection
+    let index: Int
+
+    private enum CodingKeys: String, CodingKey {
+        case spaceID = "space_id"
+        case section
+        case index
+    }
+}
+
 enum ShellPaneTreeKind: String, Codable {
     case split
     case pane

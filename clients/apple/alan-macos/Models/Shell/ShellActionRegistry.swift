@@ -115,6 +115,8 @@ enum ShellActionEffect: Equatable {
     case pinTab(String?)
     case unpinTab(String?)
     case updatePinnedTab(String?)
+    case moveTab(String?, offset: Int)
+    case moveTabToSpace(tabID: String?, spaceID: String?)
     case disabledPlaceholder
 }
 
@@ -349,6 +351,16 @@ final class ShellActionRegistry {
                 return .updatePinnedTab(tabID)
             }
             return .updatePinnedTab(nil)
+        case .moveTab(_, let offset):
+            if case .tab(let tabID) = resolvedTarget {
+                return .moveTab(tabID, offset: offset)
+            }
+            return .moveTab(nil, offset: offset)
+        case .moveTabToSpace:
+            if case .tabToSpace(let tabID, let spaceID) = resolvedTarget {
+                return .moveTabToSpace(tabID: tabID, spaceID: spaceID)
+            }
+            return .moveTabToSpace(tabID: nil, spaceID: nil)
         case .closeTab:
             if case .tab(let tabID) = resolvedTarget {
                 return .closeTab(tabID)
@@ -537,21 +549,21 @@ private let standardActions: [ShellActionDescriptor] = [
         title: "Pin Tab",
         targetKind: .tab,
         effect: .pinTab(nil),
-        availability: selectedTabAvailability
+        availability: pinTabAvailability
     ),
     ShellActionDescriptor(
         id: .tabUnpin,
         title: "Unpin Tab",
         targetKind: .tab,
         effect: .unpinTab(nil),
-        availability: selectedTabAvailability
+        availability: unpinTabAvailability
     ),
     ShellActionDescriptor(
         id: .tabUpdatePin,
         title: "Update Pin",
         targetKind: .tab,
         effect: .updatePinnedTab(nil),
-        availability: selectedTabAvailability
+        availability: updatePinnedTabAvailability
     ),
     ShellActionDescriptor(
         id: .tabMoveLeft,
@@ -562,8 +574,8 @@ private let standardActions: [ShellActionDescriptor] = [
             modifiers: [.command, .option, .shift],
             context: .shell
         ),
-        effect: .disabledPlaceholder,
-        availability: disabledPlaceholder("Move Tab Left is not available yet")
+        effect: .moveTab(nil, offset: -1),
+        availability: moveTabAvailability(offset: -1)
     ),
     ShellActionDescriptor(
         id: .tabMoveRight,
@@ -574,15 +586,15 @@ private let standardActions: [ShellActionDescriptor] = [
             modifiers: [.command, .option, .shift],
             context: .shell
         ),
-        effect: .disabledPlaceholder,
-        availability: disabledPlaceholder("Move Tab Right is not available yet")
+        effect: .moveTab(nil, offset: 1),
+        availability: moveTabAvailability(offset: 1)
     ),
     ShellActionDescriptor(
         id: .tabMoveToSpace,
         title: "Move Tab to Space...",
         targetKind: .destinationSpace,
-        effect: .disabledPlaceholder,
-        availability: disabledPlaceholder("Move Tab to Space is not available yet")
+        effect: .moveTabToSpace(tabID: nil, spaceID: nil),
+        availability: moveTabToSpaceAvailability
     ),
 ]
 
@@ -616,6 +628,91 @@ private func selectedTabAvailability(
             ? .unavailable(reason: "No selected tab")
             : .available
     }
+}
+
+private func targetedTab(
+    in state: ShellStateSnapshot,
+    target: ShellActionTarget
+) -> ShellTab? {
+    switch target {
+    case .contextTab(let tabID):
+        return state.tab(tabID: tabID)
+    default:
+        return state.focusedTabID.flatMap { state.tab(tabID: $0) }
+    }
+}
+
+private func pinTabAvailability(
+    state: ShellStateSnapshot,
+    target: ShellActionTarget
+) -> ShellActionAvailability {
+    guard let tab = targetedTab(in: state, target: target) else {
+        return .unavailable(reason: "Tab is not available")
+    }
+    return tab.isPinned
+        ? .unavailable(reason: "Tab is already pinned")
+        : .available
+}
+
+private func unpinTabAvailability(
+    state: ShellStateSnapshot,
+    target: ShellActionTarget
+) -> ShellActionAvailability {
+    guard let tab = targetedTab(in: state, target: target) else {
+        return .unavailable(reason: "Tab is not available")
+    }
+    return tab.isPinned
+        ? .available
+        : .unavailable(reason: "Tab is not pinned")
+}
+
+private func updatePinnedTabAvailability(
+    state: ShellStateSnapshot,
+    target: ShellActionTarget
+) -> ShellActionAvailability {
+    guard let tab = targetedTab(in: state, target: target) else {
+        return .unavailable(reason: "Tab is not available")
+    }
+    return tab.isPinned
+        ? .available
+        : .unavailable(reason: "Tab is not pinned")
+}
+
+private func moveTabAvailability(
+    offset: Int
+) -> (ShellStateSnapshot, ShellActionTarget) -> ShellActionAvailability {
+    { state, target in
+        guard let tab = targetedTab(in: state, target: target),
+              let location = state.tabOrganizationLocation(tabID: tab.tabID),
+              let space = state.space(spaceID: location.spaceID)
+        else {
+            return .unavailable(reason: "Tab is not available")
+        }
+
+        let sectionCount = space.tabs(in: location.section).count
+        let nextIndex = location.index + offset
+        return (0..<sectionCount).contains(nextIndex)
+            ? .available
+            : .unavailable(reason: "No adjacent tab in section")
+    }
+}
+
+private func moveTabToSpaceAvailability(
+    state: ShellStateSnapshot,
+    target: ShellActionTarget
+) -> ShellActionAvailability {
+    guard case .tabToSpace(let tabID, let spaceID) = target else {
+        return .unavailable(reason: "Move target is required")
+    }
+    guard let location = state.tabOrganizationLocation(tabID: tabID) else {
+        return .unavailable(reason: "Tab is not available")
+    }
+    guard state.space(spaceID: spaceID) != nil else {
+        return .unavailable(reason: "Space is not available")
+    }
+    return location.spaceID == spaceID
+        ? .unavailable(reason: "Tab is already in that space")
+        : .available
 }
 
 private func multipleTabsAvailability(

@@ -9,6 +9,7 @@ enum ShellStateMutationError: String, Error {
     case lastTab = "last_tab"
     case lastPane = "last_pane"
     case invalidMoveTarget = "invalid_move_target"
+    case invalidTabOrganizationTarget = "invalid_tab_organization_target"
 }
 
 struct ShellStateMutationResult {
@@ -478,7 +479,8 @@ extension ShellStateSnapshot {
                 splitNodeID: splitNodeID,
                 newLeafNodeID: "node_\(newPaneID)",
                 newPaneID: newPaneID
-            )
+            ),
+            isPinned: tab.isPinned
         )
 
         let nextSpaces = spaces.map { space in
@@ -561,7 +563,8 @@ extension ShellStateSnapshot {
             tabID: tab.tabID,
             kind: tab.kind,
             title: tab.title,
-            paneTree: updatedPaneTree
+            paneTree: updatedPaneTree,
+            isPinned: tab.isPinned
         )
         let nextSpaces = spaces.map { space in
             guard space.spaceID == pane.spaceID else { return space }
@@ -630,7 +633,8 @@ extension ShellStateSnapshot {
             tabID: sourceTab.tabID,
             kind: sourceTab.kind,
             title: sourceTab.title,
-            paneTree: sourcePaneTree
+            paneTree: sourcePaneTree,
+            isPinned: sourceTab.isPinned
         )
         let newTab = ShellTab(
             tabID: newTabID,
@@ -733,7 +737,8 @@ extension ShellStateSnapshot {
                 direction: direction,
                 splitNodeID: newSplitNodeID,
                 newLeafNodeID: newLeafNodeID
-            )
+            ),
+            isPinned: targetTab.isPinned
         )
 
         let updatedSourcePaneTree = sourceTab.paneTree.removingPane(paneID)
@@ -748,7 +753,8 @@ extension ShellStateSnapshot {
                                 tabID: sourceTab.tabID,
                                 kind: sourceTab.kind,
                                 title: sourceTab.title,
-                                paneTree: updatedSourcePaneTree
+                                paneTree: updatedSourcePaneTree,
+                                isPinned: sourceTab.isPinned
                             )
                         )
                     }
@@ -807,6 +813,175 @@ extension ShellStateSnapshot {
         )
     }
 
+    func organizingTab(
+        tabID: String,
+        targetSpaceID requestedTargetSpaceID: String? = nil,
+        section targetSection: ShellTabOrganizationSection,
+        index requestedIndex: Int? = nil
+    ) throws -> ShellStateMutationResult {
+        guard let sourceSpaceIndex = spaces.firstIndex(where: { space in
+            space.tabs.contains(where: { $0.tabID == tabID })
+        }) else {
+            throw ShellStateMutationError.tabNotFound
+        }
+
+        let sourceSpace = spaces[sourceSpaceIndex]
+        guard let sourceTabIndex = sourceSpace.tabs.firstIndex(where: { $0.tabID == tabID }) else {
+            throw ShellStateMutationError.tabNotFound
+        }
+
+        let targetSpaceID = requestedTargetSpaceID ?? sourceSpace.spaceID
+        guard let targetSpaceIndex = spaces.firstIndex(where: { $0.spaceID == targetSpaceID }) else {
+            throw ShellStateMutationError.spaceNotFound
+        }
+
+        let sourceTab = sourceSpace.tabs[sourceTabIndex]
+        let updatedTab = ShellTab(
+            tabID: sourceTab.tabID,
+            kind: sourceTab.kind,
+            title: sourceTab.title,
+            paneTree: sourceTab.paneTree,
+            isPinned: targetSection == .pinned
+        )
+
+        var nextSpaces = spaces
+        nextSpaces[sourceSpaceIndex] = ShellSpace(
+            spaceID: sourceSpace.spaceID,
+            title: sourceSpace.title,
+            attention: sourceSpace.attention,
+            tabs: sourceSpace.tabs.filter { $0.tabID != tabID }
+        )
+
+        let targetSpaceAfterRemoval = nextSpaces[targetSpaceIndex]
+        let targetSectionTabs = targetSpaceAfterRemoval.tabs(in: targetSection)
+        let insertionIndex = requestedIndex ?? targetSectionTabs.count
+        guard (0...targetSectionTabs.count).contains(insertionIndex) else {
+            throw ShellStateMutationError.invalidTabOrganizationTarget
+        }
+
+        let insertionOffset = targetSection == .pinned
+            ? insertionIndex
+            : targetSpaceAfterRemoval.pinnedTabs.count + insertionIndex
+        var targetTabs = targetSpaceAfterRemoval.tabs
+        targetTabs.insert(updatedTab, at: insertionOffset)
+        nextSpaces[targetSpaceIndex] = ShellSpace(
+            spaceID: targetSpaceAfterRemoval.spaceID,
+            title: targetSpaceAfterRemoval.title,
+            attention: targetSpaceAfterRemoval.attention,
+            tabs: targetTabs
+        )
+
+        let nextPanes = panes.map { pane in
+            guard pane.tabID == tabID,
+                  pane.spaceID != targetSpaceID
+            else { return pane }
+
+            return ShellPane(
+                paneID: pane.paneID,
+                tabID: pane.tabID,
+                spaceID: targetSpaceID,
+                launchTarget: pane.launchTarget,
+                cwd: pane.cwd,
+                process: pane.process,
+                attention: pane.attention,
+                context: pane.context,
+                viewport: pane.viewport,
+                activity: pane.activity,
+                alanBinding: pane.alanBinding
+            )
+        }
+
+        let nextFocusedPaneID: String?
+        if focusedTabID == tabID {
+            nextFocusedPaneID = focusedPaneID.flatMap { paneID in
+                nextPanes.contains { $0.paneID == paneID && $0.tabID == tabID } ? paneID : nil
+            } ?? updatedTab.paneTree.paneIDs.first
+        } else {
+            nextFocusedPaneID = focusedPaneID
+        }
+
+        let nextState = replacing(
+            spaces: rebuildingAttention(in: nextSpaces, panes: nextPanes),
+            panes: nextPanes,
+            focusedPaneID: nextFocusedPaneID
+        )
+
+        return ShellStateMutationResult(
+            state: nextState,
+            spaceID: targetSpaceID,
+            tabID: tabID,
+            paneID: nextState.focusedPaneID
+        )
+    }
+
+    func pinningTab(_ tabID: String) throws -> ShellStateMutationResult {
+        guard let tab = tab(tabID: tabID) else {
+            throw ShellStateMutationError.tabNotFound
+        }
+        guard !tab.isPinned else {
+            return try organizingTab(
+                tabID: tabID,
+                section: .pinned,
+                index: tabOrganizationLocation(tabID: tabID)?.index
+            )
+        }
+        return try organizingTab(tabID: tabID, section: .pinned)
+    }
+
+    func unpinningTab(_ tabID: String) throws -> ShellStateMutationResult {
+        guard let tab = tab(tabID: tabID) else {
+            throw ShellStateMutationError.tabNotFound
+        }
+        guard tab.isPinned else {
+            return try organizingTab(
+                tabID: tabID,
+                section: .unpinned,
+                index: tabOrganizationLocation(tabID: tabID)?.index
+            )
+        }
+        return try organizingTab(tabID: tabID, section: .unpinned)
+    }
+
+    func movingTab(_ tabID: String, sectionOffset: Int) throws -> ShellStateMutationResult {
+        guard sectionOffset != 0 else {
+            throw ShellStateMutationError.invalidTabOrganizationTarget
+        }
+        guard let location = tabOrganizationLocation(tabID: tabID) else {
+            throw ShellStateMutationError.tabNotFound
+        }
+        guard let space = space(spaceID: location.spaceID) else {
+            throw ShellStateMutationError.spaceNotFound
+        }
+        let sectionCount = space.tabs(in: location.section).count
+        let nextIndex = location.index + sectionOffset
+        guard (0..<sectionCount).contains(nextIndex) else {
+            throw ShellStateMutationError.invalidTabOrganizationTarget
+        }
+        return try organizingTab(
+            tabID: tabID,
+            targetSpaceID: location.spaceID,
+            section: location.section,
+            index: nextIndex
+        )
+    }
+
+    func movingTabToSpace(
+        tabID: String,
+        targetSpaceID: String
+    ) throws -> ShellStateMutationResult {
+        guard let tab = tab(tabID: tabID) else {
+            throw ShellStateMutationError.tabNotFound
+        }
+        guard tabOrganizationLocation(tabID: tabID)?.spaceID != targetSpaceID else {
+            throw ShellStateMutationError.invalidMoveTarget
+        }
+        return try organizingTab(
+            tabID: tabID,
+            targetSpaceID: targetSpaceID,
+            section: tab.organizationSection
+        )
+    }
+
     func settingAttention(
         _ attention: ShellAttentionState,
         for paneID: String
@@ -859,7 +1034,8 @@ extension ShellStateSnapshot {
             tabID: targetTab.tabID,
             kind: targetTab.kind,
             title: targetTab.title,
-            paneTree: paneTree
+            paneTree: paneTree,
+            isPinned: targetTab.isPinned
         )
         let nextSpaces = spaces.map { space in
             guard space.spaceID == targetSpace.spaceID else { return space }

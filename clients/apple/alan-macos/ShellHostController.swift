@@ -558,7 +558,10 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     }
 
     func isTabPinned(tabID: String) -> Bool {
-        workspaceManifest?
+        if let tab = shellState.tab(tabID: tabID) {
+            return tab.isPinned
+        }
+        return workspaceManifest?
             .spaces
             .flatMap(\.tabs)
             .first { $0.tabID == tabID }?
@@ -568,24 +571,33 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     @discardableResult
     func pinTab(tabID: String? = nil) -> Bool {
         guard let targetTabID = tabID ?? selectedTabID else { return false }
-        return updateWorkspaceManifestTab(tabID: targetTabID) { tab, snapshot in
-            tab.isPinned = true
-            tab.pinSnapshot = snapshot
-            tab.liveSnapshot = snapshot
-        } diagnostic: {
-            "workspace manifest pinned tab: \($0)"
+        if isTabPinned(tabID: targetTabID) {
+            return updatePinnedTabSnapshot(tabID: targetTabID)
         }
+
+        let result: ShellStateMutationResult
+        do {
+            result = try shellState.pinningTab(targetTabID)
+        } catch {
+            return false
+        }
+        applyMutationResult(result, pinSnapshotTabIDs: [targetTabID])
+        recordControlPlaneDiagnostic("workspace manifest pinned tab: \(targetTabID)")
+        return true
     }
 
     @discardableResult
     func unpinTab(tabID: String? = nil) -> Bool {
         guard let targetTabID = tabID ?? selectedTabID else { return false }
-        return updateWorkspaceManifestTab(tabID: targetTabID) { tab, _ in
-            tab.isPinned = false
-            tab.pinSnapshot = nil
-        } diagnostic: {
-            "workspace manifest unpinned tab: \($0)"
+        let result: ShellStateMutationResult
+        do {
+            result = try shellState.unpinningTab(targetTabID)
+        } catch {
+            return false
         }
+        applyMutationResult(result)
+        recordControlPlaneDiagnostic("workspace manifest unpinned tab: \(targetTabID)")
+        return true
     }
 
     @discardableResult
@@ -598,6 +610,58 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         } diagnostic: {
             "workspace manifest updated pinned tab: \($0)"
         }
+    }
+
+    @discardableResult
+    func reorderTab(
+        tabID: String,
+        targetSpaceID: String? = nil,
+        section: ShellTabOrganizationSection,
+        index: Int
+    ) -> Bool {
+        let wasPinned = isTabPinned(tabID: tabID)
+        let result: ShellStateMutationResult
+        do {
+            result = try shellState.organizingTab(
+                tabID: tabID,
+                targetSpaceID: targetSpaceID,
+                section: section,
+                index: index
+            )
+        } catch {
+            return false
+        }
+        let needsPinSnapshot = !wasPinned && section == .pinned
+        applyMutationResult(result, pinSnapshotTabIDs: needsPinSnapshot ? [tabID] : [])
+        return true
+    }
+
+    @discardableResult
+    func moveTab(tabID: String? = nil, offset: Int) -> Bool {
+        guard let targetTabID = tabID ?? selectedTabID else { return false }
+        let result: ShellStateMutationResult
+        do {
+            result = try shellState.movingTab(targetTabID, sectionOffset: offset)
+        } catch {
+            return false
+        }
+        applyMutationResult(result)
+        return true
+    }
+
+    @discardableResult
+    func moveTabToSpace(tabID: String, targetSpaceID: String) -> Bool {
+        let result: ShellStateMutationResult
+        do {
+            result = try shellState.movingTabToSpace(
+                tabID: tabID,
+                targetSpaceID: targetSpaceID
+            )
+        } catch {
+            return false
+        }
+        applyMutationResult(result)
+        return true
     }
 
     @discardableResult
@@ -790,6 +854,11 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
             return unpinTab(tabID: tabID)
         case .updatePinnedTab(let tabID):
             return updatePinnedTabSnapshot(tabID: tabID)
+        case .moveTab(let tabID, let offset):
+            return moveTab(tabID: tabID, offset: offset)
+        case .moveTabToSpace(let tabID, let spaceID):
+            guard let tabID, let spaceID else { return false }
+            return moveTabToSpace(tabID: tabID, targetSpaceID: spaceID)
         case .disabledPlaceholder:
             return false
         }
@@ -1277,7 +1346,8 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
                     tabID: tab.tabID,
                     kind: tab.kind,
                     title: nextTitle,
-                    paneTree: tab.paneTree
+                    paneTree: tab.paneTree,
+                    isPinned: tab.isPinned
                 )
             }
 
@@ -1318,9 +1388,13 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
 
     private func applyMutationResult(
         _ result: ShellStateMutationResult,
-        publish: Bool = true
+        publish: Bool = true,
+        pinSnapshotTabIDs: Set<String> = []
     ) {
-        adoptStateFromControlPlane(result.state, publish: publish)
+        adoptStateFromControlPlane(result.state, publish: publish && pinSnapshotTabIDs.isEmpty)
+        if publish && !pinSnapshotTabIDs.isEmpty {
+            publishControlPlaneState(pinSnapshotTabIDs: pinSnapshotTabIDs)
+        }
     }
 
     private func adoptStateFromControlPlane(
@@ -1409,15 +1483,41 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         persistenceStore.save(shellState)
     }
 
-    private func syncWorkspaceManifestFromShellState(now: Date = .now) {
+    private func syncWorkspaceManifestFromShellState(
+        now: Date = .now,
+        pinSnapshotTabIDs: Set<String> = []
+    ) {
         guard let workspaceManifestStore else { return }
 
         let nextManifest = makeWorkspaceManifestFromShellState(now: now)
+        var manifestToSave = nextManifest
+        if !pinSnapshotTabIDs.isEmpty {
+            applyPinSnapshotOverrides(to: &manifestToSave, tabIDs: pinSnapshotTabIDs)
+        }
         do {
-            try workspaceManifestStore.save(nextManifest)
-            workspaceManifest = nextManifest
+            try workspaceManifestStore.save(manifestToSave)
+            workspaceManifest = manifestToSave
         } catch {
             recordControlPlaneDiagnostic("workspace manifest save failed: \(error)")
+        }
+    }
+
+    private func applyPinSnapshotOverrides(
+        to manifest: inout ShellWorkspaceManifest,
+        tabIDs: Set<String>
+    ) {
+        for spaceIndex in manifest.spaces.indices {
+            for tabIndex in manifest.spaces[spaceIndex].tabs.indices {
+                let tabID = manifest.spaces[spaceIndex].tabs[tabIndex].tabID
+                guard tabIDs.contains(tabID),
+                      let tab = shellState.tab(tabID: tabID)
+                else { continue }
+
+                let snapshot = makeRestoreSnapshot(for: tab, panes: shellState.panes(in: tabID))
+                manifest.spaces[spaceIndex].tabs[tabIndex].isPinned = true
+                manifest.spaces[spaceIndex].tabs[tabIndex].pinSnapshot = snapshot
+                manifest.spaces[spaceIndex].tabs[tabIndex].liveSnapshot = snapshot
+            }
         }
     }
 
@@ -1492,8 +1592,8 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
                     createdAt: existingTab?.createdAt ?? now,
                     lastActivatedAt: lastActivatedAt,
                     lastActivityAt: lastActivityAt,
-                    isPinned: existingTab?.isPinned ?? false,
-                    pinSnapshot: existingTab?.pinSnapshot,
+                    isPinned: tab.isPinned,
+                    pinSnapshot: tab.isPinned ? existingTab?.pinSnapshot : nil,
                     liveSnapshot: snapshot,
                     activeTask: projectedActiveTask(for: tab, panes: panes)
                 )
@@ -1761,8 +1861,8 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
             ?? .idle
     }
 
-    private func publishControlPlaneState() {
-        syncWorkspaceManifestFromShellState()
+    private func publishControlPlaneState(pinSnapshotTabIDs: Set<String> = []) {
+        syncWorkspaceManifestFromShellState(pinSnapshotTabIDs: pinSnapshotTabIDs)
         persistShellState()
         controlPlane.publish(state: shellState)
     }

@@ -9,6 +9,10 @@ enum AlanShellControlCommandKind: String, Codable {
     case tabList = "tab.list"
     case tabOpen = "tab.open"
     case tabClose = "tab.close"
+    case tabReorder = "tab.reorder"
+    case tabPin = "tab.pin"
+    case tabUnpin = "tab.unpin"
+    case tabMoveToSpace = "tab.move_to_space"
     case paneList = "pane.list"
     case paneSnapshot = "pane.snapshot"
     case paneSplit = "pane.split"
@@ -28,8 +32,11 @@ struct AlanShellControlCommand: Codable {
     let requestID: String
     let command: AlanShellControlCommandKind
     let spaceID: String?
+    let targetSpaceID: String?
     let tabID: String?
     let paneID: String?
+    let section: ShellTabOrganizationSection?
+    let index: Int?
     let direction: ShellSplitDirection?
     let title: String?
     let cwd: String?
@@ -49,8 +56,11 @@ struct AlanShellControlCommand: Codable {
         case requestID = "request_id"
         case command
         case spaceID = "space_id"
+        case targetSpaceID = "target_space_id"
         case tabID = "tab_id"
         case paneID = "pane_id"
+        case section
+        case index
         case direction
         case title
         case cwd
@@ -97,14 +107,72 @@ struct AlanShellControlResponse: Codable {
     let events: [AlanShellEventEnvelope]?
     let focusedPaneID: String?
     let spaceID: String?
+    let sourceSpaceID: String?
+    let targetSpaceID: String?
     let tabID: String?
     let paneID: String?
+    let section: ShellTabOrganizationSection?
+    let index: Int?
     let acceptedBytes: Int?
     let deliveryCode: String?
     let runtimePhase: String?
     let latestEventID: String?
     let errorCode: String?
     let errorMessage: String?
+
+    init(
+        requestID: String,
+        contractVersion: String,
+        applied: Bool?,
+        state: ShellStateSnapshot? = nil,
+        spaces: [ShellSpace]? = nil,
+        tabs: [ShellTab]? = nil,
+        panes: [ShellPane]? = nil,
+        pane: ShellPane? = nil,
+        items: [AlanShellAttentionInboxItem]? = nil,
+        candidates: [AlanShellRoutingCandidate]? = nil,
+        events: [AlanShellEventEnvelope]? = nil,
+        focusedPaneID: String? = nil,
+        spaceID: String? = nil,
+        sourceSpaceID: String? = nil,
+        targetSpaceID: String? = nil,
+        tabID: String? = nil,
+        paneID: String? = nil,
+        section: ShellTabOrganizationSection? = nil,
+        index: Int? = nil,
+        acceptedBytes: Int? = nil,
+        deliveryCode: String? = nil,
+        runtimePhase: String? = nil,
+        latestEventID: String? = nil,
+        errorCode: String? = nil,
+        errorMessage: String? = nil
+    ) {
+        self.requestID = requestID
+        self.contractVersion = contractVersion
+        self.applied = applied
+        self.state = state
+        self.spaces = spaces
+        self.tabs = tabs
+        self.panes = panes
+        self.pane = pane
+        self.items = items
+        self.candidates = candidates
+        self.events = events
+        self.focusedPaneID = focusedPaneID
+        self.spaceID = spaceID
+        self.sourceSpaceID = sourceSpaceID
+        self.targetSpaceID = targetSpaceID
+        self.tabID = tabID
+        self.paneID = paneID
+        self.section = section
+        self.index = index
+        self.acceptedBytes = acceptedBytes
+        self.deliveryCode = deliveryCode
+        self.runtimePhase = runtimePhase
+        self.latestEventID = latestEventID
+        self.errorCode = errorCode
+        self.errorMessage = errorMessage
+    }
 
     private enum CodingKeys: String, CodingKey {
         case requestID = "request_id"
@@ -120,8 +188,12 @@ struct AlanShellControlResponse: Codable {
         case events
         case focusedPaneID = "focused_pane_id"
         case spaceID = "space_id"
+        case sourceSpaceID = "source_space_id"
+        case targetSpaceID = "target_space_id"
         case tabID = "tab_id"
         case paneID = "pane_id"
+        case section
+        case index
         case acceptedBytes = "accepted_bytes"
         case deliveryCode = "delivery_code"
         case runtimePhase = "runtime_phase"
