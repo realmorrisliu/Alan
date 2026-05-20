@@ -128,7 +128,7 @@ struct AlanTerminalCommandSegment: Equatable, Identifiable {
     }
 
     var hasReliableOutput: Bool {
-        boundaryState.isReliable && outputRange?.isEmpty == false
+        boundaryState.isReliable && outputRange != nil
     }
 }
 
@@ -1372,10 +1372,14 @@ final class AlanTerminalSurfaceController {
     @discardableResult
     func copyLastCommandOutput(to writer: AlanTerminalPasteboardWriting) -> Bool {
         guard scrollbackAdapter.state.metrics.mode == .normalBuffer,
-              let outputRange = semanticCommandState.lastReliableOutputRange,
-              let output = commandBufferEngine?.readText(in: outputRange),
-              !output.isEmpty
+              let outputRange = semanticCommandState.lastReliableOutputRange
         else {
+            return copySelection(to: writer)
+        }
+        if outputRange.isEmpty {
+            return writer.writeString("")
+        }
+        guard let output = commandBufferEngine?.readText(in: outputRange) else {
             return copySelection(to: writer)
         }
 

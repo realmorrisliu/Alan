@@ -33,6 +33,7 @@ private enum TerminalSurfaceControllerTests {
         verifiesSearchActionsReachSurfaceEngine()
         verifiesScrollbackActionsReachSurfaceEngine()
         verifiesSemanticCommandActionsUseReliablePaneBoundaries()
+        verifiesSilentLatestCommandDoesNotReusePriorOutput()
         verifiesSemanticCommandFallbacksAndInvalidation()
         verifiesBindClearsStaleScrollbackState()
         verifiesSurfaceCloseRequestIsForwarded()
@@ -1198,6 +1199,66 @@ private enum TerminalSurfaceControllerTests {
         expect(
             handle.searchActions.suffix(1) == ["search:semantic"],
             "command-output search query changes must reach the terminal search engine"
+        )
+    }
+
+    private static func verifiesSilentLatestCommandDoesNotReusePriorOutput() {
+        let handle = FakeAlanTerminalSurfaceHandle(paneID: "pane_1")
+        let staleOutputRange = AlanTerminalBufferRange(lowerBound: 10, upperBound: 18)
+        let emptyOutputRange = AlanTerminalBufferRange(lowerBound: 24, upperBound: 24)
+        handle.commandOutputTextByRange[staleOutputRange] = "stale output\n"
+        handle.commandOutputTextByRange[emptyOutputRange] = ""
+        handle.selectedText = "selected fallback"
+
+        let controller = AlanTerminalSurfaceController()
+        controller.bind(surfaceHandle: handle, paneID: "pane_1")
+        handle.emitScrollbackUpdate(
+            AlanTerminalScrollbackMetrics(
+                totalRows: 80,
+                visibleRows: 20,
+                firstVisibleRow: 40,
+                mode: .normalBuffer
+            )
+        )
+        controller.updateSemanticCommands(
+            AlanTerminalSemanticCommandState(
+                paneID: "pane_1",
+                boundaryState: .reliable,
+                segments: [
+                    commandSegment(
+                        id: "cmd_1",
+                        prompt: 8..<9,
+                        command: 9..<10,
+                        output: 10..<18
+                    ),
+                    commandSegment(
+                        id: "cmd_2",
+                        prompt: AlanTerminalBufferRange(22..<23),
+                        command: AlanTerminalBufferRange(23..<24),
+                        output: emptyOutputRange
+                    ),
+                ],
+                lastUpdatedAt: Date(timeIntervalSince1970: 10)
+            )
+        )
+
+        let pasteboard = RecordingTerminalPasteboardWriter()
+        expect(
+            controller.copyLastCommandOutput(to: pasteboard),
+            "copy-last-output must treat an empty latest output range as known output"
+        )
+        expect(
+            pasteboard.string == "",
+            "copy-last-output must not reuse a previous command when the latest output is empty"
+        )
+
+        expect(
+            controller.beginLastCommandOutputSearch(),
+            "search-last-output must start search for an empty latest output range"
+        )
+        expect(
+            controller.searchAdapter?.state.scope == .some(.commandOutput(emptyOutputRange)),
+            "search-last-output must not reuse a previous command range when latest output is empty"
         )
     }
 
