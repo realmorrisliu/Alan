@@ -50,5 +50,5 @@
 
 - [x] 5.1 Review default UI surfaces to confirm semantic actions do not add
   persistent command blocks, browsers, or debug chrome.
-- [ ] 5.2 Before archive, sync accepted delta requirements into `openspec/specs/`.
-- [ ] 5.3 Archive the completed OpenSpec change after implementation merges.
+- [x] 5.2 Before archive, sync accepted delta requirements into `openspec/specs/`.
+- [x] 5.3 Archive the completed OpenSpec change after implementation merges.
