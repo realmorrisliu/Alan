@@ -735,7 +735,12 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         case .workspaceCommand(let command):
             return performShellWorkspaceCommand(command)
         case .openTab(let launchTarget, let spaceID):
-            return openTab(launchTarget: launchTarget, in: spaceID) != nil
+            switch launchTarget {
+            case .shell:
+                return openTerminalTab(in: spaceID) != nil
+            case .alan:
+                return openAlanTab(in: spaceID) != nil
+            }
         case .closeTab(let tabID):
             guard let tabID else { return closeSelectedTab() }
             return closeTab(tabID: tabID) == .closed
