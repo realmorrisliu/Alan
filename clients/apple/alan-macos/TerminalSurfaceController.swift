@@ -82,6 +82,99 @@ protocol AlanTerminalScrollbackEngine: AnyObject {
     func scrollTo(row: Int) -> Bool
 }
 
+struct AlanTerminalBufferRange: Equatable, Hashable {
+    let lowerBound: Int
+    let upperBound: Int
+
+    init(_ range: Range<Int>) {
+        lowerBound = max(0, range.lowerBound)
+        upperBound = max(lowerBound, range.upperBound)
+    }
+
+    init(lowerBound: Int, upperBound: Int) {
+        self.lowerBound = max(0, lowerBound)
+        self.upperBound = max(self.lowerBound, upperBound)
+    }
+
+    var isEmpty: Bool {
+        lowerBound >= upperBound
+    }
+}
+
+enum AlanTerminalCommandBoundaryState: Equatable {
+    case reliable
+    case unavailable(reason: String)
+    case stale(reason: String)
+
+    var isReliable: Bool {
+        self == .reliable
+    }
+}
+
+struct AlanTerminalCommandSegment: Equatable, Identifiable {
+    let id: String
+    let promptRange: AlanTerminalBufferRange?
+    let commandRange: AlanTerminalBufferRange?
+    let outputRange: AlanTerminalBufferRange?
+    let commandText: String?
+    let workingDirectory: String?
+    let exitStatus: Int?
+    let startedAt: Date?
+    let endedAt: Date?
+    let boundaryState: AlanTerminalCommandBoundaryState
+
+    var hasReliablePrompt: Bool {
+        boundaryState.isReliable && promptRange != nil
+    }
+
+    var hasReliableOutput: Bool {
+        boundaryState.isReliable && outputRange != nil
+    }
+}
+
+struct AlanTerminalSemanticCommandState: Equatable {
+    let paneID: String?
+    let boundaryState: AlanTerminalCommandBoundaryState
+    let segments: [AlanTerminalCommandSegment]
+    let lastUpdatedAt: Date?
+
+    static func unavailable(paneID: String?, reason: String) -> AlanTerminalSemanticCommandState {
+        AlanTerminalSemanticCommandState(
+            paneID: paneID,
+            boundaryState: .unavailable(reason: reason),
+            segments: [],
+            lastUpdatedAt: .now
+        )
+    }
+
+    static let placeholder = AlanTerminalSemanticCommandState.unavailable(
+        paneID: nil,
+        reason: "No terminal pane is attached."
+    )
+
+    var reliableSegments: [AlanTerminalCommandSegment] {
+        guard boundaryState.isReliable else { return [] }
+        return segments.filter { $0.boundaryState.isReliable }
+    }
+
+    var hasReliableCommandBoundaries: Bool {
+        reliableSegments.contains { $0.promptRange != nil || $0.outputRange != nil }
+    }
+
+    var hasReliablePromptMarks: Bool {
+        reliableSegments.contains { $0.hasReliablePrompt }
+    }
+
+    var lastReliableOutputRange: AlanTerminalBufferRange? {
+        reliableSegments.last(where: { $0.hasReliableOutput })?.outputRange
+    }
+}
+
+@MainActor
+protocol AlanTerminalCommandBufferEngine: AnyObject {
+    func readText(in range: AlanTerminalBufferRange) -> String?
+}
+
 @MainActor
 protocol AlanTerminalSelectionEngine: AnyObject {
     func readSelectionText() -> String?
@@ -669,6 +762,7 @@ struct AlanTerminalSearchState: Equatable {
     let paneID: String
     let query: String
     let isActive: Bool
+    let scope: AlanTerminalSearchScope
     let totalMatches: Int?
     let selectedIndex: Int?
     let focusRequestID: Int
@@ -678,6 +772,7 @@ struct AlanTerminalSearchState: Equatable {
             paneID: paneID,
             query: "",
             isActive: false,
+            scope: .scrollback,
             totalMatches: nil,
             selectedIndex: nil,
             focusRequestID: 0
@@ -685,9 +780,19 @@ struct AlanTerminalSearchState: Equatable {
     }
 }
 
+enum AlanTerminalSearchScope: Equatable {
+    case scrollback
+    case commandOutput(AlanTerminalBufferRange)
+}
+
 enum AlanTerminalSearchNavigationDirection: Equatable {
     case next
     case previous
+}
+
+enum AlanTerminalPromptNavigationDirection: Equatable {
+    case previous
+    case next
 }
 
 enum AlanTerminalSearchEngineUpdate: Equatable {
@@ -714,11 +819,12 @@ final class AlanTerminalSearchAdapter {
         self.state = .inactive(paneID: paneID)
     }
 
-    func requestFocus() {
+    func requestFocus(scope: AlanTerminalSearchScope? = nil) {
         state = AlanTerminalSearchState(
             paneID: state.paneID,
             query: state.query,
             isActive: true,
+            scope: scope ?? state.scope,
             totalMatches: state.totalMatches,
             selectedIndex: state.selectedIndex,
             focusRequestID: state.focusRequestID + 1
@@ -730,6 +836,7 @@ final class AlanTerminalSearchAdapter {
             paneID: state.paneID,
             query: query,
             isActive: true,
+            scope: state.scope,
             totalMatches: state.totalMatches,
             selectedIndex: state.selectedIndex,
             focusRequestID: state.focusRequestID
@@ -747,6 +854,7 @@ final class AlanTerminalSearchAdapter {
             paneID: state.paneID,
             query: state.query,
             isActive: state.isActive,
+            scope: state.scope,
             totalMatches: total,
             selectedIndex: boundedIndex,
             focusRequestID: state.focusRequestID
@@ -835,6 +943,7 @@ struct AlanTerminalSurfaceStateSnapshot: Equatable {
     let terminalMode: AlanTerminalMode
     let scrollback: AlanTerminalScrollbackState
     let search: AlanTerminalSearchState?
+    let semanticCommands: AlanTerminalSemanticCommandState
     let readonly: Bool
     let secureInput: Bool
     let inputReady: Bool
@@ -847,6 +956,7 @@ struct AlanTerminalSurfaceStateSnapshot: Equatable {
         terminalMode: .normalBuffer,
         scrollback: .empty,
         search: nil,
+        semanticCommands: .placeholder,
         readonly: false,
         secureInput: false,
         inputReady: false,
@@ -860,6 +970,7 @@ struct AlanTerminalSurfaceStateSnapshot: Equatable {
             && terminalMode == other.terminalMode
             && scrollback == other.scrollback
             && search == other.search
+            && semanticCommands == other.semanticCommands
             && readonly == other.readonly
             && secureInput == other.secureInput
             && inputReady == other.inputReady
@@ -958,7 +1069,9 @@ final class AlanTerminalSurfaceController {
     private weak var surfaceHandle: AlanTerminalSurfaceHandle?
     private weak var searchEngine: AlanTerminalSearchEngine?
     private weak var scrollbackEngine: AlanTerminalScrollbackEngine?
+    private weak var commandBufferEngine: AlanTerminalCommandBufferEngine?
     private weak var selectionEngine: AlanTerminalSelectionEngine?
+    private var semanticCommandState = AlanTerminalSemanticCommandState.placeholder
     private var latestRenderer = TerminalRendererSnapshot.placeholder
     private var latestMetadata = TerminalPaneMetadataSnapshot.placeholder
     private var readonly = false
@@ -981,6 +1094,7 @@ final class AlanTerminalSurfaceController {
             terminalMode: scrollbackAdapter.state.metrics.mode,
             scrollback: scrollbackAdapter.state,
             search: searchAdapter?.state,
+            semanticCommands: semanticCommandState,
             readonly: readonly,
             secureInput: secureInput,
             inputReady: isSurfaceReady,
@@ -1015,12 +1129,18 @@ final class AlanTerminalSurfaceController {
         } else if surfaceChanged {
             resetPerSurfaceStateForSurfaceChange()
         }
+        commandBufferEngine = surfaceHandle as? AlanTerminalCommandBufferEngine
         selectionEngine = surfaceHandle as? AlanTerminalSelectionEngine
         clipboardAdapter.updateSurfaceHandle(surfaceHandle)
         if let paneID, searchAdapter?.state.paneID != paneID {
             searchAdapter = AlanTerminalSearchAdapter(paneID: paneID)
+            semanticCommandState = .unavailable(
+                paneID: paneID,
+                reason: "Semantic command boundary signals are not available for this pane."
+            )
         } else if paneID == nil {
             searchAdapter = nil
+            semanticCommandState = .placeholder
         }
     }
 
@@ -1057,7 +1177,9 @@ final class AlanTerminalSurfaceController {
         searchEngine = nil
         scrollbackEngine?.setScrollbackUpdateHandler(nil)
         scrollbackEngine = nil
+        commandBufferEngine = nil
         selectionEngine = nil
+        semanticCommandState = .placeholder
         resetPerSurfaceStateForSurfaceChange()
         clipboardAdapter.updateSurfaceHandle(nil)
     }
@@ -1200,26 +1322,111 @@ final class AlanTerminalSurfaceController {
         selectionEngine?.hasSelection() ?? false
     }
 
+    func updateSemanticCommands(_ state: AlanTerminalSemanticCommandState) {
+        semanticCommandState = state
+        notifySurfaceStateChanged()
+    }
+
+    func invalidateSemanticCommands(reason: String) {
+        semanticCommandState = AlanTerminalSemanticCommandState(
+            paneID: semanticCommandState.paneID ?? searchAdapter?.state.paneID ?? surfaceHandle?.paneID,
+            boundaryState: .stale(reason: reason),
+            segments: semanticCommandState.segments,
+            lastUpdatedAt: .now
+        )
+        notifySurfaceStateChanged()
+    }
+
+    var hasReliableSemanticCommandActions: Bool {
+        scrollbackAdapter.state.metrics.mode == .normalBuffer
+            && semanticCommandState.hasReliableCommandBoundaries
+    }
+
     @discardableResult
-    func beginSearch() -> Bool {
+    func navigateSemanticPrompt(_ direction: AlanTerminalPromptNavigationDirection) -> Bool {
+        guard scrollbackAdapter.state.metrics.mode == .normalBuffer,
+              semanticCommandState.hasReliablePromptMarks
+        else {
+            return false
+        }
+
+        let promptRows = semanticCommandState
+            .reliableSegments
+            .compactMap { $0.promptRange?.lowerBound }
+            .sorted()
+        guard !promptRows.isEmpty else { return false }
+
+        let currentRow = scrollbackAdapter.state.metrics.firstVisibleRow
+        let targetRow: Int?
+        switch direction {
+        case .previous:
+            targetRow = promptRows.reversed().first { $0 < currentRow } ?? promptRows.last
+        case .next:
+            targetRow = promptRows.first { $0 > currentRow } ?? promptRows.first
+        }
+
+        guard let targetRow else { return false }
+        return scrollToNativeRow(targetRow)
+    }
+
+    @discardableResult
+    func copyLastCommandOutput(to writer: AlanTerminalPasteboardWriting) -> Bool {
+        guard scrollbackAdapter.state.metrics.mode == .normalBuffer,
+              let outputRange = semanticCommandState.lastReliableOutputRange
+        else {
+            return copySelection(to: writer)
+        }
+        if outputRange.isEmpty {
+            return writer.writeString("")
+        }
+        guard let output = commandBufferEngine?.readText(in: outputRange) else {
+            return copySelection(to: writer)
+        }
+
+        return writer.writeString(output)
+    }
+
+    @discardableResult
+    func copyLastCommandOutput(to pasteboard: NSPasteboard = .general) -> Bool {
+        copyLastCommandOutput(to: AlanTerminalSystemPasteboardWriter(pasteboard: pasteboard))
+    }
+
+    @discardableResult
+    func beginLastCommandOutputSearch() -> Bool {
+        guard scrollbackAdapter.state.metrics.mode == .normalBuffer,
+              let outputRange = semanticCommandState.lastReliableOutputRange
+        else {
+            return beginSearch()
+        }
+
+        return beginSearch(scope: .commandOutput(outputRange))
+    }
+
+    @discardableResult
+    func beginSearch(scope: AlanTerminalSearchScope = .scrollback) -> Bool {
         guard let paneID = searchAdapter?.state.paneID ?? surfaceHandle?.paneID else { return false }
         if searchAdapter == nil {
             searchAdapter = AlanTerminalSearchAdapter(paneID: paneID)
         }
-        if searchAdapter?.state.isActive == true {
-            searchAdapter?.requestFocus()
+        if searchAdapter?.state.isActive == true,
+           searchAdapter?.state.scope == scope
+        {
+            searchAdapter?.requestFocus(scope: scope)
             notifySearchStateChanged()
             return true
         }
         guard searchEngine?.startSearch() == true else { return false }
-        searchAdapter?.requestFocus()
+        searchAdapter?.requestFocus(scope: scope)
         searchAdapter?.updateQuery(searchAdapter?.state.query ?? "")
         return true
     }
 
     @discardableResult
     func updateSearchQuery(_ query: String) -> Bool {
-        guard beginSearch() else { return false }
+        let scope = searchAdapter?.state.isActive == true
+            ? (searchAdapter?.state.scope ?? .scrollback)
+            : .scrollback
+        guard beginSearch(scope: scope) else { return false }
         guard searchEngine?.updateSearchQuery(query) == true else { return false }
         searchAdapter?.updateQuery(query)
         return true
@@ -1275,10 +1482,19 @@ final class AlanTerminalSurfaceController {
         let previousState = scrollbackAdapter.state
         let previousRenderer = latestRenderer
         let previousMetadata = latestMetadata
+        let previousSemanticCommandState = semanticCommandState
         let previousReadonly = readonly
         let previousSecureInput = secureInput
         scrollbackAdapter.reset()
         inputRouter.reset()
+        if let paneID = surfaceHandle?.paneID {
+            semanticCommandState = .unavailable(
+                paneID: paneID,
+                reason: "Terminal surface changed; command boundary ranges were invalidated."
+            )
+        } else {
+            semanticCommandState = .placeholder
+        }
         nativeScrollRowHeight = 1
         latestRenderer = .placeholder
         latestMetadata = .placeholder
@@ -1287,6 +1503,10 @@ final class AlanTerminalSurfaceController {
         if previousState != .empty
             || previousRenderer != .placeholder
             || previousMetadata != .placeholder
+            || (
+                previousSemanticCommandState.hasReliableCommandBoundaries
+                    && previousSemanticCommandState != semanticCommandState
+            )
             || previousReadonly
             || previousSecureInput
         {

@@ -16,6 +16,10 @@ private enum ShellCommandInputAction: CaseIterable {
     case closePane
     case closeTab
     case jumpToAttention
+    case previousPrompt
+    case nextPrompt
+    case copyLastCommandOutput
+    case searchLastCommandOutput
 
     var aliases: Set<String> {
         switch self {
@@ -47,13 +51,36 @@ private enum ShellCommandInputAction: CaseIterable {
             return ["close tab", "close current tab"]
         case .jumpToAttention:
             return ["jump to attention", "focus attention", "attention"]
+        case .previousPrompt:
+            return ["previous prompt", "jump previous prompt", "go previous prompt"]
+        case .nextPrompt:
+            return ["next prompt", "jump next prompt", "go next prompt"]
+        case .copyLastCommandOutput:
+            return ["copy last output", "copy last command output", "copy command output"]
+        case .searchLastCommandOutput:
+            return ["search last output", "search last command output", "find last output"]
         }
     }
 
-    static func resolve(_ rawValue: String) -> ShellCommandInputAction? {
+    var requiresSemanticCommandBoundaries: Bool {
+        switch self {
+        case .previousPrompt, .nextPrompt, .copyLastCommandOutput, .searchLastCommandOutput:
+            return true
+        default:
+            return false
+        }
+    }
+
+    static func resolve(
+        _ rawValue: String,
+        semanticCommandsAvailable: Bool = false
+    ) -> ShellCommandInputAction? {
         let normalized = normalizedCommand(rawValue)
         guard !normalized.isEmpty else { return nil }
-        return allCases.first { $0.aliases.contains(normalized) }
+        return allCases.first {
+            (!$0.requiresSemanticCommandBoundaries || semanticCommandsAvailable)
+                && $0.aliases.contains(normalized)
+        }
     }
 
     private static func normalizedCommand(_ rawValue: String) -> String {
@@ -159,7 +186,10 @@ struct ShellCommandTabView: View {
     }
 
     private func submit() {
-        guard let action = ShellCommandInputAction.resolve(query) else {
+        guard let action = ShellCommandInputAction.resolve(
+            query,
+            semanticCommandsAvailable: host.focusedPaneHasReliableSemanticCommands
+        ) else {
             unresolvedMessage = query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 ? "Type a command name."
                 : "No matching command."
@@ -203,6 +233,14 @@ struct ShellCommandTabView: View {
             if let firstAttention = host.attentionItems.first {
                 host.focusAttentionItem(firstAttention)
             }
+        case .previousPrompt:
+            host.jumpToPreviousPrompt()
+        case .nextPrompt:
+            host.jumpToNextPrompt()
+        case .copyLastCommandOutput:
+            host.copyLastCommandOutput()
+        case .searchLastCommandOutput:
+            host.searchLastCommandOutput()
         }
         dismissAndRestoreFocus()
     }

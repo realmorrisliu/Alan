@@ -946,6 +946,44 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         lastCopiedAt = .now
     }
 
+    var focusedPaneHasReliableSemanticCommands: Bool {
+        guard let paneID = selectedPane?.paneID,
+              paneID == terminalRuntime.paneID
+        else {
+            return false
+        }
+        return terminalRuntime.surfaceState.terminalMode == .normalBuffer
+            && terminalRuntime.surfaceState.semanticCommands.hasReliableCommandBoundaries
+    }
+
+    @discardableResult
+    func jumpToPreviousPrompt() -> Bool {
+        navigateSemanticPrompt(.previous)
+    }
+
+    @discardableResult
+    func jumpToNextPrompt() -> Bool {
+        navigateSemanticPrompt(.next)
+    }
+
+    @discardableResult
+    func copyLastCommandOutput() -> Bool {
+        guard let paneID = selectedPane?.paneID else { return false }
+        return terminalRuntimeRegistry.copyLastCommandOutput(for: paneID)
+    }
+
+    @discardableResult
+    func searchLastCommandOutput() -> Bool {
+        guard let paneID = selectedPane?.paneID else { return false }
+        return terminalRuntimeRegistry.beginLastCommandOutputSearch(for: paneID)
+    }
+
+    @discardableResult
+    private func navigateSemanticPrompt(_ direction: AlanTerminalPromptNavigationDirection) -> Bool {
+        guard let paneID = selectedPane?.paneID else { return false }
+        return terminalRuntimeRegistry.navigateSemanticPrompt(for: paneID, direction: direction)
+    }
+
     func updateTerminalRuntime(_ runtime: TerminalHostRuntimeSnapshot) {
         terminalRuntimeRegistry.updateSnapshot(runtime)
 

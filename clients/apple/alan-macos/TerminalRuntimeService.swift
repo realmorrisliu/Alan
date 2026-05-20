@@ -313,7 +313,8 @@ protocol AlanGhosttyEventSurfaceHandle:
     AlanTerminalSurfaceHandle,
     AlanTerminalSearchEngine,
     AlanTerminalScrollbackEngine,
-    AlanTerminalSelectionEngine
+    AlanTerminalSelectionEngine,
+    AlanTerminalCommandBufferEngine
 {
     func keyTranslationMods(for mods: ghostty_input_mods_e) -> ghostty_input_mods_e
     func sendKey(_ keyEvent: ghostty_input_key_s) -> Bool
@@ -333,6 +334,7 @@ protocol AlanGhosttyEventSurfaceHandle:
     func sendMousePressure(stage: UInt32, pressure: Double)
     func readSelectionText() -> String?
     func hasSelection() -> Bool
+    func readText(in range: AlanTerminalBufferRange) -> String?
     func imeRect(in view: NSView) -> NSRect?
 }
 #endif
@@ -644,6 +646,10 @@ extension AlanGhosttySurfaceHandle: AlanGhosttyEventSurfaceHandle {
         liveHost.hasSelection()
     }
 
+    func readText(in range: AlanTerminalBufferRange) -> String? {
+        liveHost.readText(in: range)
+    }
+
     func imeRect(in view: NSView) -> NSRect? {
         liveHost.imeRect(in: view)
     }
@@ -831,6 +837,7 @@ final class FakeAlanTerminalSurfaceHandle: AlanTerminalSurfaceHandle {
     var deliveryResult: TerminalRuntimeDeliveryResult?
     var searchActionsShouldSucceed = true
     var scrollActionsShouldSucceed = true
+    var commandOutputTextByRange: [AlanTerminalBufferRange: String] = [:]
     var selectedText: String?
     var ready = true
     private var searchUpdateHandler: ((AlanTerminalSearchEngineUpdate) -> Void)?
@@ -1015,6 +1022,12 @@ extension FakeAlanTerminalSurfaceHandle: AlanTerminalSelectionEngine {
 
     func hasSelection() -> Bool {
         selectedText?.isEmpty == false
+    }
+}
+
+extension FakeAlanTerminalSurfaceHandle: AlanTerminalCommandBufferEngine {
+    func readText(in range: AlanTerminalBufferRange) -> String? {
+        commandOutputTextByRange[range]
     }
 }
 

@@ -33,6 +33,18 @@ final class AlanTerminalHostNSView: NSView {
         false
     }
 
+    func beginLastCommandOutputSearch() -> Bool {
+        false
+    }
+
+    func navigateSemanticPrompt(_ direction: AlanTerminalPromptNavigationDirection) -> Bool {
+        false
+    }
+
+    func copyLastCommandOutput() -> Bool {
+        false
+    }
+
     func updateFindQuery(_ query: String) -> Bool {
         false
     }

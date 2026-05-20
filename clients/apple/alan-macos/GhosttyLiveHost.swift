@@ -184,8 +184,36 @@ final class AlanGhosttyLiveHost: NSObject {
         var text = ghostty_text_s()
         guard ghostty_surface_read_selection(surface, &text) else { return nil }
         defer { ghostty_surface_free_text(surface, &text) }
-        guard let raw = text.text else { return nil }
-        return String(cString: raw)
+        return string(from: text)
+    }
+
+    func readText(in range: AlanTerminalBufferRange) -> String? {
+        guard let surface, !range.isEmpty else { return nil }
+        let surfaceSize = ghostty_surface_size(surface)
+        guard surfaceSize.columns > 0 else { return nil }
+
+        let endRow = max(range.lowerBound, range.upperBound - 1)
+        let lastColumn = UInt32(surfaceSize.columns - 1)
+        let selection = ghostty_selection_s(
+            top_left: ghostty_point_s(
+                tag: GHOSTTY_POINT_SCREEN,
+                coord: GHOSTTY_POINT_COORD_EXACT,
+                x: 0,
+                y: clampedScreenRow(range.lowerBound)
+            ),
+            bottom_right: ghostty_point_s(
+                tag: GHOSTTY_POINT_SCREEN,
+                coord: GHOSTTY_POINT_COORD_EXACT,
+                x: lastColumn,
+                y: clampedScreenRow(endRow)
+            ),
+            rectangle: false
+        )
+
+        var text = ghostty_text_s()
+        guard ghostty_surface_read_text(surface, selection, &text) else { return nil }
+        defer { ghostty_surface_free_text(surface, &text) }
+        return string(from: text)
     }
 
     func hasSelection() -> Bool {
@@ -487,6 +515,19 @@ final class AlanGhosttyLiveHost: NSObject {
         if let displayID = (window.screen ?? NSScreen.main)?.displayID, displayID != 0 {
             ghostty_surface_set_display_id(surface, displayID)
         }
+    }
+
+    private func clampedScreenRow(_ row: Int) -> UInt32 {
+        UInt32(min(max(row, 0), Int(UInt32.max)))
+    }
+
+    private func string(from text: ghostty_text_s) -> String? {
+        guard let raw = text.text else { return nil }
+        let length = Int(text.text_len)
+        guard length > 0 else { return "" }
+        let bytes = UnsafeRawPointer(raw).assumingMemoryBound(to: UInt8.self)
+        let buffer = UnsafeBufferPointer(start: bytes, count: length)
+        return String(decoding: buffer, as: UTF8.self)
     }
 
     private func markFirstRefreshIfNeeded(on canvasView: AlanGhosttyCanvasView) {
