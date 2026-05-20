@@ -912,9 +912,11 @@ private struct ShellSidebarTabDropDelegate: DropDelegate {
         preview = nil
         self.activeDrag = nil
 
+        let mutationIndex = mutationIndex(for: insertionTarget, activeDrag: activeDrag)
+
         if activeDrag.sourceSpaceID == insertionTarget.spaceID,
            activeDrag.sourceSection == insertionTarget.section,
-           activeDrag.sourceIndex == insertionTarget.index
+           activeDrag.sourceIndex == mutationIndex
         {
             return true
         }
@@ -923,8 +925,22 @@ private struct ShellSidebarTabDropDelegate: DropDelegate {
             tabID: activeDrag.tabID,
             targetSpaceID: insertionTarget.spaceID,
             section: insertionTarget.section,
-            index: insertionTarget.index
+            index: mutationIndex
         )
+    }
+
+    private func mutationIndex(
+        for insertionTarget: ShellSidebarTabInsertionTarget,
+        activeDrag: ShellSidebarTabDragState
+    ) -> Int {
+        guard activeDrag.sourceSpaceID == insertionTarget.spaceID,
+              activeDrag.sourceSection == insertionTarget.section,
+              insertionTarget.index > activeDrag.sourceIndex
+        else {
+            return insertionTarget.index
+        }
+
+        return insertionTarget.index - 1
     }
 
     private func resolvedTarget(for info: DropInfo) -> ShellSidebarTabInsertionTarget {

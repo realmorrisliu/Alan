@@ -216,6 +216,16 @@ require_tab_organization_sidebar_contract() {
         "\\.tabToSpace\\(" \
         "tab context menus must target the clicked tab when moving to another space"
 
+    require_pattern \
+        "clients/apple/alan-macos/Views/Shell/ShellSidebarView.swift" \
+        "mutationIndex\\(for: insertionTarget, activeDrag: activeDrag\\)" \
+        "same-section downward tab drops must convert preview index to mutation index"
+
+    require_pattern \
+        "clients/apple/alan-macos/Services/Shell/ShellSocketServer.swift" \
+        "\\.tabReorder" \
+        "tab.reorder socket commands must route through the host so pin snapshots persist"
+
     if grep -Eq 'Text\("(Pinned|Unpinned)"\)' "$file"; then
         printf 'error: tab organization sections must avoid heavy visible section headers\n' >&2
         exit 1
