@@ -1,4 +1,5 @@
-use std::process::Command;
+use std::path::Path;
+use std::process::{Command, Output};
 
 use tempfile::TempDir;
 
@@ -24,6 +25,34 @@ fn write_executable(path: &std::path::Path, contents: &str) {
     let mut permissions = std::fs::metadata(path).unwrap().permissions();
     permissions.set_mode(0o755);
     std::fs::set_permissions(path, permissions).unwrap();
+}
+
+#[cfg(unix)]
+fn run_wrapper(wrapper_path: &Path, test_path: &str, marker: &Path) -> Output {
+    const TEXT_FILE_BUSY_OS_ERROR: i32 = 26;
+
+    let mut last_text_busy_error = None;
+    for attempt in 0..5 {
+        match Command::new(wrapper_path)
+            .arg("input")
+            .env("PATH", test_path)
+            .env("WRAPPER_MARKER", marker)
+            .output()
+        {
+            Ok(output) => return output,
+            Err(error) if error.raw_os_error() == Some(TEXT_FILE_BUSY_OS_ERROR) && attempt < 4 => {
+                last_text_busy_error = Some(error);
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            Err(error) => panic!("failed to run {}: {error}", wrapper_path.display()),
+        }
+    }
+
+    let error = last_text_busy_error.expect("text-busy retry loop must capture an error");
+    panic!(
+        "failed to run {} after retrying text-busy errors: {error}",
+        wrapper_path.display()
+    );
 }
 
 #[cfg(unix)]
@@ -81,12 +110,7 @@ fn package_bin_wrappers_fall_back_to_path_outside_source_tree() {
 
         let original_path = std::env::var_os("PATH").unwrap_or_default();
         let test_path = format!("{}:{}", fake_bin.display(), original_path.to_string_lossy());
-        let output = Command::new(&wrapper_path)
-            .arg("input")
-            .env("PATH", test_path)
-            .env("WRAPPER_MARKER", &marker)
-            .output()
-            .unwrap();
+        let output = run_wrapper(&wrapper_path, &test_path, &marker);
 
         assert!(
             output.status.success(),
@@ -149,12 +173,7 @@ fn swebench_bin_wrappers_skip_themselves_when_searching_path_helpers() {
             package_bin.display(),
             helper_bin.display()
         );
-        let output = Command::new(&wrapper_path)
-            .arg("input")
-            .env("PATH", test_path)
-            .env("WRAPPER_MARKER", &marker)
-            .output()
-            .unwrap();
+        let output = run_wrapper(&wrapper_path, &test_path, &marker);
 
         assert!(
             output.status.success(),
