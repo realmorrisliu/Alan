@@ -15,6 +15,11 @@ private enum ShellCommandInputAction: CaseIterable {
     case equalizeSplits
     case closePane
     case closeTab
+    case quickTerminalToggle
+    case quickTerminalShow
+    case quickTerminalHide
+    case quickTerminalFocus
+    case quickTerminalClose
     case jumpToAttention
     case previousPrompt
     case nextPrompt
@@ -49,6 +54,16 @@ private enum ShellCommandInputAction: CaseIterable {
             return ["close pane", "close focused pane"]
         case .closeTab:
             return ["close tab", "close current tab"]
+        case .quickTerminalToggle:
+            return ["quick terminal", "toggle quick terminal"]
+        case .quickTerminalShow:
+            return ["show quick terminal", "open quick terminal"]
+        case .quickTerminalHide:
+            return ["hide quick terminal", "dismiss quick terminal"]
+        case .quickTerminalFocus:
+            return ["focus quick terminal"]
+        case .quickTerminalClose:
+            return ["close quick terminal"]
         case .jumpToAttention:
             return ["jump to attention", "focus attention", "attention"]
         case .previousPrompt:
@@ -229,6 +244,16 @@ struct ShellCommandTabView: View {
             host.performShellWorkspaceCommand(ShellWorkspaceCommand.closePane)
         case .closeTab:
             host.performShellWorkspaceCommand(ShellWorkspaceCommand.closeTab)
+        case .quickTerminalToggle:
+            host.performShellWorkspaceCommand(.quickTerminalToggle)
+        case .quickTerminalShow:
+            host.performShellWorkspaceCommand(.quickTerminalShow)
+        case .quickTerminalHide:
+            host.performShellWorkspaceCommand(.quickTerminalHide)
+        case .quickTerminalFocus:
+            host.performShellWorkspaceCommand(.quickTerminalFocus)
+        case .quickTerminalClose:
+            host.performShellWorkspaceCommand(.quickTerminalClose)
         case .jumpToAttention:
             if let firstAttention = host.attentionItems.first {
                 host.focusAttentionItem(firstAttention)

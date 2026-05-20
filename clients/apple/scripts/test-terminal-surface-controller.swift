@@ -393,6 +393,21 @@ private enum TerminalSurfaceControllerTests {
             commandT == .shellAction(.newTerminalTab, .currentSelection),
             "command-t must remain a native workspace shortcut through the shell action registry"
         )
+
+        let optionSpace = router.routeKeyboard(
+            AlanTerminalKeyInput(
+                characters: " ",
+                keyCode: 0x31,
+                modifiers: [.option],
+                phase: .down,
+                isRepeat: false
+            ),
+            hasMarkedText: false
+        )
+        expect(
+            optionSpace == .shellAction(.quickTerminalToggle, .currentSelection),
+            "option-space must route to the quick terminal toggle through the registry"
+        )
     }
 
     private static func verifiesKeyboardPipelineKeepsPhysicalKeysOnGhosttyKeyPath() {

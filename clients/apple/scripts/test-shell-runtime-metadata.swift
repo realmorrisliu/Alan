@@ -25,6 +25,9 @@ private enum ShellRuntimeMetadataTests {
         verifiesShellActionNewTerminalTabInheritsFocusedRuntimeCwd()
         verifiesOpeningTerminalTabFallsBackToFocusedPaneSnapshotCwd()
         verifiesOpeningTerminalTabHonorsExplicitCwd()
+        verifiesQuickTerminalShowCreatesAndReusesGlobalPane()
+        verifiesQuickTerminalActionsAndControlCommandsShareControllerPath()
+        verifiesQuickTerminalPromotionMovesExistingPaneIntoSpace()
         verifiesTerminalActivityProjectsByPaneID()
         verifiesProgressActivityFactoryUsesSourceFirstDisplay()
         verifiesCommandCompletionActivityFactory()
@@ -514,6 +517,129 @@ private enum ShellRuntimeMetadataTests {
         expect(
             controller.selectedPane?.cwd == "/explicit/cwd",
             "explicit new-tab cwd must override focused pane cwd"
+        )
+    }
+
+    private static func verifiesQuickTerminalShowCreatesAndReusesGlobalPane() {
+        let controller = makeController()
+        controller.updateTerminalMetadata(metadata(title: "cwd update", cwd: "/repo/app"), for: "pane_1")
+        let selectedSpaceBefore = controller.selectedSpaceID
+        let selectedTabBefore = controller.selectedTabID
+        let focusedPaneBefore = controller.shellState.focusedPaneID
+
+        let shownPaneID = controller.showQuickTerminal()
+        let hidden = controller.hideQuickTerminal()
+        controller.updateTerminalMetadata(metadata(title: "cwd update", cwd: "/repo/other"), for: "pane_1")
+        let reshownPaneID = controller.showQuickTerminal()
+
+        expect(shownPaneID == "quick_terminal_pane", "quick terminal must use one stable global pane id")
+        expect(hidden == true, "quick terminal hide must apply when the peak is visible")
+        expect(reshownPaneID == shownPaneID, "quick terminal show must reuse the existing global pane")
+        expect(
+            controller.quickTerminalPane?.cwd == "/repo/app",
+            "quick terminal must keep the existing instance cwd across hide/show"
+        )
+        expect(
+            controller.quickTerminalPresentation == .visible,
+            "reshowing quick terminal must make the global slot visible"
+        )
+        expect(
+            controller.shellState.panes.filter(\.isQuickTerminalPane).count == 1,
+            "quick terminal must not create one pane per summon"
+        )
+        expect(controller.selectedSpaceID == selectedSpaceBefore, "show/hide must not move the selected space")
+        expect(controller.selectedTabID == selectedTabBefore, "show/hide must not move the selected tab")
+        expect(
+            controller.shellState.focusedPaneID == focusedPaneBefore,
+            "show/hide must not steal regular pane focus in the shell model"
+        )
+    }
+
+    private static func verifiesQuickTerminalActionsAndControlCommandsShareControllerPath() {
+        let controller = makeController()
+
+        let actionResult = controller.performShellAction(.quickTerminalToggle)
+        let paneIDFromAction = controller.quickTerminalPane?.paneID
+        let hiddenResponse = controller.handleControlPlaneCommand(
+            decodeControlCommand(
+                """
+                {
+                  "request_id": "quick-hide-1",
+                  "command": "quick_terminal.hide"
+                }
+                """
+            )
+        )
+
+        expect(actionResult == .executed, "quick terminal action must execute through ShellActionRegistry")
+        expect(paneIDFromAction == "quick_terminal_pane", "quick terminal action must create the global pane")
+        expect(hiddenResponse.applied == true, "quick terminal hide control command must use controller routing")
+        expect(
+            controller.quickTerminalPresentation == .hidden,
+            "quick terminal hide command must preserve the global runtime slot"
+        )
+
+        let focusResponse = controller.handleControlPlaneCommand(
+            decodeControlCommand(
+                """
+                {
+                  "request_id": "quick-focus-1",
+                  "command": "quick_terminal.focus"
+                }
+                """
+            )
+        )
+
+        expect(focusResponse.applied == true, "quick terminal focus command must use controller routing")
+        expect(focusResponse.paneID == paneIDFromAction, "focus response must identify the quick pane")
+
+        let closeResponse = controller.handleControlPlaneCommand(
+            decodeControlCommand(
+                """
+                {
+                  "request_id": "quick-close-1",
+                  "command": "quick_terminal.close"
+                }
+                """
+            )
+        )
+
+        expect(closeResponse.applied == true, "quick terminal close command must use controller routing")
+        expect(controller.quickTerminalPane == nil, "close must clear the global quick-terminal slot")
+        expect(
+            !controller.terminalRuntimeRegistry.registeredPaneIDs.contains("quick_terminal_pane"),
+            "close must release the quick terminal runtime through regular registry cleanup"
+        )
+    }
+
+    private static func verifiesQuickTerminalPromotionMovesExistingPaneIntoSpace() {
+        let controller = makeController()
+        _ = controller.createTerminalSpace(title: "Second", workingDirectory: "/tmp")
+        let quickPaneID = controller.showQuickTerminal()
+        let response = controller.handleControlPlaneCommand(
+            decodeControlCommand(
+                """
+                {
+                  "request_id": "quick-promote-1",
+                  "command": "quick_terminal.promote",
+                  "target_space_id": "space_2"
+                }
+                """
+            )
+        )
+        let promotedPane = controller.pane(paneID: ShellQuickTerminalSlot.globalPaneID)
+        let targetSpace = controller.shellState.space(spaceID: "space_2")
+        let targetTab = targetSpace?.tabs.first { $0.contains(paneID: ShellQuickTerminalSlot.globalPaneID) }
+
+        expect(quickPaneID == ShellQuickTerminalSlot.globalPaneID, "quick setup must create the global pane")
+        expect(response.applied == true, "quick terminal promote command must use controller routing")
+        expect(response.paneID == ShellQuickTerminalSlot.globalPaneID, "promote response must return the moved pane")
+        expect(controller.quickTerminalPane == nil, "promote must clear the quick-terminal slot")
+        expect(promotedPane?.spaceID == "space_2", "promote must move the existing pane into the target space")
+        expect(promotedPane?.tabID == targetTab?.tabID, "promote must attach the existing pane to the new tab")
+        expect(
+            controller.shellState.panes.filter { $0.paneID == ShellQuickTerminalSlot.globalPaneID }.count == 1,
+            "promote must move the pane instead of copying the process"
         )
     }
 

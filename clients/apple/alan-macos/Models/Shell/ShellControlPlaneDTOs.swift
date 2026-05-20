@@ -26,6 +26,12 @@ enum AlanShellControlCommandKind: String, Codable {
     case attentionSet = "attention.set"
     case routingCandidates = "routing.candidates"
     case eventsRead = "events.read"
+    case quickTerminalToggle = "quick_terminal.toggle"
+    case quickTerminalShow = "quick_terminal.show"
+    case quickTerminalHide = "quick_terminal.hide"
+    case quickTerminalFocus = "quick_terminal.focus"
+    case quickTerminalClose = "quick_terminal.close"
+    case quickTerminalPromote = "quick_terminal.promote"
 }
 
 struct AlanShellControlCommand: Codable {

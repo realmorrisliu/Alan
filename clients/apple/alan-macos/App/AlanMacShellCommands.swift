@@ -38,6 +38,11 @@ struct AlanMacShellCommands: Commands {
             }
             .keyboardShortcut("p", modifiers: .command)
 
+            Button(host.shellActionTitle(.quickTerminalToggle)) {
+                host.performShellAction(.quickTerminalToggle)
+            }
+            .shellActionKeyboardShortcut(host.shellActionShortcut(.quickTerminalToggle))
+
             Divider()
 
             Button(host.shellActionTitle(.paneSplitRight)) {
@@ -201,6 +206,8 @@ extension ShellActionShortcut {
             return .upArrow
         case "downArrow":
             return .downArrow
+        case "space":
+            return .space
         default:
             guard key.count == 1, let character = key.first else { return nil }
             return KeyEquivalent(character)

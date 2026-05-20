@@ -715,8 +715,107 @@ enum AlanShellLocalCommandExecutor {
                 sideEffect: nil
             )
 
+        case .quickTerminalToggle:
+            if state.quickTerminal?.presentation == .visible {
+                return quickTerminalResult(
+                    command: command,
+                    state: state,
+                    mutate: { try $0.hidingQuickTerminal() }
+                )
+            }
+            return quickTerminalResult(
+                command: command,
+                state: state,
+                mutate: {
+                    $0.showingQuickTerminal(workingDirectory: command.cwd)
+                }
+            )
+
+        case .quickTerminalShow, .quickTerminalFocus:
+            return quickTerminalResult(
+                command: command,
+                state: state,
+                mutate: {
+                    $0.showingQuickTerminal(workingDirectory: command.cwd)
+                }
+            )
+
+        case .quickTerminalHide:
+            return quickTerminalResult(
+                command: command,
+                state: state,
+                mutate: { try $0.hidingQuickTerminal() }
+            )
+
+        case .quickTerminalClose:
+            return quickTerminalResult(
+                command: command,
+                state: state,
+                mutate: { try $0.closingQuickTerminal() }
+            )
+
+        case .quickTerminalPromote:
+            guard let targetSpaceID = command.targetSpaceID ?? command.spaceID else {
+                return AlanShellLocalCommandResult(
+                    response: response(
+                        for: command,
+                        state: state,
+                        applied: false,
+                        errorCode: "quick_terminal_destination_required",
+                        errorMessage: "target_space_id is required."
+                    ),
+                    updatedState: nil,
+                    sideEffect: nil
+                )
+            }
+            return quickTerminalResult(
+                command: command,
+                state: state,
+                mutate: { try $0.promotingQuickTerminal(to: targetSpaceID) }
+            )
+
         case .eventsRead:
             return nil
+        }
+    }
+
+    private static func quickTerminalResult(
+        command: AlanShellControlCommand,
+        state: ShellStateSnapshot,
+        mutate: (ShellStateSnapshot) throws -> ShellStateMutationResult
+    ) -> AlanShellLocalCommandResult {
+        do {
+            let result = try mutate(state)
+            return AlanShellLocalCommandResult(
+                response: response(
+                    for: command,
+                    state: result.state,
+                    applied: true,
+                    spaceID: result.spaceID,
+                    tabID: result.tabID,
+                    paneID: result.paneID
+                ),
+                updatedState: result.state,
+                sideEffect: nil
+            )
+        } catch let error as ShellStateMutationError {
+            return AlanShellLocalCommandResult(
+                response: failureResponse(for: error, command: command, state: state),
+                updatedState: nil,
+                sideEffect: nil
+            )
+        } catch {
+            return AlanShellLocalCommandResult(
+                response: response(
+                    for: command,
+                    state: state,
+                    applied: false,
+                    errorCode: "quick_terminal_unavailable",
+                    errorMessage: "The quick terminal command could not be applied."
+                ),
+                updatedState: nil,
+                sideEffect: nil
+            )
         }
     }
 
