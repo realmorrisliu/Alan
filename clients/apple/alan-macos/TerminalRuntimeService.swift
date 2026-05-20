@@ -313,7 +313,8 @@ protocol AlanGhosttyEventSurfaceHandle:
     AlanTerminalSurfaceHandle,
     AlanTerminalSearchEngine,
     AlanTerminalScrollbackEngine,
-    AlanTerminalSelectionEngine
+    AlanTerminalSelectionEngine,
+    AlanTerminalCommandBufferEngine
 {
     func keyTranslationMods(for mods: ghostty_input_mods_e) -> ghostty_input_mods_e
     func sendKey(_ keyEvent: ghostty_input_key_s) -> Bool
@@ -333,6 +334,7 @@ protocol AlanGhosttyEventSurfaceHandle:
     func sendMousePressure(stage: UInt32, pressure: Double)
     func readSelectionText() -> String?
     func hasSelection() -> Bool
+    func readText(in range: AlanTerminalBufferRange) -> String?
     func imeRect(in view: NSView) -> NSRect?
 }
 #endif
@@ -642,6 +644,10 @@ extension AlanGhosttySurfaceHandle: AlanGhosttyEventSurfaceHandle {
 
     func hasSelection() -> Bool {
         liveHost.hasSelection()
+    }
+
+    func readText(in range: AlanTerminalBufferRange) -> String? {
+        liveHost.readText(in: range)
     }
 
     func imeRect(in view: NSView) -> NSRect? {

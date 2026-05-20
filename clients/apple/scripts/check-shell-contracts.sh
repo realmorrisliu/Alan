@@ -249,6 +249,16 @@ require_semantic_terminal_actions_contract() {
         "copy-last-output must read from a pane-owned command buffer range"
 
     require_pattern \
+        "clients/apple/alan-macos/TerminalRuntimeService.swift" \
+        "AlanTerminalCommandBufferEngine" \
+        "live terminal surface handles must provide command-buffer range reads when reliable ranges exist"
+
+    require_pattern \
+        "clients/apple/alan-macos/GhosttyLiveHost.swift" \
+        "ghostty_surface_read_text" \
+        "live Ghostty surfaces must use Ghostty range text reads for command output copying"
+
+    require_pattern \
         "clients/apple/alan-macos/TerminalSurfaceController.swift" \
         "scrollbackAdapter\\.state\\.metrics\\.mode == \\.normalBuffer" \
         "semantic prompt/output actions must be gated to the normal terminal buffer"
