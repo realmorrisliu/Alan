@@ -48,5 +48,5 @@
 
 - [x] 5.1 Confirm the registry remains shell-only and does not add Command UI,
   settings, daemon, TUI, or user-custom shortcut scope.
-- [ ] 5.2 Before archive, sync accepted delta requirements into `openspec/specs/`.
-- [ ] 5.3 Archive the OpenSpec change after implementation merges.
+- [x] 5.2 Before archive, sync accepted delta requirements into `openspec/specs/`.
+- [x] 5.3 Archive the OpenSpec change after implementation merges.
