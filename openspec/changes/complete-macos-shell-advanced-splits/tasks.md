@@ -28,11 +28,11 @@
 
 ## 5. Verification And Archive Readiness
 
-- [ ] 5.1 Run `clients/apple/scripts/test-shell-split-model.sh`.
-- [ ] 5.2 Run `bash clients/apple/scripts/check-shell-contracts.sh`.
-- [ ] 5.3 Run the Apple shell controller/runtime script tests touched by this change.
-- [ ] 5.4 Run `git diff --check`.
-- [ ] 5.5 Run `openspec validate complete-macos-shell-advanced-splits --type change --strict --json`.
-- [ ] 5.6 Run `openspec validate --all --strict --json`.
-- [ ] 5.7 Build the macOS app with the renamed `alan-macos` command.
-- [ ] 5.8 Sync accepted delta requirements into `openspec/specs/` before archive.
+- [x] 5.1 Run `clients/apple/scripts/test-shell-split-model.sh`.
+- [x] 5.2 Run `bash clients/apple/scripts/check-shell-contracts.sh`.
+- [x] 5.3 Run the Apple shell controller/runtime script tests touched by this change.
+- [x] 5.4 Run `git diff --check`.
+- [x] 5.5 Run `openspec validate complete-macos-shell-advanced-splits --type change --strict --json`.
+- [x] 5.6 Run `openspec validate --all --strict --json`.
+- [x] 5.7 Build the macOS app with the renamed `alan-macos` command.
+- [x] 5.8 Sync accepted delta requirements into `openspec/specs/` before archive.
