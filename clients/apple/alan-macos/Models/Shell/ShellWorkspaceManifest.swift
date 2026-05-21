@@ -299,9 +299,7 @@ struct ShellContentRestoreRecord: Codable, Equatable, Identifiable {
 }
 
 extension ShellWorkspaceManifest {
-    func migratingTerminalRestoreSnapshotsToContentContainers(
-        defaultWorkingDirectory: String
-    ) -> ShellContentWorkspaceManifest {
+    func migratingTerminalRestoreSnapshotsToContentContainers() -> ShellContentWorkspaceManifest {
         ShellContentWorkspaceManifest(
             schemaVersion: schemaVersion,
             contentContractVersion: ShellContentWorkspaceManifest.currentContentContractVersion,
@@ -324,12 +322,8 @@ extension ShellWorkspaceManifest {
                             lastActivatedAt: tab.lastActivatedAt,
                             lastActivityAt: tab.lastActivityAt,
                             isPinned: tab.isPinned,
-                            pinSnapshot: tab.pinSnapshot?.migratingTerminalPanesToContentContainers(
-                                defaultWorkingDirectory: defaultWorkingDirectory
-                            ),
-                            liveSnapshot: tab.liveSnapshot?.migratingTerminalPanesToContentContainers(
-                                defaultWorkingDirectory: defaultWorkingDirectory
-                            ),
+                            pinSnapshot: tab.pinSnapshot?.migratingTerminalPanesToContentContainers(),
+                            liveSnapshot: tab.liveSnapshot?.migratingTerminalPanesToContentContainers(),
                             activeTask: tab.activeTask
                         )
                     }
@@ -379,9 +373,7 @@ extension ShellWorkspaceManifest {
 }
 
 extension ShellTabRestoreSnapshot {
-    func migratingTerminalPanesToContentContainers(
-        defaultWorkingDirectory: String
-    ) -> ShellContentTabRestoreSnapshot {
+    func migratingTerminalPanesToContentContainers() -> ShellContentTabRestoreSnapshot {
         let paneSlots = panes.map { pane in
             ShellPaneSlotRestoreRecord(
                 paneSlotID: pane.paneID,
@@ -399,7 +391,7 @@ extension ShellTabRestoreSnapshot {
                 payload: .terminal(
                     ShellTerminalContentPayload(
                         launchTarget: pane.launchTarget,
-                        cwd: pane.cwd ?? defaultWorkingDirectory,
+                        cwd: pane.cwd,
                         title: title
                     )
                 )

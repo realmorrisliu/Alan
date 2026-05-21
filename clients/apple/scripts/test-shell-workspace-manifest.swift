@@ -19,6 +19,7 @@ private enum ShellWorkspaceManifestTests {
         try verifiesPinnedSplitSnapshotRestoresSplitTree()
         try verifiesTerminalOnlySnapshotMigratesToContentContainerShape()
         try verifiesContentContainerMigrationPreservesWorkspaceMetadata()
+        try verifiesContentContainerMigrationPreservesNilRestoreCwd()
         try verifiesUnpinnedTabPruningUsesTtlAndActiveTask()
         try verifiesSelectedTabPruningCanLeaveSelectedSpaceEmpty()
         print("Shell workspace manifest tests passed.")
@@ -196,9 +197,7 @@ private enum ShellWorkspaceManifestTests {
         tab.pinSnapshot = makeSplitSnapshot(tabID: tab.tabID)
         let manifest = makeManifest(selectedTabID: tab.tabID, tabs: [tab])
 
-        let migrated = manifest.migratingTerminalRestoreSnapshotsToContentContainers(
-            defaultWorkingDirectory: "/fallback"
-        )
+        let migrated = manifest.migratingTerminalRestoreSnapshotsToContentContainers()
         let migratedTab = try requireContentTab("tab_split", in: migrated)
         let snapshot = try requireSnapshot(migratedTab.pinSnapshot)
 
@@ -257,9 +256,7 @@ private enum ShellWorkspaceManifestTests {
         )
         let manifest = makeManifest(selectedTabID: tab.tabID, tabs: [tab])
 
-        let migrated = manifest.migratingTerminalRestoreSnapshotsToContentContainers(
-            defaultWorkingDirectory: "/fallback"
-        )
+        let migrated = manifest.migratingTerminalRestoreSnapshotsToContentContainers()
         let migratedSpace = try requireOnlySpace(in: migrated)
         let migratedTab = try requireOnlyContentTab(in: migrated)
 
@@ -281,6 +278,29 @@ private enum ShellWorkspaceManifestTests {
         expect(
             snapshot.contents.first?.payload.terminal?.cwd == "/fallback",
             "migration must preserve terminal restore payload cwd"
+        )
+    }
+
+    private static func verifiesContentContainerMigrationPreservesNilRestoreCwd() throws {
+        var tab = makeTab(
+            tabID: "tab_nil_cwd",
+            title: "Nil Cwd",
+            isPinned: false,
+            pinCwd: nil,
+            liveCwd: "/will-be-replaced",
+            lastActivatedAt: referenceDate,
+            lastActivityAt: referenceDate,
+            activeTask: .inactive
+        )
+        tab.liveSnapshot = makeSnapshot(tabID: tab.tabID, cwd: nil)
+        let manifest = makeManifest(selectedTabID: tab.tabID, tabs: [tab])
+
+        let migrated = manifest.migratingTerminalRestoreSnapshotsToContentContainers()
+        let snapshot = try requireSnapshot(try requireOnlyContentTab(in: migrated).liveSnapshot)
+
+        expect(
+            snapshot.contents.first?.payload.terminal?.cwd == nil,
+            "migration must preserve nil cwd so restore can resolve the default directory later"
         )
     }
 
@@ -404,7 +424,7 @@ private enum ShellWorkspaceManifestTests {
         )
     }
 
-    private static func makeSnapshot(tabID: String, cwd: String) -> ShellTabRestoreSnapshot {
+    private static func makeSnapshot(tabID: String, cwd: String?) -> ShellTabRestoreSnapshot {
         let paneID = "pane_\(tabID)"
         return ShellTabRestoreSnapshot(
             paneTree: ShellPaneTreeNode(
