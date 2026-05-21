@@ -237,6 +237,21 @@ private enum TerminalSurfaceControllerTests {
             "command-control-right must route to registered shell focus right"
         )
 
+        let moveLeft = router.routeKeyboard(
+            AlanTerminalKeyInput(
+                characters: nil,
+                keyCode: 0x7B,
+                modifiers: [.command, .control, .shift],
+                phase: .down,
+                isRepeat: false
+            ),
+            hasMarkedText: false
+        )
+        expect(
+            moveLeft == .shellAction(.paneMoveLeft, .currentSelection),
+            "command-control-shift-left must route to registered in-tab pane movement"
+        )
+
         let paneZoom = router.routeKeyboard(
             AlanTerminalKeyInput(
                 characters: "\r",

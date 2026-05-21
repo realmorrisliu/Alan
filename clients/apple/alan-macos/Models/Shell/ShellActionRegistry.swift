@@ -28,6 +28,10 @@ enum ShellActionID: String, CaseIterable, Identifiable, Hashable {
     case paneFocusDown = "shell.pane.focus_down"
     case paneEqualizeSplits = "shell.pane.equalize_splits"
     case paneZoomToggle = "shell.pane.zoom_toggle"
+    case paneMoveLeft = "shell.pane.move_left"
+    case paneMoveRight = "shell.pane.move_right"
+    case paneMoveUp = "shell.pane.move_up"
+    case paneMoveDown = "shell.pane.move_down"
     case paneClose = "shell.pane.close"
     case findOpen = "shell.find.open"
     case spaceSelectPrevious = "shell.space.select_previous"
@@ -124,6 +128,7 @@ enum ShellActionEffect: Equatable {
     case updatePinnedTab(String?)
     case moveTab(String?, offset: Int)
     case moveTabToSpace(tabID: String?, spaceID: String?)
+    case movePaneInTab(String?, placement: ShellPaneSplitDirection)
     case promoteQuickTerminal(spaceID: String?)
     case disabledPlaceholder
 }
@@ -369,6 +374,11 @@ final class ShellActionRegistry {
                 return .moveTabToSpace(tabID: tabID, spaceID: spaceID)
             }
             return .moveTabToSpace(tabID: nil, spaceID: nil)
+        case .movePaneInTab(_, let placement):
+            if case .pane(let paneID) = resolvedTarget {
+                return .movePaneInTab(paneID, placement: placement)
+            }
+            return .movePaneInTab(nil, placement: placement)
         case .promoteQuickTerminal:
             if case .space(let spaceID) = resolvedTarget {
                 return .promoteQuickTerminal(spaceID: spaceID)
@@ -507,6 +517,54 @@ private let standardActions: [ShellActionDescriptor] = [
         defaultShortcut: ShellActionShortcut(key: "return", modifiers: [.command, .shift], context: .shell),
         effect: .workspaceCommand(.togglePaneZoom),
         availability: splitPaneAvailability
+    ),
+    ShellActionDescriptor(
+        id: .paneMoveLeft,
+        title: "Move Pane Left",
+        targetKind: .pane,
+        defaultShortcut: ShellActionShortcut(
+            key: "leftArrow",
+            modifiers: [.command, .control, .shift],
+            context: .shell
+        ),
+        effect: .movePaneInTab(nil, placement: .left),
+        availability: paneMovementAvailability(.left)
+    ),
+    ShellActionDescriptor(
+        id: .paneMoveRight,
+        title: "Move Pane Right",
+        targetKind: .pane,
+        defaultShortcut: ShellActionShortcut(
+            key: "rightArrow",
+            modifiers: [.command, .control, .shift],
+            context: .shell
+        ),
+        effect: .movePaneInTab(nil, placement: .right),
+        availability: paneMovementAvailability(.right)
+    ),
+    ShellActionDescriptor(
+        id: .paneMoveUp,
+        title: "Move Pane Up",
+        targetKind: .pane,
+        defaultShortcut: ShellActionShortcut(
+            key: "upArrow",
+            modifiers: [.command, .control, .shift],
+            context: .shell
+        ),
+        effect: .movePaneInTab(nil, placement: .up),
+        availability: paneMovementAvailability(.up)
+    ),
+    ShellActionDescriptor(
+        id: .paneMoveDown,
+        title: "Move Pane Down",
+        targetKind: .pane,
+        defaultShortcut: ShellActionShortcut(
+            key: "downArrow",
+            modifiers: [.command, .control, .shift],
+            context: .shell
+        ),
+        effect: .movePaneInTab(nil, placement: .down),
+        availability: paneMovementAvailability(.down)
     ),
     ShellActionDescriptor(
         id: .paneFocusLeft,
@@ -694,6 +752,39 @@ private func splitPaneAvailability(
     return tab.paneTree.paneIDs.count > 1
         ? .available
         : .unavailable(reason: "Pane zoom requires a split tab")
+}
+
+private func paneMovementAvailability(
+    _ placement: ShellPaneSplitDirection
+) -> (ShellStateSnapshot, ShellActionTarget) -> ShellActionAvailability {
+    { state, target in
+        let paneID: String?
+        if case .contextPane(let contextPaneID) = target {
+            paneID = contextPaneID
+        } else {
+            paneID = state.focusedPaneID
+        }
+
+        guard let paneID,
+              let pane = state.pane(paneID: paneID),
+              let tab = state.tab(tabID: pane.tabID)
+        else {
+            return .unavailable(reason: "No focused pane")
+        }
+
+        guard tab.paneTree.paneIDs.count > 1 else {
+            return .unavailable(reason: "Pane movement requires a split tab")
+        }
+
+        guard tab.paneTree.adjacentPaneID(
+            from: paneID,
+            direction: placement.spatialFocusDirection
+        ) != nil else {
+            return .unavailable(reason: "No adjacent pane in that direction")
+        }
+
+        return .available
+    }
 }
 
 private func selectedTabAvailability(

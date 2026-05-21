@@ -22,6 +22,7 @@ private enum ShellActionRegistryTests {
         try verifiesQuickTerminalActionsRouteThroughSharedRegistry()
         try verifiesQuickTerminalPromoteRequiresExplicitDestination()
         try verifiesPaneZoomRoutesThroughSharedRegistry()
+        try verifiesPaneMovementRoutesThroughSharedRegistry()
         print("Shell action registry tests passed.")
     }
 
@@ -74,6 +75,38 @@ private enum ShellActionRegistryTests {
             ),
             (.paneEqualizeSplits, ShellActionShortcut(key: "=", modifiers: [.command, .option], context: .shell)),
             (.paneZoomToggle, ShellActionShortcut(key: "return", modifiers: [.command, .shift], context: .shell)),
+            (
+                .paneMoveLeft,
+                ShellActionShortcut(
+                    key: "leftArrow",
+                    modifiers: [.command, .control, .shift],
+                    context: .shell
+                )
+            ),
+            (
+                .paneMoveRight,
+                ShellActionShortcut(
+                    key: "rightArrow",
+                    modifiers: [.command, .control, .shift],
+                    context: .shell
+                )
+            ),
+            (
+                .paneMoveUp,
+                ShellActionShortcut(
+                    key: "upArrow",
+                    modifiers: [.command, .control, .shift],
+                    context: .shell
+                )
+            ),
+            (
+                .paneMoveDown,
+                ShellActionShortcut(
+                    key: "downArrow",
+                    modifiers: [.command, .control, .shift],
+                    context: .shell
+                )
+            ),
             (
                 .paneFocusRight,
                 ShellActionShortcut(key: "rightArrow", modifiers: [.command, .control], context: .shell)
@@ -138,6 +171,16 @@ private enum ShellActionRegistryTests {
                 for: ShellActionShortcut(key: "return", modifiers: [.command, .shift], context: .shell)
             ) == ShellKeyboardAction(id: .paneZoomToggle, target: .currentSelection),
             "command-shift-return must resolve to pane zoom toggle"
+        )
+        expect(
+            registry.keyboardAction(
+                for: ShellActionShortcut(
+                    key: "leftArrow",
+                    modifiers: [.command, .control, .shift],
+                    context: .shell
+                )
+            ) == ShellKeyboardAction(id: .paneMoveLeft, target: .currentSelection),
+            "command-control-shift-left must resolve to pane movement"
         )
     }
 
@@ -419,6 +462,32 @@ private enum ShellActionRegistryTests {
         expect(
             handledEffects == [.workspaceCommand(.togglePaneZoom)],
             "pane zoom must route through the shared workspace command path"
+        )
+    }
+
+    private static func verifiesPaneMovementRoutesThroughSharedRegistry() throws {
+        let registry = ShellActionRegistry.standard
+        var state = ShellStateSnapshot.bootstrapDefault(workingDirectory: "/tmp")
+        state = try state.splittingPane("pane_1", placement: .right).state
+
+        let unavailable = registry.execute(.paneMoveRight, target: .currentSelection, state: state) { _ in
+            true
+        }
+        expect(
+            unavailable == .unavailable(reason: "No adjacent pane in that direction"),
+            "pane movement must require an adjacent in-tab destination"
+        )
+
+        var handledEffects: [ShellActionEffect] = []
+        let result = registry.execute(.paneMoveLeft, target: .currentSelection, state: state) { effect in
+            handledEffects.append(effect)
+            return true
+        }
+
+        expect(result == .executed, "pane movement must execute when an adjacent pane exists")
+        expect(
+            handledEffects == [.movePaneInTab("pane_2", placement: .left)],
+            "pane movement must route the selected pane and placement to the shared handler"
         )
     }
 }

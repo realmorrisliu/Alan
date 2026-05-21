@@ -33,6 +33,25 @@ enum ShellPaneLiftResult {
     case lastPane
 }
 
+enum ShellPaneMovementInputSource: Equatable {
+    case explicitCommand
+    case titleBarDragAffordance
+    case terminalContentDrag
+}
+
+struct ShellPaneMovementInteractionPolicy: Equatable {
+    static let terminalSelectionFirst = ShellPaneMovementInteractionPolicy()
+
+    func allowsPaneMovement(from source: ShellPaneMovementInputSource) -> Bool {
+        switch source {
+        case .explicitCommand, .titleBarDragAffordance:
+            return true
+        case .terminalContentDrag:
+            return false
+        }
+    }
+}
+
 enum ShellQuickTerminalPeakEscapeBehavior: Equatable {
     case terminalInput
 }
@@ -1088,6 +1107,14 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
             return equalizeSelectedTabSplits()
         case .togglePaneZoom:
             return toggleSelectedPaneZoom()
+        case .movePaneLeft:
+            return moveSelectedPaneWithinTab(.left)
+        case .movePaneRight:
+            return moveSelectedPaneWithinTab(.right)
+        case .movePaneUp:
+            return moveSelectedPaneWithinTab(.up)
+        case .movePaneDown:
+            return moveSelectedPaneWithinTab(.down)
         case .closePane:
             return closeSelectedPane()
         case .closeTab:
@@ -1171,6 +1198,9 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         case .moveTabToSpace(let tabID, let spaceID):
             guard let tabID, let spaceID else { return false }
             return moveTabToSpace(tabID: tabID, targetSpaceID: spaceID)
+        case .movePaneInTab(let paneID, let placement):
+            guard let paneID else { return false }
+            return movePaneWithinTab(paneID: paneID, placement: placement)
         case .promoteQuickTerminal(let spaceID):
             guard let spaceID else { return false }
             return promoteQuickTerminal(to: spaceID)
@@ -1233,6 +1263,12 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     ) -> Bool {
         guard let paneID = selectedPane?.paneID else { return false }
         return movePane(paneID: paneID, toTab: tabID, direction: direction)
+    }
+
+    @discardableResult
+    func moveSelectedPaneWithinTab(_ placement: ShellPaneSplitDirection) -> Bool {
+        guard let paneID = selectedPane?.paneID else { return false }
+        return movePaneWithinTab(paneID: paneID, placement: placement)
     }
 
     @discardableResult
@@ -2247,6 +2283,40 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
                 paneID,
                 toTab: targetTabID,
                 direction: direction
+            )
+            applyMutationResult(result)
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    func movePaneWithinTab(
+        paneID: String,
+        placement: ShellPaneSplitDirection
+    ) -> Bool {
+        movePaneWithinTab(
+            paneID: paneID,
+            placement: placement,
+            source: .explicitCommand
+        )
+    }
+
+    func movePaneWithinTab(
+        paneID: String,
+        placement: ShellPaneSplitDirection,
+        source: ShellPaneMovementInputSource
+    ) -> Bool {
+        guard ShellPaneMovementInteractionPolicy.terminalSelectionFirst
+            .allowsPaneMovement(from: source)
+        else {
+            return false
+        }
+
+        do {
+            let result = try shellState.movingPaneWithinTab(
+                paneID,
+                placement: placement
             )
             applyMutationResult(result)
             return true
