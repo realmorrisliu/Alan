@@ -578,6 +578,10 @@ enum AlanShellLocalCommandExecutor {
                 return nil
             }
 
+        case .paneMoveWithinTab, .paneSpatialFocus, .paneResizeSplit, .paneEqualizeSplits,
+             .paneZoom, .paneUnzoom:
+            return nil
+
         case .paneSendText:
             return nil
 

@@ -600,11 +600,68 @@ enum ShellPaneAction {
         #[command(flatten)]
         target: ShellTargetArgs,
     },
+    /// Move a pane inside its current tab
+    MoveWithinTab {
+        /// Pane id to move
+        #[arg(long)]
+        pane: String,
+        /// Placement relative to the adjacent pane
+        #[arg(long, value_parser = ["left", "right", "up", "down"])]
+        placement: String,
+        #[command(flatten)]
+        target: ShellTargetArgs,
+    },
     /// Focus a pane
     Focus {
         /// Pane id to focus
         #[arg(long)]
         pane: String,
+        #[command(flatten)]
+        target: ShellTargetArgs,
+    },
+    /// Focus an adjacent pane by spatial direction
+    SpatialFocus {
+        /// Spatial direction to focus
+        #[arg(long, value_parser = ["left", "right", "up", "down"])]
+        direction: String,
+        #[command(flatten)]
+        target: ShellTargetArgs,
+    },
+    /// Resize a split node
+    ResizeSplit {
+        /// Split node id to resize
+        #[arg(long)]
+        split_node: String,
+        /// Resulting split ratio
+        #[arg(long)]
+        ratio: f64,
+        #[command(flatten)]
+        target: ShellTargetArgs,
+    },
+    /// Equalize split ratios in a tab
+    EqualizeSplits {
+        /// Optional tab id; defaults to the selected tab
+        #[arg(long)]
+        tab: Option<String>,
+        #[command(flatten)]
+        target: ShellTargetArgs,
+    },
+    /// Zoom a split pane
+    Zoom {
+        /// Pane id to zoom
+        #[arg(long)]
+        pane: String,
+        #[command(flatten)]
+        target: ShellTargetArgs,
+    },
+    /// Unzoom a tab
+    Unzoom {
+        /// Optional pane id whose tab should unzoom
+        #[arg(long)]
+        pane: Option<String>,
+        /// Optional tab id; defaults to the selected tab
+        #[arg(long)]
+        tab: Option<String>,
         #[command(flatten)]
         target: ShellTargetArgs,
     },
@@ -1025,8 +1082,52 @@ async fn main() -> Result<()> {
                         shell_target_options(target),
                     )?;
                 }
+                ShellPaneAction::MoveWithinTab {
+                    pane,
+                    placement,
+                    target,
+                } => {
+                    cli::shell::run_shell_pane_move_within_tab(
+                        &pane,
+                        &placement,
+                        shell_target_options(target),
+                    )?;
+                }
                 ShellPaneAction::Focus { pane, target } => {
                     cli::shell::run_shell_pane_focus(&pane, shell_target_options(target))?;
+                }
+                ShellPaneAction::SpatialFocus { direction, target } => {
+                    cli::shell::run_shell_pane_spatial_focus(
+                        &direction,
+                        shell_target_options(target),
+                    )?;
+                }
+                ShellPaneAction::ResizeSplit {
+                    split_node,
+                    ratio,
+                    target,
+                } => {
+                    cli::shell::run_shell_pane_resize_split(
+                        &split_node,
+                        ratio,
+                        shell_target_options(target),
+                    )?;
+                }
+                ShellPaneAction::EqualizeSplits { tab, target } => {
+                    cli::shell::run_shell_pane_equalize_splits(
+                        tab.as_deref(),
+                        shell_target_options(target),
+                    )?;
+                }
+                ShellPaneAction::Zoom { pane, target } => {
+                    cli::shell::run_shell_pane_zoom(&pane, shell_target_options(target))?;
+                }
+                ShellPaneAction::Unzoom { pane, tab, target } => {
+                    cli::shell::run_shell_pane_unzoom(
+                        pane.as_deref(),
+                        tab.as_deref(),
+                        shell_target_options(target),
+                    )?;
                 }
                 ShellPaneAction::SendText { pane, text, target } => {
                     cli::shell::run_shell_pane_send_text(

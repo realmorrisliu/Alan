@@ -14,10 +14,10 @@
 
 ## 3. Control Plane
 
-- [ ] 3.1 Add control-plane commands for resize, equalize, zoom, unzoom, and spatial focus.
-- [ ] 3.2 Return stable result payloads for changed split IDs, ratios, tab zoom state, previous/current focus, and no-target errors.
-- [ ] 3.3 Emit shell events for split ratio changes, equalization, zoom state changes, spatial focus, and advanced movement.
-- [ ] 3.4 Add control-plane tests for success, invalid target, no target, and unchanged-state outcomes.
+- [x] 3.1 Add control-plane commands for resize, equalize, zoom, unzoom, and spatial focus.
+- [x] 3.2 Return stable result payloads for changed split IDs, ratios, tab zoom state, previous/current focus, and no-target errors.
+- [x] 3.3 Emit shell events for split ratio changes, equalization, zoom state changes, spatial focus, and advanced movement.
+- [x] 3.4 Add control-plane tests for success, invalid target, no target, and unchanged-state outcomes.
 
 ## 4. Copy Paste And Search
 

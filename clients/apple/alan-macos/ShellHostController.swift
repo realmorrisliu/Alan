@@ -621,10 +621,20 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         else {
             return false
         }
+        guard zoomedPaneIDByTabID[pane.tabID] != paneID else {
+            return false
+        }
         if shellState.focusedPaneID != paneID {
             focus(paneID: paneID)
         }
         zoomedPaneIDByTabID[pane.tabID] = paneID
+        controlPlane.recordZoomStateChanged(
+            requestID: nil,
+            spaceID: pane.spaceID,
+            tabID: pane.tabID,
+            paneID: paneID,
+            zoomedPaneID: paneID
+        )
         return true
     }
 
@@ -641,9 +651,17 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     }
 
     @discardableResult
-    private func unzoomTab(tabID: String) -> Bool {
-        guard zoomedPaneIDByTabID[tabID] != nil else { return false }
+    func unzoomTab(tabID: String) -> Bool {
+        guard let zoomedPaneID = zoomedPaneIDByTabID[tabID] else { return false }
+        let pane = pane(paneID: zoomedPaneID)
         zoomedPaneIDByTabID.removeValue(forKey: tabID)
+        controlPlane.recordZoomStateChanged(
+            requestID: nil,
+            spaceID: pane?.spaceID,
+            tabID: tabID,
+            paneID: zoomedPaneID,
+            zoomedPaneID: nil
+        )
         return true
     }
 
@@ -1070,6 +1088,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
 
     @discardableResult
     func focusAdjacentPane(direction: ShellSpatialFocusDirection) -> Bool {
+        let previousPaneID = shellState.focusedPaneID
         let result: ShellStateMutationResult
         do {
             result = try shellState.focusingAdjacentPane(direction)
@@ -1077,6 +1096,15 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
             return false
         }
         applyMutationResult(result)
+        controlPlane.recordSpatialFocus(
+            requestID: nil,
+            spaceID: result.spaceID,
+            tabID: result.tabID,
+            previousPaneID: previousPaneID,
+            currentPaneID: result.paneID,
+            direction: direction,
+            applied: true
+        )
         return true
     }
 
@@ -1223,13 +1251,31 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
 
     @discardableResult
     func equalizeSelectedTabSplits() -> Bool {
+        let previousTab = selectedTab
         let result: ShellStateMutationResult
         do {
             result = try shellState.equalizingSplits(in: selectedTabID)
         } catch {
             return false
         }
+        let changedSplitIDs = previousTab
+            .flatMap { previous in
+                result.state.tab(tabID: previous.tabID)?.paneTree
+                    .splitNodeIDsWithChangedRatios(comparedTo: previous.paneTree)
+            } ?? []
         applyMutationResult(result)
+        if let tabID = result.tabID,
+           let previousTab,
+           !changedSplitIDs.isEmpty
+        {
+            controlPlane.recordSplitEqualized(
+                requestID: nil,
+                spaceID: result.spaceID,
+                tabID: tabID,
+                changedSplitIDs: changedSplitIDs,
+                affectedPaneIDs: previousTab.paneTree.paneIDs
+            )
+        }
         return true
     }
 
@@ -1802,7 +1848,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         publishControlPlaneState()
     }
 
-    private func applyMutationResult(
+    func applyMutationResult(
         _ result: ShellStateMutationResult,
         publish: Bool = true,
         pinSnapshotTabIDs: Set<String> = []
@@ -2319,6 +2365,16 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
                 placement: placement
             )
             applyMutationResult(result)
+            if let tabID = result.tabID {
+                controlPlane.recordPaneMovedInTab(
+                    requestID: nil,
+                    spaceID: result.spaceID,
+                    tabID: tabID,
+                    paneID: paneID,
+                    placement: placement,
+                    mountedContentInstanceID: paneID
+                )
+            }
             return true
         } catch {
             return false

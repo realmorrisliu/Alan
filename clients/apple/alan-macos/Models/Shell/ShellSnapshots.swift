@@ -227,6 +227,33 @@ struct ShellPaneTreeNode: Identifiable, Codable, Equatable {
 }
 
 extension ShellPaneTreeNode {
+    var splitNodes: [ShellPaneTreeNode] {
+        switch kind {
+        case .pane:
+            return []
+        case .split:
+            return [self] + (children ?? []).flatMap(\.splitNodes)
+        }
+    }
+
+    var splitRatiosByNodeID: [String: Double] {
+        Dictionary(uniqueKeysWithValues: splitNodes.map { ($0.nodeID, $0.splitRatio) })
+    }
+
+    func splitNodeIDsWithChangedRatios(comparedTo previous: ShellPaneTreeNode) -> [String] {
+        let previousRatios = previous.splitRatiosByNodeID
+        return splitRatiosByNodeID.keys
+            .filter { nodeID in
+                guard let previousRatio = previousRatios[nodeID],
+                      let currentRatio = splitRatiosByNodeID[nodeID]
+                else {
+                    return false
+                }
+                return previousRatio != currentRatio
+            }
+            .sorted()
+    }
+
     var nodeIDs: [String] {
         [nodeID] + (children ?? []).flatMap(\.nodeIDs)
     }
@@ -252,6 +279,11 @@ extension ShellPaneTreeNode {
     func contains(nodeID targetNodeID: String) -> Bool {
         if nodeID == targetNodeID { return true }
         return (children ?? []).contains { $0.contains(nodeID: targetNodeID) }
+    }
+
+    func node(nodeID targetNodeID: String) -> ShellPaneTreeNode? {
+        if nodeID == targetNodeID { return self }
+        return (children ?? []).lazy.compactMap { $0.node(nodeID: targetNodeID) }.first
     }
 
     func adjacentPaneID(
