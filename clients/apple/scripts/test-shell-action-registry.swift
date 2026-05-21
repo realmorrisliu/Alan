@@ -21,6 +21,7 @@ private enum ShellActionRegistryTests {
         try verifiesCommandInputRemainsOutOfRegistry()
         try verifiesQuickTerminalActionsRouteThroughSharedRegistry()
         try verifiesQuickTerminalPromoteRequiresExplicitDestination()
+        try verifiesPaneZoomRoutesThroughSharedRegistry()
         print("Shell action registry tests passed.")
     }
 
@@ -72,6 +73,7 @@ private enum ShellActionRegistryTests {
                 ShellActionShortcut(key: "d", modifiers: [.command, .option, .shift], context: .shell)
             ),
             (.paneEqualizeSplits, ShellActionShortcut(key: "=", modifiers: [.command, .option], context: .shell)),
+            (.paneZoomToggle, ShellActionShortcut(key: "return", modifiers: [.command, .shift], context: .shell)),
             (
                 .paneFocusRight,
                 ShellActionShortcut(key: "rightArrow", modifiers: [.command, .control], context: .shell)
@@ -130,6 +132,12 @@ private enum ShellActionRegistryTests {
                 for: ShellActionShortcut(key: "2", modifiers: [.command, .option], context: .shell)
             ) == ShellKeyboardAction(id: .spaceSelectByIndex, target: .spaceIndex(1)),
             "command-option-2 must resolve to dynamic second-space selection"
+        )
+        expect(
+            registry.keyboardAction(
+                for: ShellActionShortcut(key: "return", modifiers: [.command, .shift], context: .shell)
+            ) == ShellKeyboardAction(id: .paneZoomToggle, target: .currentSelection),
+            "command-shift-return must resolve to pane zoom toggle"
         )
     }
 
@@ -386,6 +394,31 @@ private enum ShellActionRegistryTests {
         expect(
             handledEffects == [.promoteQuickTerminal(spaceID: "space_2")],
             "quick terminal promotion must route the selected destination to the handler"
+        )
+    }
+
+    private static func verifiesPaneZoomRoutesThroughSharedRegistry() throws {
+        let registry = ShellActionRegistry.standard
+        var state = ShellStateSnapshot.bootstrapDefault(workingDirectory: "/tmp")
+        let unavailable = registry.execute(.paneZoomToggle, target: .currentSelection, state: state) { _ in
+            true
+        }
+        expect(
+            unavailable == .unavailable(reason: "Pane zoom requires a split tab"),
+            "pane zoom must require a split tab"
+        )
+
+        state = try state.splittingPane("pane_1", placement: .right).state
+        var handledEffects: [ShellActionEffect] = []
+        let result = registry.execute(.paneZoomToggle, target: .currentSelection, state: state) { effect in
+            handledEffects.append(effect)
+            return true
+        }
+
+        expect(result == .executed, "pane zoom must execute when a split pane is focused")
+        expect(
+            handledEffects == [.workspaceCommand(.togglePaneZoom)],
+            "pane zoom must route through the shared workspace command path"
         )
     }
 }

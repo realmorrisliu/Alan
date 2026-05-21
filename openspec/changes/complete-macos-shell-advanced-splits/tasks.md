@@ -1,9 +1,9 @@
 ## 1. Split Zoom
 
-- [ ] 1.1 Add tab-scoped zoom state that leaves the canonical split tree unchanged.
-- [ ] 1.2 Render zoomed PaneSlots full-area while keeping sibling terminal ContentInstance runtimes registered and restorable.
-- [ ] 1.3 Add menu, keyboard, command UI, and compact visible affordances for zoom and unzoom.
-- [ ] 1.4 Add model/UI tests for zoom, unzoom, disappearing panes, and selected-tab changes.
+- [x] 1.1 Add tab-scoped zoom state that leaves the canonical split tree unchanged.
+- [x] 1.2 Render zoomed PaneSlots full-area while keeping sibling terminal ContentInstance runtimes registered and restorable.
+- [x] 1.3 Add menu, keyboard, command UI, and compact visible affordances for zoom and unzoom.
+- [x] 1.4 Add model/UI tests for zoom, unzoom, disappearing panes, and selected-tab changes.
 
 ## 2. Pane Movement
 

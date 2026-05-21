@@ -74,6 +74,12 @@ struct AlanMacShellCommands: Commands {
             }
             .shellActionKeyboardShortcut(host.shellActionShortcut(.paneEqualizeSplits))
 
+            Button(host.shellActionTitle(.paneZoomToggle)) {
+                host.performShellAction(.paneZoomToggle)
+            }
+            .shellActionKeyboardShortcut(host.shellActionShortcut(.paneZoomToggle))
+            .disabled(!host.shellActionAvailability(.paneZoomToggle).isAvailable)
+
             Divider()
 
             Button(host.shellActionTitle(.paneFocusLeft)) {
@@ -208,6 +214,8 @@ extension ShellActionShortcut {
             return .downArrow
         case "space":
             return .space
+        case "return":
+            return .return
         default:
             guard key.count == 1, let character = key.first else { return nil }
             return KeyEquivalent(character)
