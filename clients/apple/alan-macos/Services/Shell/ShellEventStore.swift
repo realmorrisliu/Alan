@@ -345,7 +345,7 @@ final class AlanShellEventStore {
                     type: "split.ratio_changed",
                     spaceID: currentState.panes.first { $0.tabID == tabID }?.spaceID,
                     tabID: tabID,
-                    paneID: currentState.focusedPaneID,
+                    paneID: affectedPaneIDs.first,
                     payload: [
                         "split_node_id": .string(splitNodeID),
                         "previous_ratio": .number(previousRatio),

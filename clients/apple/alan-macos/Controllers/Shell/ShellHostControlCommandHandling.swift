@@ -947,18 +947,19 @@ extension ShellHostController {
                 )
             }
 
+            let affectedPaneIDs = updatedSplit.paneIDs
             applyMutationResult(result)
             return response(
                 requestID: command.requestID,
                 applied: true,
                 spaceID: result.spaceID,
                 tabID: targetTab.tabID,
-                paneID: result.paneID,
+                paneID: affectedPaneIDs.first ?? result.paneID,
                 latestEventID: controlPlane.latestEventID,
                 splitNodeID: splitNodeID,
                 ratio: updatedSplit.splitRatio,
                 changedSplitIDs: [splitNodeID],
-                affectedPaneIDs: updatedSplit.paneIDs
+                affectedPaneIDs: affectedPaneIDs
             )
         } catch {
             return response(
@@ -1030,24 +1031,25 @@ extension ShellHostController {
                 )
             }
 
+            let affectedPaneIDs = updatedTab.paneTree.paneIDs
             applyMutationResult(result)
             controlPlane.recordSplitEqualized(
                 requestID: command.requestID,
                 spaceID: result.spaceID,
                 tabID: tabID,
                 changedSplitIDs: changedSplitIDs,
-                affectedPaneIDs: updatedTab.paneTree.paneIDs
+                affectedPaneIDs: affectedPaneIDs
             )
             return response(
                 requestID: command.requestID,
                 applied: true,
                 spaceID: result.spaceID,
                 tabID: tabID,
-                paneID: result.paneID,
+                paneID: affectedPaneIDs.first ?? result.paneID,
                 latestEventID: controlPlane.latestEventID,
                 ratio: 0.5,
                 changedSplitIDs: changedSplitIDs,
-                affectedPaneIDs: updatedTab.paneTree.paneIDs
+                affectedPaneIDs: affectedPaneIDs
             )
         } catch {
             return response(

@@ -39,6 +39,7 @@ private enum ShellRuntimeMetadataTests {
         verifiesInTabPaneMovementPreservesRuntimeContinuity()
         verifiesPaneMovementDragPolicyProtectsTerminalSelection()
         verifiesAdvancedControlPlaneResizeEqualizeAndEvents()
+        verifiesSplitRatioEventsUseAffectedPaneForBackgroundTabs()
         verifiesAdvancedControlPlaneZoomFocusAndMovementResults()
         verifiesTerminalActivityProjectsByPaneID()
         verifiesProgressActivityFactoryUsesSourceFirstDisplay()
@@ -963,6 +964,70 @@ private enum ShellRuntimeMetadataTests {
         expect(
             unchangedResponse.errorCode == "unchanged_state",
             "unchanged equalize must return a stable error code"
+        )
+    }
+
+    private static func verifiesSplitRatioEventsUseAffectedPaneForBackgroundTabs() {
+        let controller = makeController()
+        guard let foregroundTabID = controller.selectedTabID else {
+            fail("bootstrap shell must expose a selected tab")
+        }
+        guard let backgroundTabID = controller.openTerminalTab(workingDirectory: "/background"),
+              let backgroundPaneID = controller.shellState.panes(in: backgroundTabID).first?.paneID
+        else {
+            fail("test setup must create a background tab")
+        }
+        _ = controller.splitPane(paneID: backgroundPaneID, placement: .right)
+        guard let splitNodeID = controller.shellState
+            .tab(tabID: backgroundTabID)?
+            .paneTree
+            .splitNodes
+            .first?
+            .nodeID
+        else {
+            fail("test setup must create a split node in the background tab")
+        }
+
+        controller.select(tabID: foregroundTabID)
+        let foregroundPaneID = controller.shellState.focusedPaneID
+        expect(foregroundPaneID != nil, "foreground tab selection must focus a pane")
+
+        let resizeResponse = controller.handleControlPlaneCommand(
+            decodeControlCommand(
+                """
+                {
+                  "request_id": "resize-background-1",
+                  "command": "pane.resize_split",
+                  "split_node_id": "\(splitNodeID)",
+                  "ratio": 0.66
+                }
+                """
+            )
+        )
+
+        expect(resizeResponse.applied == true, "background resize must apply")
+        expect(
+            resizeResponse.affectedPaneIDs?.contains(resizeResponse.paneID ?? "") == true,
+            "resize response pane_id must come from the affected split"
+        )
+        expect(
+            resizeResponse.paneID != foregroundPaneID,
+            "resize response pane_id must not use the unrelated focused pane"
+        )
+        guard let ratioEvent = controlEvents(controller).last(where: {
+            $0.type == "split.ratio_changed"
+                && $0.payload["split_node_id"] == .string(splitNodeID)
+        }) else {
+            fail("background resize must emit a split ratio event")
+        }
+        expect(ratioEvent.tabID == backgroundTabID, "split ratio event must stay tab-scoped")
+        expect(
+            resizeResponse.affectedPaneIDs?.contains(ratioEvent.paneID ?? "") == true,
+            "split ratio event pane_id must come from the affected split"
+        )
+        expect(
+            ratioEvent.paneID != foregroundPaneID,
+            "split ratio event pane_id must not use the unrelated focused pane"
         )
     }
 
