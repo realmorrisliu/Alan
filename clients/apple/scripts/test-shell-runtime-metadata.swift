@@ -66,6 +66,7 @@ private enum ShellRuntimeMetadataTests {
         verifiesControllerRoutesActivityNotificationsOnce()
         verifiesControllerRoutesDistinctActivityPayloadsInSameSecond()
         verifiesInactiveAppRoutesFocusedPaneNotifications()
+        verifiesHiddenQuickTerminalRoutesUserActionableActivityNotifications()
         verifiesProcessExitNotificationRoutesBeforeAutoClose()
         verifiesProcessExitRuntimeNotificationRoutesBeforeAutoClose()
         verifiesTerminalChildExitClosesSplitPane()
@@ -2158,6 +2159,46 @@ private enum ShellRuntimeMetadataTests {
         expect(
             controller.activityNotifications.first?.kind == .needsInput,
             "inactive focused pane notification must preserve the routed activity kind"
+        )
+    }
+
+    private static func verifiesHiddenQuickTerminalRoutesUserActionableActivityNotifications() {
+        let controller = makeController()
+        let needsInput = activity(
+            status: .needsInput,
+            source: .codex,
+            sourceLabel: "Codex",
+            stateLabel: "Input needed",
+            agent: .init(
+                kind: .codex,
+                safeSessionLabel: "codex",
+                projectLabel: "alan",
+                workingDirectory: "/Users/morris/Developer/alan"
+            )
+        )
+
+        expect(controller.showQuickTerminal() != nil, "quick terminal must show before hiding")
+        expect(controller.hideQuickTerminal(), "quick terminal hide must preserve the runtime slot")
+        controller.updateTerminalMetadata(
+            metadata(title: "Quick Terminal", cwd: "/repo/app", activity: needsInput),
+            for: ShellQuickTerminalSlot.globalPaneID
+        )
+
+        expect(
+            controller.activityNotifications.count == 1,
+            "hidden quick-terminal activity must still route through notification policy"
+        )
+        expect(
+            controller.activityNotifications.first?.paneID == ShellQuickTerminalSlot.globalPaneID,
+            "hidden quick-terminal notification must point at the global quick-terminal pane"
+        )
+        expect(
+            controller.activityNotifications.first?.kind == .needsInput,
+            "hidden quick-terminal notification must preserve the routed activity kind"
+        )
+        expect(
+            controller.activityNotifications.first?.body == "app",
+            "hidden quick-terminal notification must use the standard pane context body"
         )
     }
 
