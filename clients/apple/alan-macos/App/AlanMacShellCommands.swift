@@ -16,6 +16,32 @@ struct AlanMacShellCommands: Commands {
             .keyboardShortcut("n", modifiers: .command)
         }
 
+        CommandGroup(replacing: .pasteboard) {
+            Button("Cut") {
+                sendResponderAction(#selector(NSText.cut(_:)))
+            }
+            .keyboardShortcut("x", modifiers: .command)
+
+            Button("Copy") {
+                if !host.copyTerminalSelection(source: .menuBar) {
+                    sendResponderAction(#selector(NSText.copy(_:)))
+                }
+            }
+            .keyboardShortcut("c", modifiers: .command)
+
+            Button("Paste") {
+                if !host.pasteIntoTerminalFromPasteboard(source: .menuBar) {
+                    sendResponderAction(#selector(NSText.paste(_:)))
+                }
+            }
+            .keyboardShortcut("v", modifiers: .command)
+
+            Button("Select All") {
+                sendResponderAction(#selector(NSText.selectAll(_:)))
+            }
+            .keyboardShortcut("a", modifiers: .command)
+        }
+
         CommandMenu("Tools") {
             Button("Install Command Line Tools...") {
                 installCommandLineTools()
@@ -37,6 +63,12 @@ struct AlanMacShellCommands: Commands {
                 host.requestCommandInput()
             }
             .keyboardShortcut("p", modifiers: .command)
+
+            Button("Find") {
+                host.openTerminalSearch(source: .menuBar)
+            }
+            .keyboardShortcut("f", modifiers: .command)
+            .disabled(!host.canOpenTerminalSearch(source: .menuBar))
 
             Button(host.shellActionTitle(.quickTerminalToggle)) {
                 host.performShellAction(.quickTerminalToggle)
@@ -172,6 +204,10 @@ struct AlanMacShellCommands: Commands {
             .shellActionKeyboardShortcut(host.shellActionShortcut(.tabClose))
             .disabled(!host.shellActionAvailability(.tabClose).isAvailable)
         }
+    }
+
+    private func sendResponderAction(_ selector: Selector) {
+        NSApp.sendAction(selector, to: nil, from: nil)
     }
 
     private func installCommandLineTools() {

@@ -1017,13 +1017,13 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
         switch keyboardDecision {
         case .shellAction(let actionID, let target):
             if actionID == .findOpen {
-                _ = beginFindInteraction()
+                _ = routeFindCommandToShellHost(target: target)
             } else {
                 shellActionHandler?(actionID, target)
             }
             return
         case .nativeCommand("find"):
-            _ = beginFindInteraction()
+            _ = routeFindCommandToShellHost()
             return
         case .nativeCommand("quit"):
             NSApp.terminate(nil)
@@ -1205,7 +1205,7 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
     }
 
     @objc func copy(_ sender: Any?) {
-        _ = surfaceController.copySelection(to: .general)
+        _ = copySelection()
     }
 
     @objc func cut(_ sender: Any?) {
@@ -1214,8 +1214,34 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
 
     @objc func paste(_ sender: Any?) {
         guard let text = NSPasteboard.general.string(forType: .string), !text.isEmpty else { return }
-        _ = surfaceController.paste(text)
+        _ = pasteText(text)
+    }
+
+    var terminalCommandRuntimeState: ShellTerminalCommandRuntimeState {
+        ShellTerminalCommandRuntimeState(
+            paneID: pane?.paneID ?? "",
+            hasSelection: surfaceController.hasSelection(),
+            inputReady: surfaceController.surfaceStateSnapshot.inputReady,
+            searchAvailable: pane?.paneID != nil,
+            hasReliableSemanticCommands: surfaceController.hasReliableSemanticCommandActions
+        )
+    }
+
+    @discardableResult
+    func copySelection() -> Bool {
+        surfaceController.copySelection(to: .general)
+    }
+
+    @discardableResult
+    func copySelection(to writer: AlanTerminalPasteboardWriting) -> Bool {
+        surfaceController.copySelection(to: writer)
+    }
+
+    @discardableResult
+    func pasteText(_ text: String) -> TerminalRuntimeDeliveryResult {
+        let result = surfaceController.paste(text)
         publishRuntimeSnapshot()
+        return result
     }
 
     private func modsFromEvent(_ event: NSEvent) -> ghostty_input_mods_e {
@@ -1371,7 +1397,7 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
             hasMarkedText: markedText.length > 0
         ) {
         case .nativeCommand("find"):
-            return beginFindInteraction()
+            return routeFindCommandToShellHost()
         case .nativeCommand("quit"):
             return false
         case .nativeCommand, .shellAction, .terminalKey, .interpretTextInput, .drop:
@@ -1387,9 +1413,25 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
             return false
         }
         if actionID == .findOpen {
-            return beginFindInteraction()
+            return routeFindCommandToShellHost(target: target)
         }
         shellActionHandler?(actionID, target)
+        return true
+    }
+
+    private func routeFindCommandToShellHost(target: ShellActionTarget = .currentSelection) -> Bool {
+        guard let shellActionHandler else {
+            return beginFindInteraction()
+        }
+        let resolvedTarget: ShellActionTarget
+        if case .currentSelection = target,
+           let paneID = pane?.paneID
+        {
+            resolvedTarget = .contextPane(paneID)
+        } else {
+            resolvedTarget = target
+        }
+        shellActionHandler(.findOpen, resolvedTarget)
         return true
     }
 

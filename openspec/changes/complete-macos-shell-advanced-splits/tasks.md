@@ -21,10 +21,10 @@
 
 ## 4. Copy Paste And Search
 
-- [ ] 4.1 Add a shared command target resolver for native menu, keyboard, command UI, context menu, and terminal host paths.
-- [ ] 4.2 Route Copy and Paste to the focused terminal host when terminal selection or input owns the command.
-- [ ] 4.3 Route terminal search to a terminal-content-scoped UI owned by the focused terminal ContentInstance runtime identity.
-- [ ] 4.4 Add tests for command routing precedence and terminal-host ownership.
+- [x] 4.1 Add a shared command target resolver for native menu, keyboard, command UI, context menu, and terminal host paths.
+- [x] 4.2 Route Copy and Paste to the focused terminal host when terminal selection or input owns the command.
+- [x] 4.3 Route terminal search to a terminal-content-scoped UI owned by the focused terminal ContentInstance runtime identity.
+- [x] 4.4 Add tests for command routing precedence and terminal-host ownership.
 
 ## 5. Verification And Archive Readiness
 

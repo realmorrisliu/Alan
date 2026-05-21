@@ -309,6 +309,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     @Published private(set) var terminalRuntime: TerminalHostRuntimeSnapshot = .placeholder
     @Published private(set) var controlPlaneDiagnostics: [String] = []
     @Published private(set) var commandInputRequestID = 0
+    @Published private(set) var commandInputActive = false
     @Published private(set) var activityNotifications: [ShellActivityNotificationRoute] = []
     @Published private(set) var zoomedPaneIDByTabID: [String: String] = [:]
 
@@ -786,6 +787,10 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         commandInputRequestID += 1
     }
 
+    func setCommandInputActive(_ active: Bool) {
+        commandInputActive = active
+    }
+
     func refocusSelectedTerminalPane() {
         guard let paneID = selectedPane?.paneID else { return }
         terminalRuntimeRegistry.requestFocus(for: paneID)
@@ -1181,9 +1186,16 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     @discardableResult
     func performShellAction(
         _ id: ShellActionID,
-        target: ShellActionTarget = .currentSelection
+        target: ShellActionTarget = .currentSelection,
+        source: ShellTerminalCommandSource = .keyboardShortcut
     ) -> ShellActionExecutionResult {
-        ShellActionRegistry.standard.execute(
+        if id == .findOpen {
+            return openTerminalSearch(source: source, target: target)
+                ? .executed
+                : .failed(reason: "Terminal search target is unavailable")
+        }
+
+        return ShellActionRegistry.standard.execute(
             id,
             target: target,
             state: shellState
@@ -1343,6 +1355,116 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         lastCopiedAt = .now
     }
 
+    func terminalCommandResolution(
+        for command: ShellTerminalCommand,
+        source: ShellTerminalCommandSource = .keyboardShortcut,
+        target: ShellActionTarget = .currentSelection
+    ) -> ShellTerminalCommandResolution {
+        ShellCommandTargetResolver.resolveTerminalCommand(
+            command,
+            source: source,
+            target: target,
+            state: shellState,
+            commandInputActive: commandInputActive
+        ) { [terminalRuntimeRegistry] paneID in
+            terminalRuntimeRegistry.terminalCommandRuntimeState(for: paneID)
+        }
+    }
+
+    func canCopyTerminalSelection(
+        source: ShellTerminalCommandSource = .keyboardShortcut,
+        target: ShellActionTarget = .currentSelection
+    ) -> Bool {
+        terminalCommandResolution(
+            for: .copySelection,
+            source: source,
+            target: target
+        ).terminalTarget != nil
+    }
+
+    func canPasteIntoTerminal(
+        source: ShellTerminalCommandSource = .keyboardShortcut,
+        target: ShellActionTarget = .currentSelection
+    ) -> Bool {
+        terminalCommandResolution(
+            for: .paste,
+            source: source,
+            target: target
+        ).terminalTarget != nil
+    }
+
+    func canOpenTerminalSearch(
+        source: ShellTerminalCommandSource = .keyboardShortcut,
+        target: ShellActionTarget = .currentSelection
+    ) -> Bool {
+        terminalCommandResolution(
+            for: .search,
+            source: source,
+            target: target
+        ).terminalTarget != nil
+    }
+
+    @discardableResult
+    func copyTerminalSelection(
+        source: ShellTerminalCommandSource = .keyboardShortcut,
+        target: ShellActionTarget = .currentSelection,
+        writer: AlanTerminalPasteboardWriting? = nil
+    ) -> Bool {
+        guard let terminalTarget = terminalCommandResolution(
+            for: .copySelection,
+            source: source,
+            target: target
+        ).terminalTarget else {
+            return false
+        }
+        if let writer {
+            return terminalRuntimeRegistry.copySelection(for: terminalTarget.paneID, to: writer)
+        }
+        return terminalRuntimeRegistry.copySelection(for: terminalTarget.paneID)
+    }
+
+    @discardableResult
+    func pasteIntoTerminalFromPasteboard(
+        source: ShellTerminalCommandSource = .keyboardShortcut,
+        target: ShellActionTarget = .currentSelection
+    ) -> Bool {
+        guard let text = NSPasteboard.general.string(forType: .string), !text.isEmpty else {
+            return false
+        }
+        return pasteIntoTerminal(text, source: source, target: target)
+    }
+
+    @discardableResult
+    func pasteIntoTerminal(
+        _ text: String,
+        source: ShellTerminalCommandSource = .keyboardShortcut,
+        target: ShellActionTarget = .currentSelection
+    ) -> Bool {
+        guard let terminalTarget = terminalCommandResolution(
+            for: .paste,
+            source: source,
+            target: target
+        ).terminalTarget else {
+            return false
+        }
+        return terminalRuntimeRegistry.pasteText(text, to: terminalTarget.paneID).applied
+    }
+
+    @discardableResult
+    func openTerminalSearch(
+        source: ShellTerminalCommandSource = .keyboardShortcut,
+        target: ShellActionTarget = .currentSelection
+    ) -> Bool {
+        guard let terminalTarget = terminalCommandResolution(
+            for: .search,
+            source: source,
+            target: target
+        ).terminalTarget else {
+            return false
+        }
+        return terminalRuntimeRegistry.beginFindInteraction(for: terminalTarget.paneID)
+    }
+
     var focusedPaneHasReliableSemanticCommands: Bool {
         guard let paneID = selectedPane?.paneID,
               paneID == terminalRuntime.paneID
@@ -1365,14 +1487,24 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
 
     @discardableResult
     func copyLastCommandOutput() -> Bool {
-        guard let paneID = selectedPane?.paneID else { return false }
-        return terminalRuntimeRegistry.copyLastCommandOutput(for: paneID)
+        guard let terminalTarget = terminalCommandResolution(
+            for: .copyLastCommandOutput,
+            source: .commandUI
+        ).terminalTarget else {
+            return false
+        }
+        return terminalRuntimeRegistry.copyLastCommandOutput(for: terminalTarget.paneID)
     }
 
     @discardableResult
     func searchLastCommandOutput() -> Bool {
-        guard let paneID = selectedPane?.paneID else { return false }
-        return terminalRuntimeRegistry.beginLastCommandOutputSearch(for: paneID)
+        guard let terminalTarget = terminalCommandResolution(
+            for: .searchLastCommandOutput,
+            source: .commandUI
+        ).terminalTarget else {
+            return false
+        }
+        return terminalRuntimeRegistry.beginLastCommandOutputSearch(for: terminalTarget.paneID)
     }
 
     @discardableResult

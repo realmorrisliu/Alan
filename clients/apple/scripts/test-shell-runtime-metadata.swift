@@ -38,6 +38,10 @@ private enum ShellRuntimeMetadataTests {
         verifiesSplitZoomIsTabScopedAndPrunedWhenPaneDisappears()
         verifiesInTabPaneMovementPreservesRuntimeContinuity()
         verifiesPaneMovementDragPolicyProtectsTerminalSelection()
+        verifiesTerminalCommandResolverProtectsShellTextInput()
+        verifiesCopyPasteRouteToFocusedTerminalRuntime()
+        verifiesContextMenuTerminalCommandsUseContextPane()
+        verifiesTerminalSearchRoutesThroughFocusedHostSurface()
         verifiesAdvancedControlPlaneResizeEqualizeAndEvents()
         verifiesSplitRatioEventsUseAffectedPaneForBackgroundTabs()
         verifiesAdvancedControlPlaneZoomFocusAndMovementResults()
@@ -883,6 +887,127 @@ private enum ShellRuntimeMetadataTests {
         expect(
             controller.selectedTab?.paneTree.paneIDs == ["pane_2", "pane_1"],
             "drag-backed movement must preserve the explicit movement result semantics"
+        )
+    }
+
+    private static func verifiesTerminalCommandResolverProtectsShellTextInput() {
+        let controller = makeController()
+        let handle = fakeSurfaceHandle(for: "pane_1", controller: controller)
+        handle.selectedText = "terminal selection"
+
+        expect(
+            controller.terminalCommandResolution(for: .copySelection).terminalTarget?.paneID == "pane_1",
+            "keyboard copy must target the focused terminal when it owns a selection"
+        )
+
+        controller.setCommandInputActive(true)
+        expect(
+            controller.terminalCommandResolution(for: .copySelection)
+                == .shell(reason: "shell_text_input_active"),
+            "keyboard copy must not steal text editing while command input is active"
+        )
+        expect(
+            controller.terminalCommandResolution(for: .copySelection, source: .commandUI)
+                .terminalTarget?.paneID == "pane_1",
+            "command UI execution must still route through the shared terminal resolver"
+        )
+    }
+
+    private static func verifiesCopyPasteRouteToFocusedTerminalRuntime() {
+        let controller = makeController()
+        let handle = fakeSurfaceHandle(for: "pane_1", controller: controller)
+        handle.selectedText = "focused terminal selection"
+        let pasteboard = RecordingTerminalPasteboardWriter()
+
+        expect(
+            controller.copyTerminalSelection(source: .menuBar, writer: pasteboard),
+            "menu copy must resolve to the focused terminal selection"
+        )
+        expect(
+            pasteboard.string == "focused terminal selection",
+            "menu copy must write the focused terminal selection"
+        )
+
+        expect(
+            controller.pasteIntoTerminal("pasted payload", source: .menuBar),
+            "menu paste must resolve to the focused terminal input path"
+        )
+        expect(
+            handle.deliveredText.last == "pasted payload",
+            "menu paste must deliver text through the terminal runtime owner"
+        )
+    }
+
+    private static func verifiesContextMenuTerminalCommandsUseContextPane() {
+        let controller = makeController()
+        _ = controller.splitPane(paneID: "pane_1", placement: .right)
+        let focusedHandle = fakeSurfaceHandle(for: "pane_1", controller: controller)
+        let contextHandle = fakeSurfaceHandle(for: "pane_2", controller: controller)
+        focusedHandle.selectedText = "focused selection"
+        contextHandle.selectedText = "context selection"
+        controller.focus(paneID: "pane_1")
+
+        let pasteboard = RecordingTerminalPasteboardWriter()
+        expect(
+            controller.copyTerminalSelection(
+                source: .contextMenu,
+                target: .contextPane("pane_2"),
+                writer: pasteboard
+            ),
+            "context menu copy must use the context pane target"
+        )
+        expect(
+            pasteboard.string == "context selection",
+            "context menu copy must not fall back to the focused pane"
+        )
+
+        expect(
+            controller.pasteIntoTerminal(
+                "context paste",
+                source: .contextMenu,
+                target: .contextPane("pane_2")
+            ),
+            "context menu paste must use the context pane target"
+        )
+        expect(
+            contextHandle.deliveredText.last == "context paste",
+            "context menu paste must reach the context pane runtime"
+        )
+        expect(
+            focusedHandle.deliveredText.isEmpty,
+            "context menu paste must not deliver to the focused pane"
+        )
+    }
+
+    private static func verifiesTerminalSearchRoutesThroughFocusedHostSurface() {
+        let controller = makeController()
+        guard let pane = controller.selectedPane else {
+            fail("test setup must expose a selected pane")
+        }
+        let hostView = controller.terminalRuntimeRegistry.hostView(
+            for: pane,
+            bootProfile: controller.bootProfile(for: pane),
+            isSelected: true,
+            activationDelegate: nil,
+            onShellAction: nil,
+            onCommandInput: nil,
+            onCloseRequest: nil,
+            onRuntimeUpdate: { controller.updateTerminalRuntime($0) },
+            onMetadataUpdate: { controller.updateTerminalMetadata($0, for: pane.paneID) }
+        )
+        let handle = fakeSurfaceHandle(for: pane.paneID, controller: controller)
+
+        expect(
+            controller.openTerminalSearch(source: .menuBar),
+            "menu find must resolve to the focused terminal host surface"
+        )
+        expect(
+            handle.searchActions == ["start_search"],
+            "menu find must start search on the focused terminal ContentInstance"
+        )
+        expect(
+            hostView.terminalCommandRuntimeState.searchAvailable,
+            "terminal host path must publish search ownership for the resolver"
         )
     }
 
@@ -3293,6 +3418,30 @@ private enum ShellRuntimeMetadataTests {
             workspaceManifest: workspaceManifest,
             appIsActiveProvider: { appIsActive }
         )
+    }
+
+    private static func fakeSurfaceHandle(
+        for paneID: String,
+        controller: ShellHostController
+    ) -> FakeAlanTerminalSurfaceHandle {
+        guard let pane = controller.pane(paneID: paneID),
+              let handle = controller.terminalRuntimeRegistry.surfaceHandle(
+                for: pane,
+                bootProfile: controller.bootProfile(for: pane)
+              ) as? FakeAlanTerminalSurfaceHandle
+        else {
+            fail("test setup must create a fake terminal surface handle for \(paneID)")
+        }
+        return handle
+    }
+
+    private final class RecordingTerminalPasteboardWriter: AlanTerminalPasteboardWriting {
+        private(set) var string: String?
+
+        func writeString(_ text: String) -> Bool {
+            string = text
+            return true
+        }
     }
 
     private static func manifestURL(_ prefix: String) -> URL {

@@ -902,7 +902,7 @@ require_pattern \
 
 require_pattern \
     "clients/apple/alan-macos/TerminalPaneView.swift" \
-    "host\\.performShellAction\\(actionID, target: target\\)" \
+    "host\\.performShellAction\\(actionID, target: target, source: \\.terminalHost\\)" \
     "terminal shortcut routing must enter the shared shell action registry handler"
 
 require_pattern \
