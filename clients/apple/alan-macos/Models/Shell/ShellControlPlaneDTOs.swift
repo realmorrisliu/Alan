@@ -19,7 +19,13 @@ enum AlanShellControlCommandKind: String, Codable {
     case paneClose = "pane.close"
     case paneLift = "pane.lift"
     case paneMove = "pane.move"
+    case paneMoveWithinTab = "pane.move_within_tab"
     case paneFocus = "pane.focus"
+    case paneSpatialFocus = "pane.spatial_focus"
+    case paneResizeSplit = "pane.resize_split"
+    case paneEqualizeSplits = "pane.equalize_splits"
+    case paneZoom = "pane.zoom"
+    case paneUnzoom = "pane.unzoom"
     case paneSendText = "pane.send_text"
     case agentActivity = "agent.activity"
     case attentionInbox = "attention.inbox"
@@ -41,9 +47,13 @@ struct AlanShellControlCommand: Codable {
     let targetSpaceID: String?
     let tabID: String?
     let paneID: String?
+    let splitNodeID: String?
+    let ratio: Double?
     let section: ShellTabOrganizationSection?
     let index: Int?
     let direction: ShellSplitDirection?
+    let spatialDirection: ShellSpatialFocusDirection?
+    let placement: ShellPaneSplitDirection?
     let title: String?
     let cwd: String?
     let text: String?
@@ -65,9 +75,13 @@ struct AlanShellControlCommand: Codable {
         case targetSpaceID = "target_space_id"
         case tabID = "tab_id"
         case paneID = "pane_id"
+        case splitNodeID = "split_node_id"
+        case ratio
         case section
         case index
         case direction
+        case spatialDirection = "spatial_direction"
+        case placement
         case title
         case cwd
         case text
@@ -123,6 +137,19 @@ struct AlanShellControlResponse: Codable {
     let deliveryCode: String?
     let runtimePhase: String?
     let latestEventID: String?
+    let splitNodeID: String?
+    let ratio: Double?
+    let changedSplitIDs: [String]?
+    let affectedPaneIDs: [String]?
+    let zoomedPaneID: String?
+    let sourceTabID: String?
+    let targetTabID: String?
+    let previousFocusedPaneID: String?
+    let currentFocusedPaneID: String?
+    let splitDirection: ShellSplitDirection?
+    let spatialDirection: ShellSpatialFocusDirection?
+    let placement: ShellPaneSplitDirection?
+    let mountedContentInstanceID: String?
     let errorCode: String?
     let errorMessage: String?
 
@@ -150,6 +177,19 @@ struct AlanShellControlResponse: Codable {
         deliveryCode: String? = nil,
         runtimePhase: String? = nil,
         latestEventID: String? = nil,
+        splitNodeID: String? = nil,
+        ratio: Double? = nil,
+        changedSplitIDs: [String]? = nil,
+        affectedPaneIDs: [String]? = nil,
+        zoomedPaneID: String? = nil,
+        sourceTabID: String? = nil,
+        targetTabID: String? = nil,
+        previousFocusedPaneID: String? = nil,
+        currentFocusedPaneID: String? = nil,
+        splitDirection: ShellSplitDirection? = nil,
+        spatialDirection: ShellSpatialFocusDirection? = nil,
+        placement: ShellPaneSplitDirection? = nil,
+        mountedContentInstanceID: String? = nil,
         errorCode: String? = nil,
         errorMessage: String? = nil
     ) {
@@ -176,6 +216,19 @@ struct AlanShellControlResponse: Codable {
         self.deliveryCode = deliveryCode
         self.runtimePhase = runtimePhase
         self.latestEventID = latestEventID
+        self.splitNodeID = splitNodeID
+        self.ratio = ratio
+        self.changedSplitIDs = changedSplitIDs
+        self.affectedPaneIDs = affectedPaneIDs
+        self.zoomedPaneID = zoomedPaneID
+        self.sourceTabID = sourceTabID
+        self.targetTabID = targetTabID
+        self.previousFocusedPaneID = previousFocusedPaneID
+        self.currentFocusedPaneID = currentFocusedPaneID
+        self.splitDirection = splitDirection
+        self.spatialDirection = spatialDirection
+        self.placement = placement
+        self.mountedContentInstanceID = mountedContentInstanceID
         self.errorCode = errorCode
         self.errorMessage = errorMessage
     }
@@ -204,6 +257,19 @@ struct AlanShellControlResponse: Codable {
         case deliveryCode = "delivery_code"
         case runtimePhase = "runtime_phase"
         case latestEventID = "latest_event_id"
+        case splitNodeID = "split_node_id"
+        case ratio
+        case changedSplitIDs = "changed_split_ids"
+        case affectedPaneIDs = "affected_pane_ids"
+        case zoomedPaneID = "zoomed_pane_id"
+        case sourceTabID = "source_tab_id"
+        case targetTabID = "target_tab_id"
+        case previousFocusedPaneID = "previous_focused_pane_id"
+        case currentFocusedPaneID = "current_focused_pane_id"
+        case splitDirection = "split_direction"
+        case spatialDirection = "spatial_direction"
+        case placement
+        case mountedContentInstanceID = "mounted_content_instance_id"
         case errorCode = "error_code"
         case errorMessage = "error_message"
     }

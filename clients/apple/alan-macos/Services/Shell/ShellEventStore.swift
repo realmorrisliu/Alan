@@ -74,6 +74,114 @@ final class AlanShellEventStore {
         )
     }
 
+    func recordSplitEqualized(
+        requestID: String?,
+        spaceID: String?,
+        tabID: String,
+        changedSplitIDs: [String],
+        affectedPaneIDs: [String]
+    ) {
+        var payload: [String: AlanShellJSONValue] = [
+            "tab_id": .string(tabID),
+            "changed_split_ids": .array(changedSplitIDs.map(AlanShellJSONValue.string)),
+            "affected_pane_ids": .array(affectedPaneIDs.map(AlanShellJSONValue.string)),
+            "ratio": .number(0.5)
+        ]
+        if let requestID {
+            payload["request_id"] = .string(requestID)
+        }
+
+        append(
+            type: "split.equalized",
+            spaceID: spaceID,
+            tabID: tabID,
+            paneID: affectedPaneIDs.first,
+            payload: payload
+        )
+    }
+
+    func recordZoomStateChanged(
+        requestID: String?,
+        spaceID: String?,
+        tabID: String,
+        paneID: String?,
+        zoomedPaneID: String?
+    ) {
+        var payload: [String: AlanShellJSONValue] = [
+            "tab_id": .string(tabID),
+            "zoomed": .bool(zoomedPaneID != nil),
+            "zoomed_pane_id": zoomedPaneID.map(AlanShellJSONValue.string) ?? .null
+        ]
+        if let requestID {
+            payload["request_id"] = .string(requestID)
+        }
+
+        append(
+            type: "pane.zoom_changed",
+            spaceID: spaceID,
+            tabID: tabID,
+            paneID: paneID ?? zoomedPaneID,
+            payload: payload
+        )
+    }
+
+    func recordSpatialFocus(
+        requestID: String?,
+        spaceID: String?,
+        tabID: String?,
+        previousPaneID: String?,
+        currentPaneID: String?,
+        direction: ShellSpatialFocusDirection,
+        applied: Bool
+    ) {
+        var payload: [String: AlanShellJSONValue] = [
+            "spatial_direction": .string(direction.rawValue),
+            "applied": .bool(applied),
+            "previous_focused_pane_id": previousPaneID.map(AlanShellJSONValue.string) ?? .null,
+            "current_focused_pane_id": currentPaneID.map(AlanShellJSONValue.string) ?? .null
+        ]
+        if let requestID {
+            payload["request_id"] = .string(requestID)
+        }
+
+        append(
+            type: "pane.spatial_focus",
+            spaceID: spaceID,
+            tabID: tabID,
+            paneID: currentPaneID ?? previousPaneID,
+            payload: payload
+        )
+    }
+
+    func recordPaneMovedInTab(
+        requestID: String?,
+        spaceID: String?,
+        tabID: String,
+        paneID: String,
+        placement: ShellPaneSplitDirection,
+        mountedContentInstanceID: String
+    ) {
+        var payload: [String: AlanShellJSONValue] = [
+            "pane_id": .string(paneID),
+            "source_tab_id": .string(tabID),
+            "target_tab_id": .string(tabID),
+            "placement": .string(placement.rawValue),
+            "mounted_content_instance_id": .string(mountedContentInstanceID),
+            "preserved_mounted_content_instance": .bool(true)
+        ]
+        if let requestID {
+            payload["request_id"] = .string(requestID)
+        }
+
+        append(
+            type: "pane.moved_in_tab",
+            spaceID: spaceID,
+            tabID: tabID,
+            paneID: paneID,
+            payload: payload
+        )
+    }
+
     func recordChanges(from previousState: ShellStateSnapshot?, to currentState: ShellStateSnapshot) {
         guard let previousState else { return }
 
@@ -123,6 +231,11 @@ final class AlanShellEventStore {
         }
 
         recordTabOrganizationChanges(
+            previousState: previousState,
+            currentState: currentState,
+            commonTabIDs: previousTabs.intersection(currentTabs)
+        )
+        recordSplitRatioChanges(
             previousState: previousState,
             currentState: currentState,
             commonTabIDs: previousTabs.intersection(currentTabs)
@@ -204,6 +317,46 @@ final class AlanShellEventStore {
         }
     }
 
+    private func recordSplitRatioChanges(
+        previousState: ShellStateSnapshot,
+        currentState: ShellStateSnapshot,
+        commonTabIDs: Set<String>
+    ) {
+        for tabID in commonTabIDs.sorted() {
+            guard let previousTab = previousState.tab(tabID: tabID),
+                  let currentTab = currentState.tab(tabID: tabID)
+            else {
+                continue
+            }
+
+            let previousRatios = previousTab.paneTree.splitRatiosByNodeID
+            let currentRatios = currentTab.paneTree.splitRatiosByNodeID
+            for splitNodeID in Set(previousRatios.keys).intersection(currentRatios.keys).sorted() {
+                guard let previousRatio = previousRatios[splitNodeID],
+                      let currentRatio = currentRatios[splitNodeID],
+                      previousRatio != currentRatio,
+                      let splitNode = currentTab.paneTree.node(nodeID: splitNodeID)
+                else {
+                    continue
+                }
+
+                let affectedPaneIDs = splitNode.paneIDs
+                append(
+                    type: "split.ratio_changed",
+                    spaceID: currentState.panes.first { $0.tabID == tabID }?.spaceID,
+                    tabID: tabID,
+                    paneID: currentState.focusedPaneID,
+                    payload: [
+                        "split_node_id": .string(splitNodeID),
+                        "previous_ratio": .number(previousRatio),
+                        "ratio": .number(currentRatio),
+                        "affected_pane_ids": .array(affectedPaneIDs.map(AlanShellJSONValue.string))
+                    ]
+                )
+            }
+        }
+    }
+
     private func recordExistingPaneChanges(previousPane: ShellPane, currentPane: ShellPane) {
         if previousPane.tabID != currentPane.tabID || previousPane.spaceID != currentPane.spaceID {
             append(
@@ -215,7 +368,9 @@ final class AlanShellEventStore {
                     "previous_space_id": .string(previousPane.spaceID),
                     "current_space_id": .string(currentPane.spaceID),
                     "previous_tab_id": .string(previousPane.tabID),
-                    "current_tab_id": .string(currentPane.tabID)
+                    "current_tab_id": .string(currentPane.tabID),
+                    "mounted_content_instance_id": .string(currentPane.paneID),
+                    "preserved_mounted_content_instance": .bool(true)
                 ]
             )
         }

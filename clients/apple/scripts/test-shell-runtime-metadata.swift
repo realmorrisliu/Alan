@@ -38,6 +38,8 @@ private enum ShellRuntimeMetadataTests {
         verifiesSplitZoomIsTabScopedAndPrunedWhenPaneDisappears()
         verifiesInTabPaneMovementPreservesRuntimeContinuity()
         verifiesPaneMovementDragPolicyProtectsTerminalSelection()
+        verifiesAdvancedControlPlaneResizeEqualizeAndEvents()
+        verifiesAdvancedControlPlaneZoomFocusAndMovementResults()
         verifiesTerminalActivityProjectsByPaneID()
         verifiesProgressActivityFactoryUsesSourceFirstDisplay()
         verifiesCommandCompletionActivityFactory()
@@ -878,6 +880,202 @@ private enum ShellRuntimeMetadataTests {
         expect(
             controller.selectedTab?.paneTree.paneIDs == ["pane_2", "pane_1"],
             "drag-backed movement must preserve the explicit movement result semantics"
+        )
+    }
+
+    private static func verifiesAdvancedControlPlaneResizeEqualizeAndEvents() {
+        let controller = makeController()
+        _ = controller.splitPane(paneID: "pane_1", placement: .right)
+        let splitNodeID = controller.selectedTab?.paneTree.splitNodes.first?.nodeID
+        guard let splitNodeID else {
+            fail("test setup must create a split node")
+        }
+
+        let resizeResponse = controller.handleControlPlaneCommand(
+            decodeControlCommand(
+                """
+                {
+                  "request_id": "resize-1",
+                  "command": "pane.resize_split",
+                  "split_node_id": "\(splitNodeID)",
+                  "ratio": 0.72
+                }
+                """
+            )
+        )
+
+        expect(resizeResponse.applied == true, "resize_split must report an applied result")
+        expect(resizeResponse.splitNodeID == splitNodeID, "resize response must identify the split node")
+        expect(
+            abs((resizeResponse.ratio ?? 0) - 0.72) < 0.001,
+            "resize response must include the resulting ratio"
+        )
+        expect(
+            resizeResponse.affectedPaneIDs == ["pane_1", "pane_2"],
+            "resize response must include affected pane ids"
+        )
+        expect(
+            controlEvents(controller).contains {
+                $0.type == "split.ratio_changed"
+                    && $0.payload["split_node_id"] == .string(splitNodeID)
+            },
+            "resize command must emit a split ratio event"
+        )
+
+        let equalizeResponse = controller.handleControlPlaneCommand(
+            decodeControlCommand(
+                """
+                {
+                  "request_id": "equalize-1",
+                  "command": "pane.equalize_splits",
+                  "tab_id": "\(controller.selectedTabID ?? "")"
+                }
+                """
+            )
+        )
+
+        expect(equalizeResponse.applied == true, "equalize_splits must report an applied result")
+        expect(equalizeResponse.ratio == 0.5, "equalize response must report the reset ratio")
+        expect(
+            equalizeResponse.changedSplitIDs == [splitNodeID],
+            "equalize response must identify changed split ids"
+        )
+        expect(
+            controlEvents(controller).contains {
+                $0.type == "split.equalized"
+                    && $0.payload["changed_split_ids"] == .array([.string(splitNodeID)])
+            },
+            "equalize command must emit an equalization event"
+        )
+
+        let unchangedResponse = controller.handleControlPlaneCommand(
+            decodeControlCommand(
+                """
+                {
+                  "request_id": "equalize-unchanged-1",
+                  "command": "pane.equalize_splits",
+                  "tab_id": "\(controller.selectedTabID ?? "")"
+                }
+                """
+            )
+        )
+        expect(unchangedResponse.applied == false, "unchanged equalize must not claim mutation")
+        expect(
+            unchangedResponse.errorCode == "unchanged_state",
+            "unchanged equalize must return a stable error code"
+        )
+    }
+
+    private static func verifiesAdvancedControlPlaneZoomFocusAndMovementResults() {
+        let controller = makeController()
+        _ = controller.splitPane(paneID: "pane_1", placement: .right)
+        controller.focus(paneID: "pane_1")
+
+        let zoomResponse = controller.handleControlPlaneCommand(
+            decodeControlCommand(
+                """
+                {
+                  "request_id": "zoom-1",
+                  "command": "pane.zoom",
+                  "pane_id": "pane_2"
+                }
+                """
+            )
+        )
+
+        expect(zoomResponse.applied == true, "zoom command must apply to a valid split pane")
+        expect(zoomResponse.zoomedPaneID == "pane_2", "zoom response must include tab zoom state")
+        expect(
+            zoomResponse.previousFocusedPaneID == "pane_1"
+                && zoomResponse.currentFocusedPaneID == "pane_2",
+            "zoom response must report previous/current focus"
+        )
+        expect(
+            controlEvents(controller).contains {
+                $0.type == "pane.zoom_changed"
+                    && $0.payload["zoomed_pane_id"] == .string("pane_2")
+            },
+            "zoom command must emit a zoom state event"
+        )
+
+        let unzoomResponse = controller.handleControlPlaneCommand(
+            decodeControlCommand(
+                """
+                {
+                  "request_id": "unzoom-1",
+                  "command": "pane.unzoom",
+                  "tab_id": "\(controller.selectedTabID ?? "")"
+                }
+                """
+            )
+        )
+        expect(unzoomResponse.applied == true, "unzoom command must clear zoom state")
+        expect(unzoomResponse.zoomedPaneID == nil, "unzoom response must report cleared zoom state")
+
+        let spatialResponse = controller.handleControlPlaneCommand(
+            decodeControlCommand(
+                """
+                {
+                  "request_id": "spatial-left-1",
+                  "command": "pane.spatial_focus",
+                  "spatial_direction": "left"
+                }
+                """
+            )
+        )
+        expect(spatialResponse.applied == true, "spatial focus left must find the adjacent pane")
+        expect(
+            spatialResponse.previousFocusedPaneID == "pane_2"
+                && spatialResponse.currentFocusedPaneID == "pane_1",
+            "spatial focus response must report previous/current focus"
+        )
+
+        let noTargetResponse = controller.handleControlPlaneCommand(
+            decodeControlCommand(
+                """
+                {
+                  "request_id": "spatial-left-2",
+                  "command": "pane.spatial_focus",
+                  "spatial_direction": "left"
+                }
+                """
+            )
+        )
+        expect(noTargetResponse.applied == false, "spatial focus must not apply without a target")
+        expect(
+            noTargetResponse.errorCode == "spatial_focus_target_not_found",
+            "spatial focus must return a stable no-target error"
+        )
+        expect(
+            noTargetResponse.previousFocusedPaneID == "pane_1"
+                && noTargetResponse.currentFocusedPaneID == "pane_1",
+            "no-target spatial focus must preserve focus"
+        )
+
+        let moveResponse = controller.handleControlPlaneCommand(
+            decodeControlCommand(
+                """
+                {
+                  "request_id": "move-within-1",
+                  "command": "pane.move_within_tab",
+                  "pane_id": "pane_2",
+                  "placement": "left"
+                }
+                """
+            )
+        )
+        expect(moveResponse.applied == true, "move_within_tab must apply to an adjacent target")
+        expect(moveResponse.sourceTabID == moveResponse.targetTabID, "in-tab move must stay in one tab")
+        expect(
+            moveResponse.mountedContentInstanceID == "pane_2",
+            "movement response must report preserved mounted content identity"
+        )
+        expect(
+            controlEvents(controller).contains {
+                $0.type == "pane.moved_in_tab"
+                    && $0.payload["mounted_content_instance_id"] == .string("pane_2")
+            },
+            "in-tab movement must emit an advanced movement event"
         )
     }
 
@@ -3302,6 +3500,20 @@ private enum ShellRuntimeMetadataTests {
         } catch {
             fail("failed to decode control command fixture: \(error)")
         }
+    }
+
+    private static func controlEvents(_ controller: ShellHostController) -> [AlanShellEventEnvelope] {
+        controller.handleControlPlaneCommand(
+            decodeControlCommand(
+                """
+                {
+                  "request_id": "events-read-\(UUID().uuidString)",
+                  "command": "events.read",
+                  "limit": 200
+                }
+                """
+            )
+        ).events ?? []
     }
 
     private static func expect(

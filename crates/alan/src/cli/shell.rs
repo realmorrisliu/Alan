@@ -32,7 +32,15 @@ struct ShellControlCommand {
     #[serde(skip_serializing_if = "Option::is_none")]
     pane_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    split_node_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ratio: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     direction: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    spatial_direction: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    placement: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     title: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -64,6 +72,19 @@ struct ShellControlResponse {
     space_id: Option<String>,
     tab_id: Option<String>,
     pane_id: Option<String>,
+    split_node_id: Option<String>,
+    ratio: Option<f64>,
+    changed_split_ids: Option<Value>,
+    affected_pane_ids: Option<Value>,
+    zoomed_pane_id: Option<String>,
+    source_tab_id: Option<String>,
+    target_tab_id: Option<String>,
+    previous_focused_pane_id: Option<String>,
+    current_focused_pane_id: Option<String>,
+    split_direction: Option<String>,
+    spatial_direction: Option<String>,
+    placement: Option<String>,
+    mounted_content_instance_id: Option<String>,
     accepted_bytes: Option<u64>,
     latest_event_id: Option<String>,
     error_code: Option<String>,
@@ -233,9 +254,75 @@ pub fn run_shell_pane_move(
     print_pretty(&response)
 }
 
+pub fn run_shell_pane_move_within_tab(
+    pane: &str,
+    placement: &str,
+    options: ShellTargetOptions,
+) -> Result<()> {
+    let mut command = build_command("pane.move_within_tab");
+    command.pane_id = Some(pane.to_string());
+    command.placement = Some(placement.to_string());
+    let response = invoke(&options, command)?;
+    ensure_success(&response)?;
+    print_pretty(&response)
+}
+
 pub fn run_shell_pane_focus(pane: &str, options: ShellTargetOptions) -> Result<()> {
     let mut command = build_command("pane.focus");
     command.pane_id = Some(pane.to_string());
+    let response = invoke(&options, command)?;
+    ensure_success(&response)?;
+    print_pretty(&response)
+}
+
+pub fn run_shell_pane_spatial_focus(direction: &str, options: ShellTargetOptions) -> Result<()> {
+    let mut command = build_command("pane.spatial_focus");
+    command.spatial_direction = Some(direction.to_string());
+    let response = invoke(&options, command)?;
+    ensure_success(&response)?;
+    print_pretty(&response)
+}
+
+pub fn run_shell_pane_resize_split(
+    split_node: &str,
+    ratio: f64,
+    options: ShellTargetOptions,
+) -> Result<()> {
+    let mut command = build_command("pane.resize_split");
+    command.split_node_id = Some(split_node.to_string());
+    command.ratio = Some(ratio);
+    let response = invoke(&options, command)?;
+    ensure_success(&response)?;
+    print_pretty(&response)
+}
+
+pub fn run_shell_pane_equalize_splits(
+    tab: Option<&str>,
+    options: ShellTargetOptions,
+) -> Result<()> {
+    let mut command = build_command("pane.equalize_splits");
+    command.tab_id = tab.map(str::to_owned);
+    let response = invoke(&options, command)?;
+    ensure_success(&response)?;
+    print_pretty(&response)
+}
+
+pub fn run_shell_pane_zoom(pane: &str, options: ShellTargetOptions) -> Result<()> {
+    let mut command = build_command("pane.zoom");
+    command.pane_id = Some(pane.to_string());
+    let response = invoke(&options, command)?;
+    ensure_success(&response)?;
+    print_pretty(&response)
+}
+
+pub fn run_shell_pane_unzoom(
+    pane: Option<&str>,
+    tab: Option<&str>,
+    options: ShellTargetOptions,
+) -> Result<()> {
+    let mut command = build_command("pane.unzoom");
+    command.pane_id = pane.map(str::to_owned);
+    command.tab_id = tab.map(str::to_owned);
     let response = invoke(&options, command)?;
     ensure_success(&response)?;
     print_pretty(&response)
@@ -332,7 +419,11 @@ fn build_command(command: &str) -> ShellControlCommand {
         space_id: None,
         tab_id: None,
         pane_id: None,
+        split_node_id: None,
+        ratio: None,
         direction: None,
+        spatial_direction: None,
+        placement: None,
         title: None,
         cwd: None,
         text: None,
@@ -704,7 +795,11 @@ mod tests {
                 space_id: None,
                 tab_id: None,
                 pane_id: None,
+                split_node_id: None,
+                ratio: None,
                 direction: None,
+                spatial_direction: None,
+                placement: None,
                 title: None,
                 cwd: None,
                 text: None,
@@ -767,7 +862,11 @@ mod tests {
                 space_id: None,
                 tab_id: None,
                 pane_id: Some("pane_9".to_string()),
+                split_node_id: None,
+                ratio: None,
                 direction: None,
+                spatial_direction: None,
+                placement: None,
                 title: None,
                 cwd: None,
                 text: None,
@@ -830,7 +929,11 @@ mod tests {
                 space_id: None,
                 tab_id: None,
                 pane_id: Some("pane_2".to_string()),
+                split_node_id: None,
+                ratio: None,
                 direction: None,
+                spatial_direction: None,
+                placement: None,
                 title: None,
                 cwd: None,
                 text: None,
@@ -891,7 +994,11 @@ mod tests {
                 space_id: None,
                 tab_id: None,
                 pane_id: Some("pane_7".to_string()),
+                split_node_id: None,
+                ratio: None,
                 direction: None,
+                spatial_direction: None,
+                placement: None,
                 title: None,
                 cwd: None,
                 text: None,
@@ -936,7 +1043,11 @@ mod tests {
                 space_id: None,
                 tab_id: None,
                 pane_id: Some("pane_2".to_string()),
+                split_node_id: None,
+                ratio: None,
                 direction: None,
+                spatial_direction: None,
+                placement: None,
                 title: None,
                 cwd: None,
                 text: None,
@@ -994,7 +1105,11 @@ mod tests {
                 space_id: None,
                 tab_id: Some("tab_9".to_string()),
                 pane_id: Some("pane_2".to_string()),
+                split_node_id: None,
+                ratio: None,
                 direction: Some("vertical".to_string()),
+                spatial_direction: None,
+                placement: None,
                 title: None,
                 cwd: None,
                 text: None,

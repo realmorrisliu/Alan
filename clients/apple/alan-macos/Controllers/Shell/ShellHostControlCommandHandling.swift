@@ -113,6 +113,19 @@ extension ShellHostController {
         deliveryCode: String? = nil,
         runtimePhase: String? = nil,
         latestEventID: String? = nil,
+        splitNodeID: String? = nil,
+        ratio: Double? = nil,
+        changedSplitIDs: [String]? = nil,
+        affectedPaneIDs: [String]? = nil,
+        zoomedPaneID: String? = nil,
+        sourceTabID: String? = nil,
+        targetTabID: String? = nil,
+        previousFocusedPaneID: String? = nil,
+        currentFocusedPaneID: String? = nil,
+        splitDirection: ShellSplitDirection? = nil,
+        spatialDirection: ShellSpatialFocusDirection? = nil,
+        placement: ShellPaneSplitDirection? = nil,
+        mountedContentInstanceID: String? = nil,
         errorCode: String? = nil,
         errorMessage: String? = nil
     ) -> AlanShellControlResponse {
@@ -140,6 +153,19 @@ extension ShellHostController {
             deliveryCode: deliveryCode,
             runtimePhase: runtimePhase,
             latestEventID: latestEventID,
+            splitNodeID: splitNodeID,
+            ratio: ratio,
+            changedSplitIDs: changedSplitIDs,
+            affectedPaneIDs: affectedPaneIDs,
+            zoomedPaneID: zoomedPaneID,
+            sourceTabID: sourceTabID,
+            targetTabID: targetTabID,
+            previousFocusedPaneID: previousFocusedPaneID,
+            currentFocusedPaneID: currentFocusedPaneID,
+            splitDirection: splitDirection,
+            spatialDirection: spatialDirection,
+            placement: placement,
+            mountedContentInstanceID: mountedContentInstanceID,
             errorCode: errorCode,
             errorMessage: errorMessage
         )
@@ -553,6 +579,7 @@ extension ShellHostController {
             }
 
             let direction = command.direction ?? .vertical
+            let sourcePane = pane(paneID: paneID)
             guard movePane(paneID: paneID, toTab: targetTabID, direction: direction) else {
                 return response(
                     requestID: command.requestID,
@@ -569,8 +596,15 @@ extension ShellHostController {
                 applied: true,
                 spaceID: shellState.focusedSpaceID,
                 tabID: shellState.focusedTabID,
-                paneID: shellState.focusedPaneID
+                paneID: shellState.focusedPaneID,
+                sourceTabID: sourcePane?.tabID,
+                targetTabID: targetTabID,
+                splitDirection: direction,
+                mountedContentInstanceID: paneID
             )
+
+        case .paneMoveWithinTab:
+            return handlePaneMoveWithinTabCommand(command)
 
         case .paneFocus:
             guard let paneID = command.paneID,
@@ -593,6 +627,21 @@ extension ShellHostController {
                 tabID: shellState.focusedTabID,
                 paneID: paneID
             )
+
+        case .paneSpatialFocus:
+            return handlePaneSpatialFocusCommand(command)
+
+        case .paneResizeSplit:
+            return handlePaneResizeSplitCommand(command)
+
+        case .paneEqualizeSplits:
+            return handlePaneEqualizeSplitsCommand(command)
+
+        case .paneZoom:
+            return handlePaneZoomCommand(command)
+
+        case .paneUnzoom:
+            return handlePaneUnzoomCommand(command)
 
         case .paneSendText:
             guard let paneID = command.paneID,
@@ -847,6 +896,423 @@ extension ShellHostController {
                     errorCode: "events_unavailable",
                     errorMessage: "events.read is handled by the shell control plane."
                 )
+        }
+    }
+
+    private func handlePaneResizeSplitCommand(
+        _ command: AlanShellControlCommand
+    ) -> AlanShellControlResponse {
+        guard let splitNodeID = command.splitNodeID else {
+            return response(
+                requestID: command.requestID,
+                applied: false,
+                errorCode: "split_node_required",
+                errorMessage: "split_node_id is required."
+            )
+        }
+        guard let ratio = command.ratio else {
+            return response(
+                requestID: command.requestID,
+                applied: false,
+                splitNodeID: splitNodeID,
+                errorCode: "ratio_required",
+                errorMessage: "ratio is required."
+            )
+        }
+        guard let targetTab = shellState.spaces
+            .flatMap(\.tabs)
+            .first(where: { $0.paneTree.contains(nodeID: splitNodeID) })
+        else {
+            return response(
+                requestID: command.requestID,
+                applied: false,
+                splitNodeID: splitNodeID,
+                errorCode: "split_not_found",
+                errorMessage: "The requested split does not exist."
+            )
+        }
+
+        do {
+            let result = try shellState.resizingSplit(splitNodeID, ratio: ratio)
+            guard let updatedSplit = result.state.tab(tabID: targetTab.tabID)?
+                .paneTree
+                .node(nodeID: splitNodeID)
+            else {
+                return response(
+                    requestID: command.requestID,
+                    applied: false,
+                    splitNodeID: splitNodeID,
+                    errorCode: "split_not_found",
+                    errorMessage: "The requested split does not exist."
+                )
+            }
+
+            applyMutationResult(result)
+            return response(
+                requestID: command.requestID,
+                applied: true,
+                spaceID: result.spaceID,
+                tabID: targetTab.tabID,
+                paneID: result.paneID,
+                latestEventID: controlPlane.latestEventID,
+                splitNodeID: splitNodeID,
+                ratio: updatedSplit.splitRatio,
+                changedSplitIDs: [splitNodeID],
+                affectedPaneIDs: updatedSplit.paneIDs
+            )
+        } catch {
+            return response(
+                requestID: command.requestID,
+                applied: false,
+                tabID: targetTab.tabID,
+                splitNodeID: splitNodeID,
+                errorCode: "split_not_found",
+                errorMessage: "The requested split does not exist."
+            )
+        }
+    }
+
+    private func handlePaneEqualizeSplitsCommand(
+        _ command: AlanShellControlCommand
+    ) -> AlanShellControlResponse {
+        let tabID = command.tabID ?? selectedTabID
+        guard let tabID else {
+            return response(
+                requestID: command.requestID,
+                applied: false,
+                errorCode: "tab_required",
+                errorMessage: "tab_id is required."
+            )
+        }
+        guard let tab = shellState.tab(tabID: tabID) else {
+            return response(
+                requestID: command.requestID,
+                applied: false,
+                tabID: tabID,
+                errorCode: "tab_not_found",
+                errorMessage: "The requested tab does not exist."
+            )
+        }
+        guard !tab.paneTree.splitNodes.isEmpty else {
+            return response(
+                requestID: command.requestID,
+                applied: false,
+                tabID: tabID,
+                errorCode: "no_split_branches",
+                errorMessage: "The requested tab does not have split branches."
+            )
+        }
+
+        do {
+            let result = try shellState.equalizingSplits(in: tabID)
+            guard let updatedTab = result.state.tab(tabID: tabID) else {
+                return response(
+                    requestID: command.requestID,
+                    applied: false,
+                    tabID: tabID,
+                    errorCode: "tab_not_found",
+                    errorMessage: "The requested tab does not exist."
+                )
+            }
+            let changedSplitIDs = updatedTab.paneTree.splitNodeIDsWithChangedRatios(
+                comparedTo: tab.paneTree
+            )
+            guard !changedSplitIDs.isEmpty else {
+                return response(
+                    requestID: command.requestID,
+                    applied: false,
+                    tabID: tabID,
+                    ratio: 0.5,
+                    changedSplitIDs: [],
+                    affectedPaneIDs: tab.paneTree.paneIDs,
+                    errorCode: "unchanged_state",
+                    errorMessage: "The requested split ratios are already equalized."
+                )
+            }
+
+            applyMutationResult(result)
+            controlPlane.recordSplitEqualized(
+                requestID: command.requestID,
+                spaceID: result.spaceID,
+                tabID: tabID,
+                changedSplitIDs: changedSplitIDs,
+                affectedPaneIDs: updatedTab.paneTree.paneIDs
+            )
+            return response(
+                requestID: command.requestID,
+                applied: true,
+                spaceID: result.spaceID,
+                tabID: tabID,
+                paneID: result.paneID,
+                latestEventID: controlPlane.latestEventID,
+                ratio: 0.5,
+                changedSplitIDs: changedSplitIDs,
+                affectedPaneIDs: updatedTab.paneTree.paneIDs
+            )
+        } catch {
+            return response(
+                requestID: command.requestID,
+                applied: false,
+                tabID: tabID,
+                errorCode: "tab_not_found",
+                errorMessage: "The requested tab does not exist."
+            )
+        }
+    }
+
+    private func handlePaneZoomCommand(
+        _ command: AlanShellControlCommand
+    ) -> AlanShellControlResponse {
+        let paneID = command.paneID ?? selectedPane?.paneID
+        guard let paneID else {
+            return response(
+                requestID: command.requestID,
+                applied: false,
+                errorCode: "pane_required",
+                errorMessage: "pane_id is required."
+            )
+        }
+        guard let targetPane = pane(paneID: paneID) else {
+            return response(
+                requestID: command.requestID,
+                applied: false,
+                paneID: paneID,
+                errorCode: "pane_not_found",
+                errorMessage: "The requested pane does not exist."
+            )
+        }
+        guard canZoomPane(paneID) else {
+            return response(
+                requestID: command.requestID,
+                applied: false,
+                tabID: targetPane.tabID,
+                paneID: paneID,
+                errorCode: "split_tab_required",
+                errorMessage: "Pane zoom requires a split tab."
+            )
+        }
+
+        let previousFocusedPaneID = shellState.focusedPaneID
+        guard zoomPane(paneID: paneID) else {
+            return response(
+                requestID: command.requestID,
+                applied: false,
+                tabID: targetPane.tabID,
+                paneID: paneID,
+                zoomedPaneID: zoomedPaneIDByTabID[targetPane.tabID],
+                previousFocusedPaneID: previousFocusedPaneID,
+                currentFocusedPaneID: shellState.focusedPaneID,
+                mountedContentInstanceID: paneID,
+                errorCode: "unchanged_state",
+                errorMessage: "The requested pane is already zoomed."
+            )
+        }
+
+        return response(
+            requestID: command.requestID,
+            applied: true,
+            spaceID: targetPane.spaceID,
+            tabID: targetPane.tabID,
+            paneID: paneID,
+            latestEventID: controlPlane.latestEventID,
+            zoomedPaneID: paneID,
+            previousFocusedPaneID: previousFocusedPaneID,
+            currentFocusedPaneID: shellState.focusedPaneID,
+            mountedContentInstanceID: paneID
+        )
+    }
+
+    private func handlePaneUnzoomCommand(
+        _ command: AlanShellControlCommand
+    ) -> AlanShellControlResponse {
+        let tabID = command.tabID
+            ?? command.paneID.flatMap { pane(paneID: $0)?.tabID }
+            ?? selectedTabID
+        guard let tabID else {
+            return response(
+                requestID: command.requestID,
+                applied: false,
+                errorCode: "tab_required",
+                errorMessage: "tab_id is required."
+            )
+        }
+        guard shellState.tab(tabID: tabID) != nil else {
+            return response(
+                requestID: command.requestID,
+                applied: false,
+                tabID: tabID,
+                errorCode: "tab_not_found",
+                errorMessage: "The requested tab does not exist."
+            )
+        }
+
+        let previousFocusedPaneID = shellState.focusedPaneID
+        let previousZoomedPaneID = zoomedPaneIDByTabID[tabID]
+        guard unzoomTab(tabID: tabID) else {
+            return response(
+                requestID: command.requestID,
+                applied: false,
+                tabID: tabID,
+                zoomedPaneID: nil,
+                previousFocusedPaneID: previousFocusedPaneID,
+                currentFocusedPaneID: shellState.focusedPaneID,
+                errorCode: "unchanged_state",
+                errorMessage: "The requested tab is not zoomed."
+            )
+        }
+
+        return response(
+            requestID: command.requestID,
+            applied: true,
+            tabID: tabID,
+            paneID: previousZoomedPaneID,
+            latestEventID: controlPlane.latestEventID,
+            zoomedPaneID: nil,
+            previousFocusedPaneID: previousFocusedPaneID,
+            currentFocusedPaneID: shellState.focusedPaneID,
+            mountedContentInstanceID: previousZoomedPaneID
+        )
+    }
+
+    private func handlePaneSpatialFocusCommand(
+        _ command: AlanShellControlCommand
+    ) -> AlanShellControlResponse {
+        guard let direction = command.spatialDirection else {
+            return response(
+                requestID: command.requestID,
+                applied: false,
+                errorCode: "spatial_direction_required",
+                errorMessage: "spatial_direction is required."
+            )
+        }
+
+        let previousFocusedPaneID = shellState.focusedPaneID
+        let previousPane = previousFocusedPaneID.flatMap { pane(paneID: $0) }
+        do {
+            let result = try shellState.focusingAdjacentPane(direction)
+            applyMutationResult(result)
+            controlPlane.recordSpatialFocus(
+                requestID: command.requestID,
+                spaceID: result.spaceID,
+                tabID: result.tabID,
+                previousPaneID: previousFocusedPaneID,
+                currentPaneID: result.paneID,
+                direction: direction,
+                applied: true
+            )
+            return response(
+                requestID: command.requestID,
+                applied: true,
+                spaceID: result.spaceID,
+                tabID: result.tabID,
+                paneID: result.paneID,
+                latestEventID: controlPlane.latestEventID,
+                previousFocusedPaneID: previousFocusedPaneID,
+                currentFocusedPaneID: result.paneID,
+                spatialDirection: direction
+            )
+        } catch ShellStateMutationError.spatialFocusTargetNotFound {
+            controlPlane.recordSpatialFocus(
+                requestID: command.requestID,
+                spaceID: previousPane?.spaceID,
+                tabID: previousPane?.tabID,
+                previousPaneID: previousFocusedPaneID,
+                currentPaneID: previousFocusedPaneID,
+                direction: direction,
+                applied: false
+            )
+            return response(
+                requestID: command.requestID,
+                applied: false,
+                spaceID: previousPane?.spaceID,
+                tabID: previousPane?.tabID,
+                paneID: previousFocusedPaneID,
+                latestEventID: controlPlane.latestEventID,
+                previousFocusedPaneID: previousFocusedPaneID,
+                currentFocusedPaneID: previousFocusedPaneID,
+                spatialDirection: direction,
+                errorCode: "spatial_focus_target_not_found",
+                errorMessage: "There is no pane in that direction."
+            )
+        } catch {
+            return response(
+                requestID: command.requestID,
+                applied: false,
+                paneID: previousFocusedPaneID,
+                errorCode: "pane_not_found",
+                errorMessage: "The focused pane does not exist."
+            )
+        }
+    }
+
+    private func handlePaneMoveWithinTabCommand(
+        _ command: AlanShellControlCommand
+    ) -> AlanShellControlResponse {
+        guard let paneID = command.paneID else {
+            return response(
+                requestID: command.requestID,
+                applied: false,
+                errorCode: "pane_required",
+                errorMessage: "pane_id is required."
+            )
+        }
+        guard let placement = command.placement else {
+            return response(
+                requestID: command.requestID,
+                applied: false,
+                paneID: paneID,
+                errorCode: "placement_required",
+                errorMessage: "placement is required."
+            )
+        }
+        guard let sourcePane = pane(paneID: paneID) else {
+            return response(
+                requestID: command.requestID,
+                applied: false,
+                paneID: paneID,
+                placement: placement,
+                errorCode: "pane_not_found",
+                errorMessage: "The requested pane does not exist."
+            )
+        }
+
+        do {
+            let result = try shellState.movingPaneWithinTab(paneID, placement: placement)
+            applyMutationResult(result)
+            controlPlane.recordPaneMovedInTab(
+                requestID: command.requestID,
+                spaceID: result.spaceID,
+                tabID: sourcePane.tabID,
+                paneID: paneID,
+                placement: placement,
+                mountedContentInstanceID: paneID
+            )
+            return response(
+                requestID: command.requestID,
+                applied: true,
+                spaceID: result.spaceID,
+                tabID: sourcePane.tabID,
+                paneID: paneID,
+                latestEventID: controlPlane.latestEventID,
+                sourceTabID: sourcePane.tabID,
+                targetTabID: sourcePane.tabID,
+                placement: placement,
+                mountedContentInstanceID: paneID
+            )
+        } catch {
+            return response(
+                requestID: command.requestID,
+                applied: false,
+                spaceID: sourcePane.spaceID,
+                tabID: sourcePane.tabID,
+                paneID: paneID,
+                sourceTabID: sourcePane.tabID,
+                targetTabID: sourcePane.tabID,
+                placement: placement,
+                mountedContentInstanceID: paneID,
+                errorCode: "invalid_move_target",
+                errorMessage: "The requested in-tab pane movement target is not available."
+            )
         }
     }
 

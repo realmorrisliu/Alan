@@ -141,6 +141,10 @@ final class AlanShellControlPlane {
         socketURL.path
     }
 
+    var latestEventID: String? {
+        eventStore.latestEventID
+    }
+
     func publish(state: ShellStateSnapshot) {
         ensureDirectories()
         let mergeResult = socketServer.mergePublishedState(state)
@@ -214,6 +218,76 @@ final class AlanShellControlPlane {
             tabID: tabID,
             paneID: paneID,
             delivery: delivery
+        )
+    }
+
+    func recordSplitEqualized(
+        requestID: String?,
+        spaceID: String?,
+        tabID: String,
+        changedSplitIDs: [String],
+        affectedPaneIDs: [String]
+    ) {
+        eventStore.recordSplitEqualized(
+            requestID: requestID,
+            spaceID: spaceID,
+            tabID: tabID,
+            changedSplitIDs: changedSplitIDs,
+            affectedPaneIDs: affectedPaneIDs
+        )
+    }
+
+    func recordZoomStateChanged(
+        requestID: String?,
+        spaceID: String?,
+        tabID: String,
+        paneID: String?,
+        zoomedPaneID: String?
+    ) {
+        eventStore.recordZoomStateChanged(
+            requestID: requestID,
+            spaceID: spaceID,
+            tabID: tabID,
+            paneID: paneID,
+            zoomedPaneID: zoomedPaneID
+        )
+    }
+
+    func recordSpatialFocus(
+        requestID: String?,
+        spaceID: String?,
+        tabID: String?,
+        previousPaneID: String?,
+        currentPaneID: String?,
+        direction: ShellSpatialFocusDirection,
+        applied: Bool
+    ) {
+        eventStore.recordSpatialFocus(
+            requestID: requestID,
+            spaceID: spaceID,
+            tabID: tabID,
+            previousPaneID: previousPaneID,
+            currentPaneID: currentPaneID,
+            direction: direction,
+            applied: applied
+        )
+    }
+
+    func recordPaneMovedInTab(
+        requestID: String?,
+        spaceID: String?,
+        tabID: String,
+        paneID: String,
+        placement: ShellPaneSplitDirection,
+        mountedContentInstanceID: String
+    ) {
+        eventStore.recordPaneMovedInTab(
+            requestID: requestID,
+            spaceID: spaceID,
+            tabID: tabID,
+            paneID: paneID,
+            placement: placement,
+            mountedContentInstanceID: mountedContentInstanceID
         )
     }
 
