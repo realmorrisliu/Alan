@@ -149,6 +149,174 @@ extension ShellPane {
     }
 }
 
+enum ShellContentKind: String, Codable, CaseIterable {
+    case terminal
+    case markdown
+    case settings
+}
+
+enum ShellContentCapability: String, Codable, CaseIterable {
+    case terminalInput = "terminal_input"
+    case terminalSearch = "terminal_search"
+    case terminalPaste = "terminal_paste"
+    case terminalRuntimeMetadata = "terminal_runtime_metadata"
+    case markdownReadOnlyViewer = "markdown_read_only_viewer"
+    case settingsSurface = "settings_surface"
+}
+
+enum ShellContentLifecycleState: String, Codable, CaseIterable {
+    case active
+    case closing
+    case closed
+    case failed
+}
+
+struct ShellContentRendererState: Codable, Equatable {
+    let phase: String
+    let detail: String?
+
+    static let placeholder = ShellContentRendererState(phase: "placeholder", detail: nil)
+
+    private enum CodingKeys: String, CodingKey {
+        case phase
+        case detail
+    }
+}
+
+struct ShellTerminalContentPayload: Codable, Equatable {
+    let launchTarget: ShellLaunchTarget
+    let cwd: String?
+    let title: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case launchTarget = "launch_target"
+        case cwd
+        case title
+    }
+}
+
+struct ShellMarkdownContentPayload: Codable, Equatable {
+    let fileURL: String
+    let title: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case fileURL = "file_url"
+        case title
+    }
+}
+
+struct ShellSettingsContentPayload: Codable, Equatable {
+    let surfaceID: String
+    let title: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case surfaceID = "surface_id"
+        case title
+    }
+}
+
+struct ShellContentPayload: Codable, Equatable {
+    let terminal: ShellTerminalContentPayload?
+    let markdown: ShellMarkdownContentPayload?
+    let settings: ShellSettingsContentPayload?
+
+    private enum CodingKeys: String, CodingKey {
+        case terminal
+        case markdown
+        case settings
+    }
+
+    static func terminal(_ payload: ShellTerminalContentPayload) -> ShellContentPayload {
+        ShellContentPayload(terminal: payload, markdown: nil, settings: nil)
+    }
+
+    static func markdown(_ payload: ShellMarkdownContentPayload) -> ShellContentPayload {
+        ShellContentPayload(terminal: nil, markdown: payload, settings: nil)
+    }
+
+    static func settings(_ payload: ShellSettingsContentPayload) -> ShellContentPayload {
+        ShellContentPayload(terminal: nil, markdown: nil, settings: payload)
+    }
+}
+
+struct ShellContentInstance: Identifiable, Codable, Equatable {
+    let contentID: String
+    let kind: ShellContentKind
+    let title: String
+    let iconName: String?
+    let capabilities: [ShellContentCapability]
+    let payload: ShellContentPayload
+    let lifecycle: ShellContentLifecycleState
+    let rendererState: ShellContentRendererState
+
+    var id: String { contentID }
+
+    init(
+        contentID: String,
+        kind: ShellContentKind,
+        title: String,
+        iconName: String? = nil,
+        capabilities: [ShellContentCapability]? = nil,
+        payload: ShellContentPayload,
+        lifecycle: ShellContentLifecycleState = .active,
+        rendererState: ShellContentRendererState = .placeholder
+    ) {
+        self.contentID = contentID
+        self.kind = kind
+        self.title = title
+        self.iconName = iconName
+        self.capabilities = capabilities ?? Self.defaultCapabilities(for: kind)
+        self.payload = payload
+        self.lifecycle = lifecycle
+        self.rendererState = rendererState
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case contentID = "content_id"
+        case kind
+        case title
+        case iconName = "icon_name"
+        case capabilities
+        case payload
+        case lifecycle
+        case rendererState = "renderer_state"
+    }
+
+    static func defaultCapabilities(for kind: ShellContentKind) -> [ShellContentCapability] {
+        switch kind {
+        case .terminal:
+            return [
+                .terminalInput,
+                .terminalSearch,
+                .terminalPaste,
+                .terminalRuntimeMetadata,
+            ]
+        case .markdown:
+            return [.markdownReadOnlyViewer]
+        case .settings:
+            return [.settingsSurface]
+        }
+    }
+}
+
+struct ShellPaneSlot: Identifiable, Codable, Equatable {
+    let paneSlotID: String
+    let tabID: String
+    let spaceID: String
+    let contentID: String
+    let attention: ShellAttentionState
+
+    var id: String { paneSlotID }
+
+    private enum CodingKeys: String, CodingKey {
+        case paneSlotID = "pane_slot_id"
+        case tabID = "tab_id"
+        case spaceID = "space_id"
+        case contentID = "content_id"
+        case attention
+    }
+}
+
 struct ShellPaneTreeNode: Identifiable, Codable, Equatable {
     static let minimumSplitRatio = 0.15
     static let maximumSplitRatio = 0.85
@@ -510,6 +678,96 @@ extension ShellPaneTreeNode {
     }
 }
 
+struct ShellPaneSlotTreeNode: Identifiable, Codable, Equatable {
+    let nodeID: String
+    let kind: ShellPaneTreeKind
+    let direction: ShellSplitDirection?
+    let ratio: Double?
+    let paneSlotID: String?
+    let children: [ShellPaneSlotTreeNode]?
+
+    var id: String { nodeID }
+
+    private enum CodingKeys: String, CodingKey {
+        case nodeID = "node_id"
+        case kind
+        case direction
+        case ratio
+        case paneSlotID = "pane_slot_id"
+        case children
+    }
+
+    init(
+        nodeID: String,
+        kind: ShellPaneTreeKind,
+        direction: ShellSplitDirection?,
+        ratio: Double? = nil,
+        paneSlotID: String?,
+        children: [ShellPaneSlotTreeNode]?
+    ) {
+        self.nodeID = nodeID
+        self.kind = kind
+        self.direction = direction
+        self.ratio = kind == .split
+            ? ShellPaneTreeNode.clampedSplitRatio(ratio ?? 0.5)
+            : nil
+        self.paneSlotID = paneSlotID
+        self.children = children
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let kind = try container.decode(ShellPaneTreeKind.self, forKey: .kind)
+        let decodedRatio = kind == .split ? try container.decode(Double.self, forKey: .ratio) : nil
+
+        self.init(
+            nodeID: try container.decode(String.self, forKey: .nodeID),
+            kind: kind,
+            direction: try container.decodeIfPresent(ShellSplitDirection.self, forKey: .direction),
+            ratio: decodedRatio,
+            paneSlotID: try container.decodeIfPresent(String.self, forKey: .paneSlotID),
+            children: try container.decodeIfPresent([ShellPaneSlotTreeNode].self, forKey: .children)
+        )
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(nodeID, forKey: .nodeID)
+        try container.encode(kind, forKey: .kind)
+        try container.encodeIfPresent(direction, forKey: .direction)
+        if kind == .split {
+            try container.encode(ratio ?? 0.5, forKey: .ratio)
+        }
+        try container.encodeIfPresent(paneSlotID, forKey: .paneSlotID)
+        try container.encodeIfPresent(children, forKey: .children)
+    }
+
+    static func migrating(
+        paneTree: ShellPaneTreeNode,
+        paneIDToSlotID: (String) -> String = { $0 }
+    ) -> ShellPaneSlotTreeNode {
+        ShellPaneSlotTreeNode(
+            nodeID: paneTree.nodeID,
+            kind: paneTree.kind,
+            direction: paneTree.direction,
+            ratio: paneTree.ratio,
+            paneSlotID: paneTree.paneID.map(paneIDToSlotID),
+            children: paneTree.children?.map {
+                ShellPaneSlotTreeNode.migrating(paneTree: $0, paneIDToSlotID: paneIDToSlotID)
+            }
+        )
+    }
+
+    var paneSlotIDs: [String] {
+        switch kind {
+        case .pane:
+            return paneSlotID.map { [$0] } ?? []
+        case .split:
+            return (children ?? []).flatMap(\.paneSlotIDs)
+        }
+    }
+}
+
 struct ShellTab: Identifiable, Codable, Equatable {
     let tabID: String
     let kind: ShellTabKind
@@ -553,11 +811,45 @@ struct ShellTab: Identifiable, Codable, Equatable {
     }
 }
 
+struct ShellContentTab: Identifiable, Codable, Equatable {
+    let tabID: String
+    let kind: ShellTabKind
+    let title: String?
+    let paneTree: ShellPaneSlotTreeNode
+    let isPinned: Bool
+
+    var id: String { tabID }
+
+    private enum CodingKeys: String, CodingKey {
+        case tabID = "tab_id"
+        case kind
+        case title
+        case paneTree = "pane_tree"
+        case isPinned = "is_pinned"
+    }
+}
+
 struct ShellSpace: Identifiable, Codable, Equatable {
     let spaceID: String
     let title: String
     let attention: ShellAttentionState
     let tabs: [ShellTab]
+
+    var id: String { spaceID }
+
+    private enum CodingKeys: String, CodingKey {
+        case spaceID = "space_id"
+        case title
+        case attention
+        case tabs
+    }
+}
+
+struct ShellContentSpace: Identifiable, Codable, Equatable {
+    let spaceID: String
+    let title: String
+    let attention: ShellAttentionState
+    let tabs: [ShellContentTab]
 
     var id: String { spaceID }
 
@@ -601,6 +893,30 @@ struct ShellStateSnapshot: Codable, Equatable {
         }
 
         return string
+    }
+}
+
+struct ShellContentStateSnapshot: Codable, Equatable {
+    static let currentContractVersion = "0.2"
+
+    let contractVersion: String
+    let windowID: String
+    let focusedSpaceID: String?
+    let focusedTabID: String?
+    let focusedPaneSlotID: String?
+    let spaces: [ShellContentSpace]
+    let paneSlots: [ShellPaneSlot]
+    let contents: [ShellContentInstance]
+
+    private enum CodingKeys: String, CodingKey {
+        case contractVersion = "contract_version"
+        case windowID = "window_id"
+        case focusedSpaceID = "focused_space_id"
+        case focusedTabID = "focused_tab_id"
+        case focusedPaneSlotID = "focused_pane_slot_id"
+        case spaces
+        case paneSlots = "pane_slots"
+        case contents
     }
 }
 

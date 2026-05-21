@@ -190,7 +190,154 @@ struct ShellPaneRestoreRecord: Codable, Equatable, Identifiable {
     }
 }
 
+struct ShellContentWorkspaceManifest: Codable, Equatable {
+    static let currentContentContractVersion = ShellContentStateSnapshot.currentContractVersion
+
+    var schemaVersion: Int
+    var contentContractVersion: String
+    var windowID: String
+    var selectedSpaceID: String?
+    var selectedTabID: String?
+    var spaces: [ShellContentWorkspaceSpaceRecord]
+
+    private enum CodingKeys: String, CodingKey {
+        case schemaVersion = "schema_version"
+        case contentContractVersion = "content_contract_version"
+        case windowID = "window_id"
+        case selectedSpaceID = "selected_space_id"
+        case selectedTabID = "selected_tab_id"
+        case spaces
+    }
+}
+
+struct ShellContentWorkspaceSpaceRecord: Codable, Equatable, Identifiable {
+    var spaceID: String
+    var title: String
+    var order: Int
+    var createdAt: Date
+    var updatedAt: Date
+    var tabs: [ShellContentWorkspaceTabRecord]
+
+    var id: String { spaceID }
+
+    private enum CodingKeys: String, CodingKey {
+        case spaceID = "space_id"
+        case title
+        case order
+        case createdAt = "created_at"
+        case updatedAt = "updated_at"
+        case tabs
+    }
+}
+
+struct ShellContentWorkspaceTabRecord: Codable, Equatable, Identifiable {
+    var tabID: String
+    var title: String?
+    var kind: ShellTabKind
+    var createdAt: Date
+    var lastActivatedAt: Date
+    var lastActivityAt: Date
+    var isPinned: Bool
+    var pinSnapshot: ShellContentTabRestoreSnapshot?
+    var liveSnapshot: ShellContentTabRestoreSnapshot?
+    var activeTask: ShellTabActiveTaskState
+
+    var id: String { tabID }
+
+    private enum CodingKeys: String, CodingKey {
+        case tabID = "tab_id"
+        case title
+        case kind
+        case createdAt = "created_at"
+        case lastActivatedAt = "last_activated_at"
+        case lastActivityAt = "last_activity_at"
+        case isPinned = "is_pinned"
+        case pinSnapshot = "pin_snapshot"
+        case liveSnapshot = "live_snapshot"
+        case activeTask = "active_task"
+    }
+}
+
+struct ShellContentTabRestoreSnapshot: Codable, Equatable {
+    var paneTree: ShellPaneSlotTreeNode
+    var paneSlots: [ShellPaneSlotRestoreRecord]
+    var contents: [ShellContentRestoreRecord]
+
+    private enum CodingKeys: String, CodingKey {
+        case paneTree = "pane_tree"
+        case paneSlots = "pane_slots"
+        case contents
+    }
+}
+
+struct ShellPaneSlotRestoreRecord: Codable, Equatable, Identifiable {
+    var paneSlotID: String
+    var contentID: String
+
+    var id: String { paneSlotID }
+
+    private enum CodingKeys: String, CodingKey {
+        case paneSlotID = "pane_slot_id"
+        case contentID = "content_id"
+    }
+}
+
+struct ShellContentRestoreRecord: Codable, Equatable, Identifiable {
+    var contentID: String
+    var kind: ShellContentKind
+    var title: String
+    var payload: ShellContentPayload
+
+    var id: String { contentID }
+
+    private enum CodingKeys: String, CodingKey {
+        case contentID = "content_id"
+        case kind
+        case title
+        case payload
+    }
+}
+
 extension ShellWorkspaceManifest {
+    func migratingTerminalRestoreSnapshotsToContentContainers(
+        defaultWorkingDirectory: String
+    ) -> ShellContentWorkspaceManifest {
+        ShellContentWorkspaceManifest(
+            schemaVersion: schemaVersion,
+            contentContractVersion: ShellContentWorkspaceManifest.currentContentContractVersion,
+            windowID: windowID,
+            selectedSpaceID: selectedSpaceID,
+            selectedTabID: selectedTabID,
+            spaces: spaces.map { space in
+                ShellContentWorkspaceSpaceRecord(
+                    spaceID: space.spaceID,
+                    title: space.title,
+                    order: space.order,
+                    createdAt: space.createdAt,
+                    updatedAt: space.updatedAt,
+                    tabs: space.tabs.map { tab in
+                        ShellContentWorkspaceTabRecord(
+                            tabID: tab.tabID,
+                            title: tab.title,
+                            kind: tab.kind,
+                            createdAt: tab.createdAt,
+                            lastActivatedAt: tab.lastActivatedAt,
+                            lastActivityAt: tab.lastActivityAt,
+                            isPinned: tab.isPinned,
+                            pinSnapshot: tab.pinSnapshot?.migratingTerminalPanesToContentContainers(
+                                defaultWorkingDirectory: defaultWorkingDirectory
+                            ),
+                            liveSnapshot: tab.liveSnapshot?.migratingTerminalPanesToContentContainers(
+                                defaultWorkingDirectory: defaultWorkingDirectory
+                            ),
+                            activeTask: tab.activeTask
+                        )
+                    }
+                )
+            }
+        )
+    }
+
     func pruningExpiredTabs(now: Date, ttl: TimeInterval) -> ShellWorkspaceManifest {
         var pruned = self
         pruned.spaces = spaces.map { space in
@@ -228,6 +375,46 @@ extension ShellWorkspaceManifest {
         if !selectedTabStillExists {
             selectedTabID = selectedSpace.tabs.first?.tabID
         }
+    }
+}
+
+extension ShellTabRestoreSnapshot {
+    func migratingTerminalPanesToContentContainers(
+        defaultWorkingDirectory: String
+    ) -> ShellContentTabRestoreSnapshot {
+        let paneSlots = panes.map { pane in
+            ShellPaneSlotRestoreRecord(
+                paneSlotID: pane.paneID,
+                contentID: Self.contentID(forPaneID: pane.paneID)
+            )
+        }
+        let contents = panes.map { pane in
+            let title = pane.title ?? ShellWorkspaceMaterializer.defaultViewportTitleForMigration(
+                launchTarget: pane.launchTarget
+            )
+            return ShellContentRestoreRecord(
+                contentID: Self.contentID(forPaneID: pane.paneID),
+                kind: .terminal,
+                title: title,
+                payload: .terminal(
+                    ShellTerminalContentPayload(
+                        launchTarget: pane.launchTarget,
+                        cwd: pane.cwd ?? defaultWorkingDirectory,
+                        title: title
+                    )
+                )
+            )
+        }
+
+        return ShellContentTabRestoreSnapshot(
+            paneTree: ShellPaneSlotTreeNode.migrating(paneTree: paneTree),
+            paneSlots: paneSlots,
+            contents: contents
+        )
+    }
+
+    private static func contentID(forPaneID paneID: String) -> String {
+        "content_\(paneID)"
     }
 }
 
@@ -386,5 +573,9 @@ struct ShellWorkspaceMaterializer {
         case .alan:
             return "alan"
         }
+    }
+
+    static func defaultViewportTitleForMigration(launchTarget: ShellLaunchTarget) -> String {
+        defaultViewportTitle(for: launchTarget)
     }
 }
