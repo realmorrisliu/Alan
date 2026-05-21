@@ -41,6 +41,8 @@ private enum ShellRuntimeMetadataTests {
         verifiesAdvancedControlPlaneResizeEqualizeAndEvents()
         verifiesSplitRatioEventsUseAffectedPaneForBackgroundTabs()
         verifiesAdvancedControlPlaneZoomFocusAndMovementResults()
+        verifiesAdvancedControlPlaneRejectsUnknownUnzoomPane()
+        verifiesPaneMoveSocketRequestsRequireHostMetadataHandler()
         verifiesTerminalActivityProjectsByPaneID()
         verifiesProgressActivityFactoryUsesSourceFirstDisplay()
         verifiesCommandCompletionActivityFactory()
@@ -1142,6 +1144,70 @@ private enum ShellRuntimeMetadataTests {
             },
             "in-tab movement must emit an advanced movement event"
         )
+    }
+
+    private static func verifiesAdvancedControlPlaneRejectsUnknownUnzoomPane() {
+        let controller = makeController()
+        _ = controller.splitPane(paneID: "pane_1", placement: .right)
+        _ = controller.handleControlPlaneCommand(
+            decodeControlCommand(
+                """
+                {
+                  "request_id": "zoom-before-invalid-unzoom-1",
+                  "command": "pane.zoom",
+                  "pane_id": "pane_2"
+                }
+                """
+            )
+        )
+        expect(controller.selectedTabZoomedPaneID == "pane_2", "test setup must zoom a pane")
+
+        let response = controller.handleControlPlaneCommand(
+            decodeControlCommand(
+                """
+                {
+                  "request_id": "invalid-unzoom-pane-1",
+                  "command": "pane.unzoom",
+                  "pane_id": "pane_missing"
+                }
+                """
+            )
+        )
+
+        expect(response.applied == false, "unzoom with an unknown explicit pane must not apply")
+        expect(response.errorCode == "pane_not_found", "unknown unzoom pane must return pane_not_found")
+        expect(response.paneID == "pane_missing", "unknown unzoom pane response must echo pane_id")
+        expect(
+            controller.selectedTabZoomedPaneID == "pane_2",
+            "unknown unzoom pane must not fall back to and mutate the selected tab"
+        )
+    }
+
+    private static func verifiesPaneMoveSocketRequestsRequireHostMetadataHandler() {
+        let controller = makeController()
+        let socketServer = AlanShellSocketServer(
+            socketURL: FileManager.default.temporaryDirectory
+                .appendingPathComponent("pane-move-host-\(UUID().uuidString).sock"),
+            commandHandler: { controller.handleControlPlaneCommand($0) },
+            stateAdoptionHandler: { _ in fail("pane.move must not mutate through the local executor") },
+            sideEffectHandler: { _ in fail("pane.move must not use local side effects") }
+        )
+        _ = socketServer.mergePublishedState(controller.shellState)
+
+        let localResponse = socketServer.handleLocally(
+            decodeControlCommand(
+                """
+                {
+                  "request_id": "pane-move-host-routing-1",
+                  "command": "pane.move",
+                  "pane_id": "pane_1",
+                  "tab_id": "tab_main"
+                }
+                """
+            )
+        )
+
+        expect(localResponse == nil, "pane.move socket requests must be routed to the host handler")
     }
 
     private static func verifiesTerminalActivityProjectsByPaneID() {

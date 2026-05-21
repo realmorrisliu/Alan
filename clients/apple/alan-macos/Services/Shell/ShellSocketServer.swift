@@ -400,8 +400,8 @@ private extension AlanShellControlCommandKind {
     var requiresHostHandler: Bool {
         switch self {
         case .spaceCreate, .spaceOpenAlan, .tabOpen, .tabPin, .tabReorder, .paneSplit,
-            .paneMoveWithinTab, .paneSpatialFocus, .paneResizeSplit, .paneEqualizeSplits,
-            .paneZoom, .paneUnzoom, .agentActivity:
+            .paneMove, .paneMoveWithinTab, .paneSpatialFocus, .paneResizeSplit,
+            .paneEqualizeSplits, .paneZoom, .paneUnzoom, .agentActivity:
             return true
         default:
             return false

@@ -1127,8 +1127,18 @@ extension ShellHostController {
     private func handlePaneUnzoomCommand(
         _ command: AlanShellControlCommand
     ) -> AlanShellControlResponse {
+        let requestedPane = command.paneID.flatMap(pane)
+        if command.paneID != nil && requestedPane == nil {
+            return response(
+                requestID: command.requestID,
+                applied: false,
+                paneID: command.paneID,
+                errorCode: "pane_not_found",
+                errorMessage: "The requested pane does not exist."
+            )
+        }
         let tabID = command.tabID
-            ?? command.paneID.flatMap { pane(paneID: $0)?.tabID }
+            ?? requestedPane?.tabID
             ?? selectedTabID
         guard let tabID else {
             return response(
