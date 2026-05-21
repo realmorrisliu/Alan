@@ -470,10 +470,22 @@ private struct ShellPaneTreeLayoutView: View {
                             target: .contextPane(pane.paneID)
                         ).isAvailable
                     },
+                    canCopyTerminalSelection: host.canCopyTerminalSelection(
+                        source: .contextMenu,
+                        target: .contextPane(pane.paneID)
+                    ),
+                    canPasteIntoTerminal: host.canPasteIntoTerminal(
+                        source: .contextMenu,
+                        target: .contextPane(pane.paneID)
+                    ),
+                    canOpenTerminalSearch: host.canOpenTerminalSearch(
+                        source: .contextMenu,
+                        target: .contextPane(pane.paneID)
+                    ),
                     runtimeRegistry: host.terminalRuntimeRegistry,
                     activationDelegate: host,
                     onShellAction: { actionID, target in
-                        host.performShellAction(actionID, target: target)
+                        host.performShellAction(actionID, target: target, source: .terminalHost)
                     },
                     onCommandInput: {
                         host.requestCommandInput()
@@ -488,6 +500,24 @@ private struct ShellPaneTreeLayoutView: View {
                     onMovePane: { placement in
                         host.performShellAction(
                             paneMoveActionID(for: placement),
+                            target: .contextPane(pane.paneID)
+                        )
+                    },
+                    onCopyTerminalSelection: {
+                        host.copyTerminalSelection(
+                            source: .contextMenu,
+                            target: .contextPane(pane.paneID)
+                        )
+                    },
+                    onPasteIntoTerminal: {
+                        host.pasteIntoTerminalFromPasteboard(
+                            source: .contextMenu,
+                            target: .contextPane(pane.paneID)
+                        )
+                    },
+                    onOpenTerminalSearch: {
+                        host.openTerminalSearch(
+                            source: .contextMenu,
                             target: .contextPane(pane.paneID)
                         )
                     },
@@ -685,12 +715,18 @@ private struct ShellTerminalLeafView: View {
     let isZoomed: Bool
     let canZoom: Bool
     let canMovePane: (ShellPaneSplitDirection) -> Bool
+    let canCopyTerminalSelection: Bool
+    let canPasteIntoTerminal: Bool
+    let canOpenTerminalSearch: Bool
     let runtimeRegistry: TerminalRuntimeRegistry
     let activationDelegate: TerminalHostActivationDelegate?
     let onShellAction: (ShellActionID, ShellActionTarget) -> Void
     let onCommandInput: () -> Void
     let onToggleZoom: () -> Void
     let onMovePane: (ShellPaneSplitDirection) -> Void
+    let onCopyTerminalSelection: () -> Void
+    let onPasteIntoTerminal: () -> Void
+    let onOpenTerminalSearch: () -> Void
     let onClosePane: () -> Void
     let onRuntimeUpdate: (TerminalHostRuntimeSnapshot) -> Void
     let onMetadataUpdate: (TerminalPaneMetadataSnapshot) -> Void
@@ -704,11 +740,17 @@ private struct ShellTerminalLeafView: View {
                 isZoomed: isZoomed,
                 canZoom: canZoom,
                 canMovePane: canMovePane,
+                canCopyTerminalSelection: canCopyTerminalSelection,
+                canPasteIntoTerminal: canPasteIntoTerminal,
+                canOpenTerminalSearch: canOpenTerminalSearch,
                 onFocusPane: {
                     activationDelegate?.terminalHostDidRequestActivation(paneID: pane.paneID)
                 },
                 onToggleZoom: onToggleZoom,
                 onMovePane: onMovePane,
+                onCopyTerminalSelection: onCopyTerminalSelection,
+                onPasteIntoTerminal: onPasteIntoTerminal,
+                onOpenTerminalSearch: onOpenTerminalSearch,
                 onClosePane: onClosePane
             )
 
@@ -821,9 +863,15 @@ private struct ShellPaneTitleBarView: View {
     let isZoomed: Bool
     let canZoom: Bool
     let canMovePane: (ShellPaneSplitDirection) -> Bool
+    let canCopyTerminalSelection: Bool
+    let canPasteIntoTerminal: Bool
+    let canOpenTerminalSearch: Bool
     let onFocusPane: () -> Void
     let onToggleZoom: () -> Void
     let onMovePane: (ShellPaneSplitDirection) -> Void
+    let onCopyTerminalSelection: () -> Void
+    let onPasteIntoTerminal: () -> Void
+    let onOpenTerminalSearch: () -> Void
     let onClosePane: () -> Void
     @State private var activityFreshnessNow = Date()
 
@@ -860,6 +908,23 @@ private struct ShellPaneTitleBarView: View {
                 onMovePane(.down)
             }
             .disabled(!canMovePane(.down))
+
+            Divider()
+
+            Button("Copy") {
+                onCopyTerminalSelection()
+            }
+            .disabled(!canCopyTerminalSelection)
+
+            Button("Paste") {
+                onPasteIntoTerminal()
+            }
+            .disabled(!canPasteIntoTerminal)
+
+            Button("Find") {
+                onOpenTerminalSearch()
+            }
+            .disabled(!canOpenTerminalSearch)
         }
         .task(id: activityFreshnessRefreshID) {
             await scheduleActivityFreshnessRefresh()

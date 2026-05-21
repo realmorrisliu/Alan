@@ -139,6 +139,57 @@ final class TerminalRuntimeRegistry: ObservableObject {
         return runtimeService.sendText(to: paneID, text: text)
     }
 
+    func terminalCommandRuntimeState(for paneID: String) -> ShellTerminalCommandRuntimeState {
+        if let hostView = hostViewsByPaneID[paneID] {
+            return hostView.terminalCommandRuntimeState
+        }
+
+        let surfaceHandle = runtimeService.existingSurfaceHandle(for: paneID)
+        let selectionEngine = surfaceHandle as? AlanTerminalSelectionEngine
+        let searchEngine = surfaceHandle as? AlanTerminalSearchEngine
+        let snapshot = snapshotsByPaneID[paneID]
+        return ShellTerminalCommandRuntimeState(
+            paneID: paneID,
+            hasSelection: selectionEngine?.hasSelection() ?? false,
+            inputReady: surfaceHandle?.isSurfaceReady ?? snapshot?.surfaceState.inputReady ?? false,
+            searchAvailable: searchEngine != nil,
+            hasReliableSemanticCommands: snapshot?.surfaceState.semanticCommands.hasReliableCommandBoundaries ?? false
+        )
+    }
+
+    @discardableResult
+    func copySelection(for paneID: String) -> Bool {
+        if let hostView = hostViewsByPaneID[paneID] {
+            return hostView.copySelection()
+        }
+        return copySelection(
+            for: paneID,
+            to: AlanTerminalSystemPasteboardWriter(pasteboard: .general)
+        )
+    }
+
+    @discardableResult
+    func copySelection(for paneID: String, to writer: AlanTerminalPasteboardWriting) -> Bool {
+        if let hostView = hostViewsByPaneID[paneID] {
+            return hostView.copySelection(to: writer)
+        }
+        guard let selectionEngine = runtimeService.existingSurfaceHandle(for: paneID) as? AlanTerminalSelectionEngine,
+              let selectedText = selectionEngine.readSelectionText(),
+              !selectedText.isEmpty
+        else {
+            return false
+        }
+        return writer.writeString(selectedText)
+    }
+
+    @discardableResult
+    func pasteText(_ text: String, to paneID: String) -> TerminalRuntimeDeliveryResult {
+        if let hostView = hostViewsByPaneID[paneID] {
+            return hostView.pasteText(text)
+        }
+        return sendText(to: paneID, text: text)
+    }
+
     @discardableResult
     func beginFindInteraction(for paneID: String) -> Bool {
         hostViewsByPaneID[paneID]?.beginFindInteraction() ?? false

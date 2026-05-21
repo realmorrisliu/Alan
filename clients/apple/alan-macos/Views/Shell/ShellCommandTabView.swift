@@ -26,6 +26,9 @@ private enum ShellCommandInputAction: CaseIterable {
     case quickTerminalFocus
     case quickTerminalClose
     case jumpToAttention
+    case copyTerminalSelection
+    case pasteIntoTerminal
+    case searchTerminal
     case previousPrompt
     case nextPrompt
     case copyLastCommandOutput
@@ -81,6 +84,12 @@ private enum ShellCommandInputAction: CaseIterable {
             return ["close quick terminal"]
         case .jumpToAttention:
             return ["jump to attention", "focus attention", "attention"]
+        case .copyTerminalSelection:
+            return ["copy", "copy selection", "copy terminal selection"]
+        case .pasteIntoTerminal:
+            return ["paste", "paste into terminal"]
+        case .searchTerminal:
+            return ["find", "search", "terminal search", "find in terminal"]
         case .previousPrompt:
             return ["previous prompt", "jump previous prompt", "go previous prompt"]
         case .nextPrompt:
@@ -153,6 +162,9 @@ struct ShellCommandTabView: View {
         }
         .onChange(of: isActive) { _, active in
             updateActiveState(active)
+        }
+        .onDisappear {
+            host.setCommandInputActive(false)
         }
         .onExitCommand {
             dismissAndRestoreFocus()
@@ -283,6 +295,12 @@ struct ShellCommandTabView: View {
             if let firstAttention = host.attentionItems.first {
                 host.focusAttentionItem(firstAttention)
             }
+        case .copyTerminalSelection:
+            host.copyTerminalSelection(source: .commandUI)
+        case .pasteIntoTerminal:
+            host.pasteIntoTerminalFromPasteboard(source: .commandUI)
+        case .searchTerminal:
+            host.openTerminalSearch(source: .commandUI)
         case .previousPrompt:
             host.jumpToPreviousPrompt()
         case .nextPrompt:
@@ -296,6 +314,7 @@ struct ShellCommandTabView: View {
     }
 
     private func updateActiveState(_ active: Bool) {
+        host.setCommandInputActive(active)
         if active {
             query = ""
             unresolvedMessage = nil

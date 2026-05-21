@@ -75,6 +75,106 @@ enum ShellActionSurface: String, Equatable {
     case keyboard
 }
 
+enum ShellTerminalCommand: String, Equatable {
+    case copySelection = "copy_selection"
+    case paste
+    case search
+    case copyLastCommandOutput = "copy_last_command_output"
+    case searchLastCommandOutput = "search_last_command_output"
+}
+
+enum ShellTerminalCommandSource: String, Equatable {
+    case menuBar = "menu_bar"
+    case keyboardShortcut = "keyboard_shortcut"
+    case commandUI = "command_ui"
+    case contextMenu = "context_menu"
+    case terminalHost = "terminal_host"
+}
+
+struct ShellTerminalCommandRuntimeState: Equatable {
+    let paneID: String
+    let hasSelection: Bool
+    let inputReady: Bool
+    let searchAvailable: Bool
+    let hasReliableSemanticCommands: Bool
+}
+
+struct ShellTerminalCommandTarget: Equatable {
+    let paneID: String
+    let tabID: String
+    let spaceID: String
+    let mountedContentID: String
+}
+
+enum ShellTerminalCommandResolution: Equatable {
+    case terminal(ShellTerminalCommandTarget)
+    case shell(reason: String)
+
+    var terminalTarget: ShellTerminalCommandTarget? {
+        guard case .terminal(let target) = self else { return nil }
+        return target
+    }
+}
+
+enum ShellCommandTargetResolver {
+    static func resolveTerminalCommand(
+        _ command: ShellTerminalCommand,
+        source: ShellTerminalCommandSource,
+        target: ShellActionTarget,
+        state: ShellStateSnapshot,
+        commandInputActive: Bool,
+        runtimeState: (String) -> ShellTerminalCommandRuntimeState
+    ) -> ShellTerminalCommandResolution {
+        if commandInputActive,
+           source == .menuBar || source == .keyboardShortcut
+        {
+            return .shell(reason: "shell_text_input_active")
+        }
+
+        let paneID: String?
+        if case .contextPane(let contextPaneID) = target {
+            paneID = contextPaneID
+        } else {
+            paneID = state.focusedPaneID
+        }
+
+        guard let paneID,
+              let pane = state.pane(paneID: paneID)
+        else {
+            return .shell(reason: "terminal_pane_unavailable")
+        }
+
+        let runtime = runtimeState(paneID)
+        switch command {
+        case .copySelection:
+            guard runtime.hasSelection else {
+                return .shell(reason: "terminal_selection_unavailable")
+            }
+        case .paste:
+            guard runtime.inputReady else {
+                return .shell(reason: "terminal_input_unavailable")
+            }
+        case .search:
+            guard runtime.searchAvailable else {
+                return .shell(reason: "terminal_search_unavailable")
+            }
+        case .copyLastCommandOutput, .searchLastCommandOutput:
+            guard runtime.hasReliableSemanticCommands else {
+                return .shell(reason: "terminal_semantic_commands_unavailable")
+            }
+        }
+
+        return .terminal(
+            ShellTerminalCommandTarget(
+                paneID: pane.paneID,
+                tabID: pane.tabID,
+                spaceID: pane.spaceID,
+                mountedContentID: pane.paneID
+            )
+        )
+    }
+}
+
 enum ShellActionModifier: String, CaseIterable, Hashable, Comparable {
     case command
     case option
