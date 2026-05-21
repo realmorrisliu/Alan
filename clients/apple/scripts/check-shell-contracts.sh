@@ -98,6 +98,25 @@ reject_keydown_programmatic_text_delivery() {
     fi
 }
 
+require_quick_terminal_peak_nonactivating_panel() {
+    local file="clients/apple/alan-macos/App/AlanMacPrimaryShellOwner.swift"
+
+    reject_pattern \
+        "$file" \
+        "NSApp\\.activate\\(ignoringOtherApps:" \
+        "quick terminal Peak must not activate the whole app when surfacing its detached panel"
+
+    require_pattern \
+        "$file" \
+        "\\.nonactivatingPanel" \
+        "quick terminal Peak panel must be non-activating so it can surface without raising Alan workspace UI"
+
+    require_pattern \
+        "$file" \
+        "orderFrontRegardless\\(\\)" \
+        "quick terminal Peak panel must order itself forward without depending on app activation"
+}
+
 require_title_bar_full_width_hit_area() {
     local file="$REPO_ROOT/clients/apple/alan-macos/TerminalPaneView.swift"
 
@@ -294,6 +313,7 @@ require_semantic_terminal_actions_contract() {
 reject_active_shell_radius_drift
 reject_ghosttykit_umbrella_modulemap
 reject_keydown_programmatic_text_delivery
+require_quick_terminal_peak_nonactivating_panel
 require_title_bar_full_width_hit_area
 require_pane_title_bar_trailing_close
 require_active_complex_split_count_contrast

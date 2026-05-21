@@ -10,14 +10,14 @@
 
 ## 2. Peak Presentation
 
-- [ ] 2.1 Present the quick terminal through a detached native macOS Peak window
+- [x] 2.1 Present the quick terminal through a detached native macOS Peak window
   that does not depend on or raise Alan's main window.
-- [ ] 2.2 Keep the Peak composition terminal-first: restrained native material
+- [x] 2.2 Keep the Peak composition terminal-first: restrained native material
   chrome, no duplicate sidebar, no inspector, no dashboard header, and no
   floating-card layout.
-- [ ] 2.3 Preserve terminal input ownership so `Esc` routes to the terminal
+- [x] 2.3 Preserve terminal input ownership so `Esc` routes to the terminal
   unless an Alan-owned nested quick-terminal menu or picker is open.
-- [ ] 2.4 Avoid focus-loss auto-hide; hide is explicit through toggle or command.
+- [x] 2.4 Avoid focus-loss auto-hide; hide is explicit through toggle or command.
 
 ## 3. Runtime Lifecycle And Workspace Promotion
 
@@ -34,15 +34,16 @@
 
 ## 4. Verification
 
-- [ ] 4.1 Add focus, display/Space placement, hide/show, close, promote, and
-  hidden-activity notification tests.
-- [ ] 4.2 Add focused checks for `Esc` terminal routing and focus-loss behavior.
-- [x] 4.3 Run relevant shell model, window, command-routing, and terminal runtime
+- [x] 4.1 Add focus, display/Space placement, hide/show, close, and promote
   tests.
-- [x] 4.4 Run the relevant macOS app build command or document any local blocker.
-- [x] 4.5 Run `openspec validate add-quick-terminal-peak --type change --strict --json`.
-- [x] 4.6 Run `openspec validate --all --strict --json`.
-- [x] 4.7 Run `git diff --check`.
+- [ ] 4.2 Add hidden-activity notification tests.
+- [x] 4.3 Add focused checks for `Esc` terminal routing and focus-loss behavior.
+- [x] 4.4 Run relevant shell model, window, command-routing, and terminal runtime
+  tests.
+- [x] 4.5 Run the relevant macOS app build command or document any local blocker.
+- [x] 4.6 Run `openspec validate add-quick-terminal-peak --type change --strict --json`.
+- [x] 4.7 Run `openspec validate --all --strict --json`.
+- [x] 4.8 Run `git diff --check`.
 
 ## 5. Archive Readiness
 
