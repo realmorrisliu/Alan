@@ -67,8 +67,7 @@ private final class ShellQuickTerminalPeakPanelWindow: NSObject, ShellQuickTermi
 
         panel.setFrame(placement.frame, display: true)
         panel.collectionBehavior = collectionBehavior(for: placement)
-        NSApp.activate(ignoringOtherApps: true)
-        panel.makeKeyAndOrderFront(nil)
+        orderFrontQuickTerminal(panel)
     }
 
     func dismissQuickTerminalPeak(reason: ShellQuickTerminalPeakDismissalReason) {
@@ -80,7 +79,10 @@ private final class ShellQuickTerminalPeakPanelWindow: NSObject, ShellQuickTermi
     }
 
     func focusTerminal(paneID: String) {
-        panel?.makeKeyAndOrderFront(nil)
+        guard let panel else {
+            return
+        }
+        orderFrontQuickTerminal(panel)
     }
 
     func windowShouldClose(_ sender: NSWindow) -> Bool {
@@ -99,7 +101,7 @@ private final class ShellQuickTerminalPeakPanelWindow: NSObject, ShellQuickTermi
 
         let panel = NSPanel(
             contentRect: CGRect(x: 0, y: 0, width: 840, height: 360),
-            styleMask: [.titled, .closable, .resizable, .fullSizeContentView],
+            styleMask: [.titled, .closable, .resizable, .fullSizeContentView, .nonactivatingPanel],
             backing: .buffered,
             defer: false
         )
@@ -126,6 +128,11 @@ private final class ShellQuickTerminalPeakPanelWindow: NSObject, ShellQuickTermi
         panel.standardWindowButton(.zoomButton)?.isHidden = true
         self.panel = panel
         return panel
+    }
+
+    private func orderFrontQuickTerminal(_ panel: NSPanel) {
+        panel.orderFrontRegardless()
+        panel.makeKey()
     }
 
     private func collectionBehavior(
