@@ -33,6 +33,163 @@ enum ShellPaneLiftResult {
     case lastPane
 }
 
+enum ShellQuickTerminalPeakEscapeBehavior: Equatable {
+    case terminalInput
+}
+
+struct ShellQuickTerminalPeakInteractionPolicy: Equatable {
+    let escapeKeyBehavior: ShellQuickTerminalPeakEscapeBehavior
+    let hidesOnFocusLoss: Bool
+    let usesMainWindowParenting: Bool
+
+    static let terminalFirst = ShellQuickTerminalPeakInteractionPolicy(
+        escapeKeyBehavior: .terminalInput,
+        hidesOnFocusLoss: false,
+        usesMainWindowParenting: false
+    )
+}
+
+struct ShellQuickTerminalPeakPlacement: Equatable {
+    let frame: CGRect
+    let followsActiveSpace: Bool
+    let joinsAllSpaces: Bool
+    let requiresMainWindow: Bool
+
+    static func defaultPlacement(in visibleFrame: CGRect) -> ShellQuickTerminalPeakPlacement {
+        ShellQuickTerminalPeakPlacement(
+            frame: defaultFrame(in: visibleFrame),
+            followsActiveSpace: true,
+            joinsAllSpaces: true,
+            requiresMainWindow: false
+        )
+    }
+
+    static func activeVisibleFrame() -> CGRect {
+        let mouseLocation = NSEvent.mouseLocation
+        let activeScreen = NSScreen.screens.first { screen in
+            screen.frame.contains(mouseLocation)
+        }
+        return activeScreen?.visibleFrame
+            ?? NSScreen.main?.visibleFrame
+            ?? CGRect(x: 0, y: 0, width: 960, height: 600)
+    }
+
+    private static func defaultFrame(in visibleFrame: CGRect) -> CGRect {
+        let horizontalInset = min(max(visibleFrame.width * 0.05, 8), 48)
+        let verticalInset = min(max(visibleFrame.height * 0.06, 8), 52)
+        let availableWidth = max(160, visibleFrame.width - horizontalInset * 2)
+        let availableHeight = max(180, visibleFrame.height - verticalInset * 2)
+        let targetWidth = min(max(visibleFrame.width * 0.68, 720), min(980, availableWidth))
+        let targetHeight = min(max(visibleFrame.height * 0.38, 320), min(520, availableHeight))
+        let rawOriginY = visibleFrame.midY - targetHeight / 2 + visibleFrame.height * 0.08
+        let originX = visibleFrame.midX - targetWidth / 2
+        let originY = min(
+            max(rawOriginY, visibleFrame.minY + verticalInset),
+            visibleFrame.maxY - verticalInset - targetHeight
+        )
+        return CGRect(
+            x: originX,
+            y: originY,
+            width: targetWidth,
+            height: targetHeight
+        ).integral
+    }
+}
+
+enum ShellQuickTerminalPeakDismissalReason: Equatable {
+    case hidden
+    case removed
+}
+
+enum ShellQuickTerminalPeakModel {
+    static func tab(for pane: ShellPane) -> ShellTab {
+        ShellTab(
+            tabID: ShellQuickTerminalSlot.globalTabID,
+            kind: .terminal,
+            title: pane.viewport?.title ?? "Quick Terminal",
+            paneTree: ShellPaneTreeNode(
+                nodeID: "node_\(pane.paneID)",
+                kind: .pane,
+                direction: nil,
+                paneID: pane.paneID,
+                children: nil
+            )
+        )
+    }
+}
+
+@MainActor
+protocol ShellQuickTerminalPeakWindowing: AnyObject {
+    var onDismissRequest: (() -> Void)? { get set }
+    var isVisible: Bool { get }
+
+    func presentQuickTerminal(
+        host: ShellHostController,
+        pane: ShellPane,
+        tab: ShellTab,
+        placement: ShellQuickTerminalPeakPlacement
+    )
+    func dismissQuickTerminalPeak(reason: ShellQuickTerminalPeakDismissalReason)
+    func focusTerminal(paneID: String)
+}
+
+@MainActor
+final class ShellQuickTerminalPeakPresenter {
+    private let host: ShellHostController
+    private let window: ShellQuickTerminalPeakWindowing
+    private let visibleFrameProvider: () -> CGRect
+    private var lastPresentedPaneID: String?
+
+    init(
+        host: ShellHostController,
+        window: ShellQuickTerminalPeakWindowing,
+        visibleFrameProvider: @escaping () -> CGRect = ShellQuickTerminalPeakPlacement.activeVisibleFrame
+    ) {
+        self.host = host
+        self.window = window
+        self.visibleFrameProvider = visibleFrameProvider
+        self.window.onDismissRequest = { [weak host] in
+            _ = host?.hideQuickTerminal()
+        }
+    }
+
+    func synchronize() {
+        guard let slot = host.shellState.quickTerminal,
+              let pane = host.quickTerminalPane
+        else {
+            if window.isVisible || lastPresentedPaneID != nil {
+                window.dismissQuickTerminalPeak(reason: .removed)
+            }
+            lastPresentedPaneID = nil
+            return
+        }
+
+        switch slot.presentation {
+        case .visible:
+            let tab = ShellQuickTerminalPeakModel.tab(for: pane)
+            let placement = ShellQuickTerminalPeakPlacement.defaultPlacement(in: visibleFrameProvider())
+            window.presentQuickTerminal(
+                host: host,
+                pane: pane,
+                tab: tab,
+                placement: placement
+            )
+            window.focusTerminal(paneID: pane.paneID)
+            host.terminalRuntimeRegistry.requestFocus(for: pane.paneID)
+            lastPresentedPaneID = pane.paneID
+        case .hidden:
+            if window.isVisible || lastPresentedPaneID != nil {
+                window.dismissQuickTerminalPeak(reason: .hidden)
+            }
+            lastPresentedPaneID = pane.paneID
+        }
+    }
+
+    func windowDidResignKey() {
+        // Terminal-first policy: focus loss is informational and never hides the Peak.
+    }
+}
+
 @MainActor
 struct ShellWindowContext {
     let windowID: String

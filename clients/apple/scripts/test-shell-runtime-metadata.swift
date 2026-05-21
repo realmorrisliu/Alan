@@ -1,3 +1,4 @@
+import CoreGraphics
 import Darwin
 import Foundation
 
@@ -28,6 +29,10 @@ private enum ShellRuntimeMetadataTests {
         verifiesQuickTerminalShowCreatesAndReusesGlobalPane()
         verifiesQuickTerminalActionsAndControlCommandsShareControllerPath()
         verifiesQuickTerminalPromotionMovesExistingPaneIntoSpace()
+        verifiesQuickTerminalPeakPresenterShowsDetachedTerminalWindow()
+        verifiesQuickTerminalPeakPresenterPreservesRuntimeOnExplicitHide()
+        verifiesQuickTerminalPeakPlacementFitsActiveDisplay()
+        verifiesQuickTerminalPeakEscapePolicyBelongsToTerminal()
         verifiesTerminalActivityProjectsByPaneID()
         verifiesProgressActivityFactoryUsesSourceFirstDisplay()
         verifiesCommandCompletionActivityFactory()
@@ -649,6 +654,85 @@ private enum ShellRuntimeMetadataTests {
             controller.shellState.panes.filter { $0.paneID == ShellQuickTerminalSlot.globalPaneID }.count == 1,
             "promote must move the pane instead of copying the process"
         )
+    }
+
+    private static func verifiesQuickTerminalPeakPresenterShowsDetachedTerminalWindow() {
+        let controller = makeController()
+        let window = FakeQuickTerminalPeakWindow()
+        let presenter = ShellQuickTerminalPeakPresenter(
+            host: controller,
+            window: window,
+            visibleFrameProvider: {
+                CGRect(x: 80, y: 120, width: 1_440, height: 900)
+            }
+        )
+        let selectedSpaceBefore = controller.selectedSpaceID
+        let selectedTabBefore = controller.selectedTabID
+
+        let paneID = controller.showQuickTerminal()
+        presenter.synchronize()
+
+        expect(paneID == ShellQuickTerminalSlot.globalPaneID, "peak presenter setup must show the global quick pane")
+        expect(window.presentedPaneIDs == [ShellQuickTerminalSlot.globalPaneID], "peak presenter must present the quick pane")
+        expect(window.lastTabID == ShellQuickTerminalSlot.globalTabID, "peak presenter must wrap the quick pane in the quick tab")
+        expect(window.lastPlacement?.requiresMainWindow == false, "peak window must not depend on the main window")
+        expect(window.lastPlacement?.followsActiveSpace == true, "peak window must follow the active macOS Space")
+        expect(window.lastPlacement?.joinsAllSpaces == true, "peak window must be able to appear across macOS Spaces")
+        expect(window.focusedPaneIDs == [ShellQuickTerminalSlot.globalPaneID], "peak presenter must focus terminal input after show")
+        expect(controller.selectedSpaceID == selectedSpaceBefore, "peak presenter must not move the selected Alan space")
+        expect(controller.selectedTabID == selectedTabBefore, "peak presenter must not move the selected Alan tab")
+    }
+
+    private static func verifiesQuickTerminalPeakPresenterPreservesRuntimeOnExplicitHide() {
+        let controller = makeController()
+        let window = FakeQuickTerminalPeakWindow()
+        let presenter = ShellQuickTerminalPeakPresenter(host: controller, window: window)
+
+        _ = controller.showQuickTerminal()
+        presenter.synchronize()
+        presenter.windowDidResignKey()
+
+        expect(
+            controller.quickTerminalPresentation == .visible,
+            "peak focus loss must not hide the quick terminal"
+        )
+        expect(window.dismissalReasons.isEmpty, "peak focus loss must not dismiss the window")
+
+        expect(controller.hideQuickTerminal(), "explicit quick-terminal hide must apply")
+        presenter.synchronize()
+
+        expect(
+            window.dismissalReasons.last == .hidden,
+            "explicit hide must hide the peak without removing the runtime slot"
+        )
+        expect(controller.quickTerminalPane != nil, "explicit hide must preserve the quick-terminal pane")
+
+        expect(controller.closeQuickTerminal(), "explicit quick-terminal close must apply")
+        presenter.synchronize()
+
+        expect(
+            window.dismissalReasons.last == .removed,
+            "explicit close must release the peak presentation"
+        )
+        expect(controller.quickTerminalPane == nil, "explicit close must remove the quick-terminal slot")
+    }
+
+    private static func verifiesQuickTerminalPeakPlacementFitsActiveDisplay() {
+        let visibleFrame = CGRect(x: 20, y: 40, width: 1_280, height: 760)
+        let placement = ShellQuickTerminalPeakPlacement.defaultPlacement(in: visibleFrame)
+
+        expect(visibleFrame.contains(placement.frame), "peak frame must fit inside the active display")
+        expect(placement.frame.width >= 720, "normal displays should get a usable terminal width")
+        expect(placement.frame.height >= 320, "normal displays should get a usable terminal height")
+        expect(placement.requiresMainWindow == false, "peak placement must be detached from the main window")
+    }
+
+    private static func verifiesQuickTerminalPeakEscapePolicyBelongsToTerminal() {
+        let policy = ShellQuickTerminalPeakInteractionPolicy.terminalFirst
+
+        expect(policy.escapeKeyBehavior == .terminalInput, "Esc must remain terminal input by default")
+        expect(policy.hidesOnFocusLoss == false, "focus loss must not auto-hide the peak")
+        expect(policy.usesMainWindowParenting == false, "peak must not be parented to the main window")
     }
 
     private static func verifiesTerminalActivityProjectsByPaneID() {
@@ -2991,6 +3075,38 @@ private enum ShellRuntimeMetadataTests {
 
     private static func activeTask(in url: URL) -> ShellTabActiveTaskState? {
         decodeManifest(at: url)?.spaces.first?.tabs.first?.activeTask
+    }
+
+    @MainActor
+    private final class FakeQuickTerminalPeakWindow: ShellQuickTerminalPeakWindowing {
+        var onDismissRequest: (() -> Void)?
+        private(set) var presentedPaneIDs: [String] = []
+        private(set) var focusedPaneIDs: [String] = []
+        private(set) var dismissalReasons: [ShellQuickTerminalPeakDismissalReason] = []
+        private(set) var lastPlacement: ShellQuickTerminalPeakPlacement?
+        private(set) var lastTabID: String?
+        private(set) var isVisible = false
+
+        func presentQuickTerminal(
+            host: ShellHostController,
+            pane: ShellPane,
+            tab: ShellTab,
+            placement: ShellQuickTerminalPeakPlacement
+        ) {
+            isVisible = true
+            presentedPaneIDs.append(pane.paneID)
+            lastTabID = tab.tabID
+            lastPlacement = placement
+        }
+
+        func dismissQuickTerminalPeak(reason: ShellQuickTerminalPeakDismissalReason) {
+            isVisible = false
+            dismissalReasons.append(reason)
+        }
+
+        func focusTerminal(paneID: String) {
+            focusedPaneIDs.append(paneID)
+        }
     }
 
     private static func decodeControlCommand(_ json: String) -> AlanShellControlCommand {

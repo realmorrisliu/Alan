@@ -7,19 +7,22 @@ struct TerminalPaneView: View {
     let spaceID: String?
     let selectedPaneID: String?
     let terminalSurfaceInsets: EdgeInsets
+    let onClosePane: ((ShellPane) -> Void)?
 
     init(
         host: ShellHostController,
         tab: ShellTab? = nil,
         spaceID: String? = nil,
         selectedPaneID: String? = nil,
-        terminalSurfaceInsets: EdgeInsets
+        terminalSurfaceInsets: EdgeInsets,
+        onClosePane: ((ShellPane) -> Void)? = nil
     ) {
         self.host = host
         self.tab = tab
         self.spaceID = spaceID
         self.selectedPaneID = selectedPaneID
         self.terminalSurfaceInsets = terminalSurfaceInsets
+        self.onClosePane = onClosePane
     }
 
     var body: some View {
@@ -34,7 +37,8 @@ struct TerminalPaneView: View {
                 ShellPaneTreeLayoutView(
                     node: paneTree,
                     host: host,
-                    selectedPaneID: displaySelectedPaneID
+                    selectedPaneID: displaySelectedPaneID,
+                    onClosePane: onClosePane
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             } else {
@@ -352,6 +356,31 @@ struct TerminalPaneView: View {
     }
 }
 
+struct ShellQuickTerminalPeakView: View {
+    @ObservedObject var host: ShellHostController
+
+    var body: some View {
+        ZStack {
+            ShellMaterialBackgroundView(.windowBackdrop)
+                .ignoresSafeArea()
+
+            if let pane = host.quickTerminalPane {
+                TerminalPaneView(
+                    host: host,
+                    tab: ShellQuickTerminalPeakModel.tab(for: pane),
+                    spaceID: ShellQuickTerminalSlot.globalSpaceID,
+                    selectedPaneID: pane.paneID,
+                    terminalSurfaceInsets: EdgeInsets(top: 10, leading: 10, bottom: 10, trailing: 10),
+                    onClosePane: { _ in
+                        _ = host.closeQuickTerminal()
+                    }
+                )
+            }
+        }
+        .frame(minWidth: 520, minHeight: 280)
+    }
+}
+
 private struct ShellTerminalSurfaceFrame: ViewModifier {
     @Environment(\.colorScheme) private var colorScheme
     private let shape = RoundedRectangle(cornerRadius: ShellRadii.terminalSurface, style: .continuous)
@@ -409,6 +438,7 @@ private struct ShellPaneTreeLayoutView: View {
     let node: ShellPaneTreeNode
     @ObservedObject var host: ShellHostController
     let selectedPaneID: String?
+    let onClosePane: ((ShellPane) -> Void)?
 
     var body: some View {
         switch node.kind {
@@ -428,7 +458,11 @@ private struct ShellPaneTreeLayoutView: View {
                         host.requestCommandInput()
                     },
                     onClosePane: {
-                        host.closePaneByID(pane.paneID)
+                        if let onClosePane {
+                            onClosePane(pane)
+                        } else {
+                            host.closePaneByID(pane.paneID)
+                        }
                     },
                     onRuntimeUpdate: host.updateTerminalRuntime,
                     onMetadataUpdate: { metadata in
@@ -437,7 +471,12 @@ private struct ShellPaneTreeLayoutView: View {
                 )
             }
         case .split:
-            ShellSplitLayoutView(node: node, host: host, selectedPaneID: selectedPaneID)
+            ShellSplitLayoutView(
+                node: node,
+                host: host,
+                selectedPaneID: selectedPaneID,
+                onClosePane: onClosePane
+            )
         }
     }
 }
@@ -446,6 +485,7 @@ private struct ShellSplitLayoutView: View {
     let node: ShellPaneTreeNode
     @ObservedObject var host: ShellHostController
     let selectedPaneID: String?
+    let onClosePane: ((ShellPane) -> Void)?
     @State private var dragStartRatio: Double?
     @State private var dragPreviewRatio: Double?
 
@@ -461,7 +501,8 @@ private struct ShellSplitLayoutView: View {
                         ShellPaneTreeLayoutView(
                             node: children[0],
                             host: host,
-                            selectedPaneID: selectedPaneID
+                            selectedPaneID: selectedPaneID,
+                            onClosePane: onClosePane
                         )
                             .frame(width: primaryLength(total: proxy.size.width))
                         ShellSplitDividerView(direction: .vertical)
@@ -469,7 +510,8 @@ private struct ShellSplitLayoutView: View {
                         ShellPaneTreeLayoutView(
                             node: children[1],
                             host: host,
-                            selectedPaneID: selectedPaneID
+                            selectedPaneID: selectedPaneID,
+                            onClosePane: onClosePane
                         )
                             .frame(width: secondaryLength(total: proxy.size.width))
                     }
@@ -478,7 +520,8 @@ private struct ShellSplitLayoutView: View {
                         ShellPaneTreeLayoutView(
                             node: children[0],
                             host: host,
-                            selectedPaneID: selectedPaneID
+                            selectedPaneID: selectedPaneID,
+                            onClosePane: onClosePane
                         )
                             .frame(height: primaryLength(total: proxy.size.height))
                         ShellSplitDividerView(direction: .horizontal)
@@ -486,7 +529,8 @@ private struct ShellSplitLayoutView: View {
                         ShellPaneTreeLayoutView(
                             node: children[1],
                             host: host,
-                            selectedPaneID: selectedPaneID
+                            selectedPaneID: selectedPaneID,
+                            onClosePane: onClosePane
                         )
                             .frame(height: secondaryLength(total: proxy.size.height))
                     }
@@ -512,7 +556,8 @@ private struct ShellSplitLayoutView: View {
             ShellPaneTreeLayoutView(
                 node: child,
                 host: host,
-                selectedPaneID: selectedPaneID
+                selectedPaneID: selectedPaneID,
+                onClosePane: onClosePane
             )
         }
     }
