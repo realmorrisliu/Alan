@@ -166,16 +166,19 @@ final class ShellQuickTerminalPeakPresenter {
 
         switch slot.presentation {
         case .visible:
-            let tab = ShellQuickTerminalPeakModel.tab(for: pane)
-            let placement = ShellQuickTerminalPeakPlacement.defaultPlacement(in: visibleFrameProvider())
-            window.presentQuickTerminal(
-                host: host,
-                pane: pane,
-                tab: tab,
-                placement: placement
-            )
-            window.focusTerminal(paneID: pane.paneID)
-            host.terminalRuntimeRegistry.requestFocus(for: pane.paneID)
+            let shouldActivate = !window.isVisible || lastPresentedPaneID != pane.paneID
+            if shouldActivate {
+                let tab = ShellQuickTerminalPeakModel.tab(for: pane)
+                let placement = ShellQuickTerminalPeakPlacement.defaultPlacement(in: visibleFrameProvider())
+                window.presentQuickTerminal(
+                    host: host,
+                    pane: pane,
+                    tab: tab,
+                    placement: placement
+                )
+                window.focusTerminal(paneID: pane.paneID)
+                host.terminalRuntimeRegistry.requestFocus(for: pane.paneID)
+            }
             lastPresentedPaneID = pane.paneID
         case .hidden:
             if window.isVisible || lastPresentedPaneID != nil {

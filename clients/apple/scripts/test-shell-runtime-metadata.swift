@@ -31,6 +31,7 @@ private enum ShellRuntimeMetadataTests {
         verifiesQuickTerminalPromotionMovesExistingPaneIntoSpace()
         verifiesQuickTerminalPeakPresenterShowsDetachedTerminalWindow()
         verifiesQuickTerminalPeakPresenterPreservesRuntimeOnExplicitHide()
+        verifiesQuickTerminalPeakPresenterDoesNotRefocusOnVisibleRefresh()
         verifiesQuickTerminalPeakPlacementFitsActiveDisplay()
         verifiesQuickTerminalPeakEscapePolicyBelongsToTerminal()
         verifiesTerminalActivityProjectsByPaneID()
@@ -715,6 +716,26 @@ private enum ShellRuntimeMetadataTests {
             "explicit close must release the peak presentation"
         )
         expect(controller.quickTerminalPane == nil, "explicit close must remove the quick-terminal slot")
+    }
+
+    private static func verifiesQuickTerminalPeakPresenterDoesNotRefocusOnVisibleRefresh() {
+        let controller = makeController()
+        let window = FakeQuickTerminalPeakWindow()
+        let presenter = ShellQuickTerminalPeakPresenter(host: controller, window: window)
+
+        _ = controller.showQuickTerminal()
+        presenter.synchronize()
+        controller.updateTerminalMetadata(metadata(title: "regular pane update", cwd: "/repo/app"), for: "pane_1")
+        presenter.synchronize()
+
+        expect(
+            window.presentedPaneIDs == [ShellQuickTerminalSlot.globalPaneID],
+            "visible state refresh must not bring the Peak window forward again"
+        )
+        expect(
+            window.focusedPaneIDs == [ShellQuickTerminalSlot.globalPaneID],
+            "visible state refresh must not repeatedly focus terminal input"
+        )
     }
 
     private static func verifiesQuickTerminalPeakPlacementFitsActiveDisplay() {
