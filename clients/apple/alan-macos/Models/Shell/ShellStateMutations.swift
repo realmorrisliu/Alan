@@ -315,7 +315,8 @@ extension ShellStateSnapshot {
             focusedTabID: focusedPane?.tabID,
             focusedPaneID: focusedPaneID,
             spaces: rebuildingAttention(in: remainingSpaces, panes: remainingPanes),
-            panes: remainingPanes
+            panes: remainingPanes,
+            quickTerminal: quickTerminal
         )
 
         return ShellStateMutationResult(
@@ -423,6 +424,188 @@ extension ShellStateSnapshot {
             reservedPaneIDs: reservedPaneIDs,
             defaultWorkingDirectory: defaultWorkingDirectory,
             now: now
+        )
+    }
+
+    func showingQuickTerminal(
+        workingDirectory: String?,
+        defaultWorkingDirectory: String = defaultShellWorkingDirectory(),
+        now: Date = .now
+    ) -> ShellStateMutationResult {
+        let paneID = quickTerminal?.paneID ?? ShellQuickTerminalSlot.globalPaneID
+        let pane = pane(paneID: paneID)
+        let resolvedWorkingDirectory =
+            pane?.cwd
+            ?? workingDirectory
+            ?? quickTerminal?.lastWorkingDirectory
+            ?? defaultWorkingDirectory
+        let nextPane = pane
+            ?? makeTerminalPane(
+                paneID: paneID,
+                tabID: ShellQuickTerminalSlot.globalTabID,
+                spaceID: ShellQuickTerminalSlot.globalSpaceID,
+                launchTarget: .shell,
+                workingDirectory: resolvedWorkingDirectory,
+                summary: "quick terminal scaffolded",
+                now: now
+            )
+        let nextPanes = pane == nil ? panes + [nextPane] : panes
+        let nextQuickTerminal = ShellQuickTerminalSlot(
+            paneID: paneID,
+            presentation: .visible,
+            lastWorkingDirectory: resolvedWorkingDirectory
+        )
+
+        return ShellStateMutationResult(
+            state: ShellStateSnapshot(
+                contractVersion: contractVersion,
+                windowID: windowID,
+                focusedSpaceID: focusedSpaceID,
+                focusedTabID: focusedTabID,
+                focusedPaneID: focusedPaneID,
+                spaces: spaces,
+                panes: nextPanes,
+                quickTerminal: nextQuickTerminal
+            ),
+            spaceID: focusedSpaceID,
+            tabID: focusedTabID,
+            paneID: paneID
+        )
+    }
+
+    func hidingQuickTerminal() throws -> ShellStateMutationResult {
+        guard let quickTerminal,
+              pane(paneID: quickTerminal.paneID) != nil
+        else {
+            throw ShellStateMutationError.paneNotFound
+        }
+
+        return ShellStateMutationResult(
+            state: ShellStateSnapshot(
+                contractVersion: contractVersion,
+                windowID: windowID,
+                focusedSpaceID: focusedSpaceID,
+                focusedTabID: focusedTabID,
+                focusedPaneID: focusedPaneID,
+                spaces: spaces,
+                panes: panes,
+                quickTerminal: ShellQuickTerminalSlot(
+                    paneID: quickTerminal.paneID,
+                    presentation: .hidden,
+                    lastWorkingDirectory: quickTerminal.lastWorkingDirectory
+                )
+            ),
+            spaceID: focusedSpaceID,
+            tabID: focusedTabID,
+            paneID: quickTerminal.paneID
+        )
+    }
+
+    func closingQuickTerminal() throws -> ShellStateMutationResult {
+        guard let quickTerminal,
+              pane(paneID: quickTerminal.paneID) != nil
+        else {
+            throw ShellStateMutationError.paneNotFound
+        }
+        let nextPanes = panes.filter { $0.paneID != quickTerminal.paneID }
+        let nextFocusedPaneID =
+            focusedPaneID == quickTerminal.paneID
+            ? nextPanes.first(where: { !$0.isQuickTerminalPane })?.paneID
+            : focusedPaneID
+
+        return ShellStateMutationResult(
+            state: ShellStateSnapshot(
+                contractVersion: contractVersion,
+                windowID: windowID,
+                focusedSpaceID: nextFocusedPaneID.flatMap { pane(paneID: $0)?.spaceID } ?? focusedSpaceID,
+                focusedTabID: nextFocusedPaneID.flatMap { pane(paneID: $0)?.tabID } ?? focusedTabID,
+                focusedPaneID: nextFocusedPaneID,
+                spaces: spaces,
+                panes: nextPanes,
+                quickTerminal: nil
+            ),
+            spaceID: focusedSpaceID,
+            tabID: focusedTabID,
+            paneID: nextFocusedPaneID
+        )
+    }
+
+    func promotingQuickTerminal(
+        to targetSpaceID: String,
+        now: Date = .now
+    ) throws -> ShellStateMutationResult {
+        guard let quickTerminal,
+              let quickPane = pane(paneID: quickTerminal.paneID)
+        else {
+            throw ShellStateMutationError.paneNotFound
+        }
+        guard let targetSpace = space(spaceID: targetSpaceID) else {
+            throw ShellStateMutationError.spaceNotFound
+        }
+
+        let newTabID = nextID(prefix: "tab", existing: spaces.flatMap { $0.tabs.map(\.tabID) })
+        let movedPaneNode = ShellPaneTreeNode(
+            nodeID: "node_\(quickPane.paneID)",
+            kind: .pane,
+            direction: nil,
+            paneID: quickPane.paneID,
+            children: nil
+        )
+        let newTab = ShellTab(
+            tabID: newTabID,
+            kind: .terminal,
+            title: quickPane.viewport?.title ?? "Quick Terminal",
+            paneTree: movedPaneNode
+        )
+        let nextSpaces = spaces.map { space in
+            guard space.spaceID == targetSpace.spaceID else { return space }
+            return ShellSpace(
+                spaceID: space.spaceID,
+                title: space.title,
+                attention: space.attention,
+                tabs: space.tabs + [newTab]
+            )
+        }
+
+        let formatter = ISO8601DateFormatter()
+        let nextPanes = panes.map { current in
+            guard current.paneID == quickPane.paneID else { return current }
+            return ShellPane(
+                paneID: current.paneID,
+                tabID: newTabID,
+                spaceID: targetSpace.spaceID,
+                launchTarget: current.launchTarget,
+                cwd: current.cwd,
+                process: current.process,
+                attention: current.attention,
+                context: current.context,
+                viewport: ShellViewportSnapshot(
+                    title: current.viewport?.title,
+                    summary: current.viewport?.summary ?? "quick terminal opened in space",
+                    visibleExcerpt: current.viewport?.visibleExcerpt,
+                    lastActivityAt: formatter.string(from: now)
+                ),
+                activity: current.activity,
+                alanBinding: current.alanBinding
+            )
+        }
+
+        let nextState = ShellStateSnapshot(
+            contractVersion: contractVersion,
+            windowID: windowID,
+            focusedSpaceID: targetSpace.spaceID,
+            focusedTabID: newTabID,
+            focusedPaneID: quickPane.paneID,
+            spaces: rebuildingAttention(in: nextSpaces, panes: nextPanes),
+            panes: nextPanes,
+            quickTerminal: nil
+        )
+
+        return ShellStateMutationResult(
+            state: nextState,
+            spaceID: targetSpace.spaceID,
+            tabID: newTabID,
+            paneID: quickPane.paneID
         )
     }
 
@@ -1100,7 +1283,8 @@ extension ShellStateSnapshot {
             focusedTabID: focusedTabID,
             focusedPaneID: preferredPaneID,
             spaces: rebuildingAttention(in: nextSpaces, panes: nextPanes),
-            panes: nextPanes
+            panes: nextPanes,
+            quickTerminal: quickTerminal
         )
 
         return ShellStateMutationResult(
@@ -1131,7 +1315,8 @@ extension ShellStateSnapshot {
             focusedTabID: focusedPane?.tabID ?? spaces.first?.tabs.first?.tabID,
             focusedPaneID: resolvedFocusedPaneID,
             spaces: spaces,
-            panes: panes
+            panes: panes,
+            quickTerminal: quickTerminal
         )
     }
 

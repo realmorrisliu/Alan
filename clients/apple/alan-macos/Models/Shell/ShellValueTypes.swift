@@ -113,6 +113,11 @@ enum ShellWorkspaceCommand: String, CaseIterable, Identifiable {
     case equalizeSplits
     case closePane
     case closeTab
+    case quickTerminalToggle
+    case quickTerminalShow
+    case quickTerminalHide
+    case quickTerminalFocus
+    case quickTerminalClose
 
     var id: String { rawValue }
 }

@@ -30,6 +30,37 @@ struct ShellAlanBinding: Codable, Equatable {
     }
 }
 
+enum ShellQuickTerminalPresentation: String, Codable, Equatable {
+    case visible
+    case hidden
+}
+
+struct ShellQuickTerminalSlot: Codable, Equatable {
+    static let globalPaneID = "quick_terminal_pane"
+    static let globalTabID = "quick_terminal_tab"
+    static let globalSpaceID = "quick_terminal_space"
+
+    let paneID: String
+    let presentation: ShellQuickTerminalPresentation
+    let lastWorkingDirectory: String?
+
+    init(
+        paneID: String = Self.globalPaneID,
+        presentation: ShellQuickTerminalPresentation,
+        lastWorkingDirectory: String?
+    ) {
+        self.paneID = paneID
+        self.presentation = presentation
+        self.lastWorkingDirectory = lastWorkingDirectory
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case paneID = "pane_id"
+        case presentation
+        case lastWorkingDirectory = "last_working_directory"
+    }
+}
+
 struct ShellPane: Identifiable, Codable, Equatable {
     let paneID: String
     let tabID: String
@@ -83,6 +114,14 @@ struct ShellPane: Identifiable, Codable, Equatable {
         case viewport
         case activity
         case alanBinding = "alan_binding"
+    }
+}
+
+extension ShellPane {
+    var isQuickTerminalPane: Bool {
+        paneID == ShellQuickTerminalSlot.globalPaneID
+            && tabID == ShellQuickTerminalSlot.globalTabID
+            && spaceID == ShellQuickTerminalSlot.globalSpaceID
     }
 }
 
@@ -506,6 +545,7 @@ struct ShellStateSnapshot: Codable, Equatable {
     let focusedPaneID: String?
     let spaces: [ShellSpace]
     let panes: [ShellPane]
+    var quickTerminal: ShellQuickTerminalSlot? = nil
 
     private enum CodingKeys: String, CodingKey {
         case contractVersion = "contract_version"
@@ -515,6 +555,7 @@ struct ShellStateSnapshot: Codable, Equatable {
         case focusedPaneID = "focused_pane_id"
         case spaces
         case panes
+        case quickTerminal = "quick_terminal"
     }
 
     var prettyPrintedJSON: String {

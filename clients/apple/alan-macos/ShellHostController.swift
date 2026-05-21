@@ -321,6 +321,16 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         return panesForSelectedTab.first
     }
 
+    var quickTerminalPane: ShellPane? {
+        shellState.quickTerminal.flatMap { slot in
+            shellState.pane(paneID: slot.paneID)
+        }
+    }
+
+    var quickTerminalPresentation: ShellQuickTerminalPresentation? {
+        shellState.quickTerminal?.presentation
+    }
+
     var focusedPane: ShellPane? {
         guard let focusedPaneID = shellState.focusedPaneID else { return nil }
         return pane(paneID: focusedPaneID)
@@ -400,7 +410,8 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
                 focusedTabID: nil,
                 focusedPaneID: nil,
                 spaces: shellState.spaces,
-                panes: shellState.panes
+                panes: shellState.panes,
+                quickTerminal: shellState.quickTerminal
             )
             synchronizeSelection()
             publishControlPlaneState()
@@ -513,6 +524,67 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     func refocusSelectedTerminalPane() {
         guard let paneID = selectedPane?.paneID else { return }
         terminalRuntimeRegistry.requestFocus(for: paneID)
+    }
+
+    @discardableResult
+    func toggleQuickTerminal() -> String? {
+        if shellState.quickTerminal?.presentation == .visible {
+            return hideQuickTerminal() ? shellState.quickTerminal?.paneID : nil
+        }
+        return showQuickTerminal()
+    }
+
+    @discardableResult
+    func showQuickTerminal() -> String? {
+        let result = shellState.showingQuickTerminal(
+            workingDirectory: focusedPaneWorkingDirectory()
+        )
+        applyMutationResult(result)
+        terminalRuntimeRegistry.requestFocus(for: result.paneID ?? ShellQuickTerminalSlot.globalPaneID)
+        return result.paneID
+    }
+
+    @discardableResult
+    func hideQuickTerminal() -> Bool {
+        do {
+            let result = try shellState.hidingQuickTerminal()
+            applyMutationResult(result)
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    @discardableResult
+    func focusQuickTerminal() -> String? {
+        let paneID = showQuickTerminal()
+        if let paneID {
+            terminalRuntimeRegistry.requestFocus(for: paneID)
+        }
+        return paneID
+    }
+
+    @discardableResult
+    func closeQuickTerminal() -> Bool {
+        do {
+            let result = try shellState.closingQuickTerminal()
+            applyMutationResult(result)
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    @discardableResult
+    func promoteQuickTerminal(to targetSpaceID: String) -> Bool {
+        do {
+            let result = try shellState.promotingQuickTerminal(to: targetSpaceID)
+            applyMutationResult(result)
+            terminalRuntimeRegistry.requestFocus(for: result.paneID ?? ShellQuickTerminalSlot.globalPaneID)
+            return true
+        } catch {
+            return false
+        }
     }
 
     func terminalHostDidRequestActivation(paneID: String) {
@@ -790,6 +862,16 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
             return closeSelectedPane()
         case .closeTab:
             return closeSelectedTab()
+        case .quickTerminalToggle:
+            return toggleQuickTerminal() != nil
+        case .quickTerminalShow:
+            return showQuickTerminal() != nil
+        case .quickTerminalHide:
+            return hideQuickTerminal()
+        case .quickTerminalFocus:
+            return focusQuickTerminal() != nil
+        case .quickTerminalClose:
+            return closeQuickTerminal()
         }
     }
 
@@ -859,6 +941,9 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         case .moveTabToSpace(let tabID, let spaceID):
             guard let tabID, let spaceID else { return false }
             return moveTabToSpace(tabID: tabID, targetSpaceID: spaceID)
+        case .promoteQuickTerminal(let spaceID):
+            guard let spaceID else { return false }
+            return promoteQuickTerminal(to: spaceID)
         case .disabledPlaceholder:
             return false
         }
@@ -1273,7 +1358,8 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
             focusedTabID: shellState.focusedTabID,
             focusedPaneID: shellState.focusedPaneID,
             spaces: updatedSpaces,
-            panes: updatedPanes
+            panes: updatedPanes,
+            quickTerminal: shellState.quickTerminal
         )
         synchronizeSelection()
         routeActivityNotificationIfNeeded(from: existingPane, to: transformedPane)
@@ -1418,7 +1504,8 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
             focusedTabID: focusedPane?.tabID ?? spaces.first?.tabs.first?.tabID,
             focusedPaneID: resolvedFocusedPaneID,
             spaces: spaces,
-            panes: panes
+            panes: panes,
+            quickTerminal: shellState.quickTerminal
         )
         synchronizeSelection()
         publishControlPlaneState()
@@ -1487,7 +1574,8 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
             focusedTabID: state.focusedTabID,
             focusedPaneID: state.focusedPaneID,
             spaces: hydratedSpaces,
-            panes: hydratedPanes
+            panes: hydratedPanes,
+            quickTerminal: state.quickTerminal
         )
         synchronizeSelection()
         if publish {

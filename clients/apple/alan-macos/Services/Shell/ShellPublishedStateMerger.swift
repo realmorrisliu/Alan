@@ -36,7 +36,8 @@ enum AlanShellPublishedStateMerger {
             focusedTabID: focusedPane?.tabID ?? incoming.focusedTabID ?? authoritative.focusedTabID,
             focusedPaneID: focusedPane?.paneID ?? focusedPaneID,
             spaces: mergedSpaces,
-            panes: mergedPanes
+            panes: mergedPanes,
+            quickTerminal: incoming.quickTerminal
         )
     }
 

@@ -19,6 +19,8 @@ private enum ShellActionRegistryTests {
         try verifiesUnavailableShortcutActionDoesNotExecuteHandler()
         try verifiesMoveTabShortcutRoutesHandler()
         try verifiesCommandInputRemainsOutOfRegistry()
+        try verifiesQuickTerminalActionsRouteThroughSharedRegistry()
+        try verifiesQuickTerminalPromoteRequiresExplicitDestination()
         print("Shell action registry tests passed.")
     }
 
@@ -313,6 +315,77 @@ private enum ShellActionRegistryTests {
                 target: .currentSelection
             ) == .unavailable(reason: "Move target is required"),
             "move-tab-to-space must stay explicit and avoid implicit current-space targets"
+        )
+    }
+
+    private static func verifiesQuickTerminalActionsRouteThroughSharedRegistry() throws {
+        let registry = ShellActionRegistry.standard
+        let state = ShellStateSnapshot.bootstrapDefault(workingDirectory: "/tmp")
+
+        expect(
+            registry.defaultShortcut(for: .quickTerminalToggle)
+                == ShellActionShortcut(key: "space", modifiers: [.option], context: .shell),
+            "quick terminal toggle must advertise the draft option-space shortcut"
+        )
+        expect(
+            registry.keyboardAction(
+                for: ShellActionShortcut(key: "space", modifiers: [.option], context: .shell)
+            ) == ShellKeyboardAction(id: .quickTerminalToggle, target: .currentSelection),
+            "option-space must resolve to the shared quick-terminal toggle action"
+        )
+
+        let routedEffects: [(ShellActionID, ShellActionEffect)] = [
+            (.quickTerminalToggle, .workspaceCommand(.quickTerminalToggle)),
+            (.quickTerminalShow, .workspaceCommand(.quickTerminalShow)),
+            (.quickTerminalHide, .workspaceCommand(.quickTerminalHide)),
+            (.quickTerminalFocus, .workspaceCommand(.quickTerminalFocus)),
+            (.quickTerminalClose, .workspaceCommand(.quickTerminalClose)),
+        ]
+
+        for (actionID, expectedEffect) in routedEffects {
+            var handledEffects: [ShellActionEffect] = []
+            let result = registry.execute(actionID, target: .currentSelection, state: state) { effect in
+                handledEffects.append(effect)
+                return true
+            }
+
+            expect(result == .executed, "\(actionID.rawValue) must execute through the registry")
+            expect(handledEffects == [expectedEffect], "\(actionID.rawValue) must route the shared command effect")
+        }
+    }
+
+    private static func verifiesQuickTerminalPromoteRequiresExplicitDestination() throws {
+        let registry = ShellActionRegistry.standard
+        var state = ShellStateSnapshot.bootstrapDefault(workingDirectory: "/tmp")
+        state = state.creatingTerminalSpace(title: "Second", workingDirectory: "/tmp").state
+        state = state.showingQuickTerminal(workingDirectory: "/tmp").state
+
+        var handledEffects: [ShellActionEffect] = []
+        let missingTarget = registry.execute(
+            .quickTerminalPromote,
+            target: .currentSelection,
+            state: state
+        ) { effect in
+            handledEffects.append(effect)
+            return true
+        }
+        let explicitTarget = registry.execute(
+            .quickTerminalPromote,
+            target: .contextSpace("space_2"),
+            state: state
+        ) { effect in
+            handledEffects.append(effect)
+            return true
+        }
+
+        expect(
+            missingTarget == .unavailable(reason: "Quick terminal destination is required"),
+            "quick terminal promotion must require an explicit destination"
+        )
+        expect(explicitTarget == .executed, "quick terminal promotion must execute for an explicit space")
+        expect(
+            handledEffects == [.promoteQuickTerminal(spaceID: "space_2")],
+            "quick terminal promotion must route the selected destination to the handler"
         )
     }
 }

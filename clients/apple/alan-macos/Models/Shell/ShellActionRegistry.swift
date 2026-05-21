@@ -1,6 +1,12 @@
 import Foundation
 
 enum ShellActionID: String, CaseIterable, Identifiable, Hashable {
+    case quickTerminalToggle = "shell.quick_terminal.toggle"
+    case quickTerminalShow = "shell.quick_terminal.show"
+    case quickTerminalHide = "shell.quick_terminal.hide"
+    case quickTerminalFocus = "shell.quick_terminal.focus"
+    case quickTerminalClose = "shell.quick_terminal.close"
+    case quickTerminalPromote = "shell.quick_terminal.promote"
     case newTerminalTab = "shell.tab.new_terminal"
     case newAlanTab = "shell.tab.new_alan"
     case tabClose = "shell.tab.close"
@@ -117,6 +123,7 @@ enum ShellActionEffect: Equatable {
     case updatePinnedTab(String?)
     case moveTab(String?, offset: Int)
     case moveTabToSpace(tabID: String?, spaceID: String?)
+    case promoteQuickTerminal(spaceID: String?)
     case disabledPlaceholder
 }
 
@@ -361,6 +368,11 @@ final class ShellActionRegistry {
                 return .moveTabToSpace(tabID: tabID, spaceID: spaceID)
             }
             return .moveTabToSpace(tabID: nil, spaceID: nil)
+        case .promoteQuickTerminal:
+            if case .space(let spaceID) = resolvedTarget {
+                return .promoteQuickTerminal(spaceID: spaceID)
+            }
+            return .promoteQuickTerminal(spaceID: nil)
         case .closeTab:
             if case .tab(let tabID) = resolvedTarget {
                 return .closeTab(tabID)
@@ -396,6 +408,44 @@ final class ShellActionRegistry {
 }
 
 private let standardActions: [ShellActionDescriptor] = [
+    ShellActionDescriptor(
+        id: .quickTerminalToggle,
+        title: "Toggle Quick Terminal",
+        targetKind: .currentSelection,
+        defaultShortcut: ShellActionShortcut(key: "space", modifiers: [.option], context: .shell),
+        effect: .workspaceCommand(.quickTerminalToggle)
+    ),
+    ShellActionDescriptor(
+        id: .quickTerminalShow,
+        title: "Show Quick Terminal",
+        targetKind: .currentSelection,
+        effect: .workspaceCommand(.quickTerminalShow)
+    ),
+    ShellActionDescriptor(
+        id: .quickTerminalHide,
+        title: "Hide Quick Terminal",
+        targetKind: .currentSelection,
+        effect: .workspaceCommand(.quickTerminalHide)
+    ),
+    ShellActionDescriptor(
+        id: .quickTerminalFocus,
+        title: "Focus Quick Terminal",
+        targetKind: .currentSelection,
+        effect: .workspaceCommand(.quickTerminalFocus)
+    ),
+    ShellActionDescriptor(
+        id: .quickTerminalClose,
+        title: "Close Quick Terminal",
+        targetKind: .currentSelection,
+        effect: .workspaceCommand(.quickTerminalClose)
+    ),
+    ShellActionDescriptor(
+        id: .quickTerminalPromote,
+        title: "Open Quick Terminal in Space...",
+        targetKind: .space,
+        effect: .promoteQuickTerminal(spaceID: nil),
+        availability: quickTerminalPromoteAvailability
+    ),
     ShellActionDescriptor(
         id: .newTerminalTab,
         title: "New Terminal Tab",
@@ -749,6 +799,21 @@ private func indexedSpaceAvailability(
     return state.spaces.indices.contains(index)
         ? .available
         : .unavailable(reason: "Space is not available")
+}
+
+private func quickTerminalPromoteAvailability(
+    state: ShellStateSnapshot,
+    target: ShellActionTarget
+) -> ShellActionAvailability {
+    guard state.quickTerminal != nil else {
+        return .unavailable(reason: "Quick terminal is not available")
+    }
+    guard case .contextSpace(let spaceID) = target else {
+        return .unavailable(reason: "Quick terminal destination is required")
+    }
+    return state.space(spaceID: spaceID) == nil
+        ? .unavailable(reason: "Space is not available")
+        : .available
 }
 
 private func disabledPlaceholder(
