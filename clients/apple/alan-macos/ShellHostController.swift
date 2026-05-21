@@ -1533,7 +1533,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     ) {
         guard existingPane.activity != nextActivity,
               let activity = nextActivity,
-              let tab = shellState.tab(tabID: existingPane.tabID)
+              let tab = activityNotificationTab(for: existingPane)
         else {
             return
         }
@@ -1551,7 +1551,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     ) {
         guard existingPane.activity != updatedPane.activity,
               let activity = updatedPane.activity,
-              let tab = shellState.tab(tabID: updatedPane.tabID)
+              let tab = activityNotificationTab(for: updatedPane)
         else {
             return
         }
@@ -1588,9 +1588,34 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         }
     }
 
+    private func activityNotificationTab(for pane: ShellPane) -> ShellTab? {
+        if let tab = shellState.tab(tabID: pane.tabID) {
+            return tab
+        }
+
+        guard pane.isQuickTerminalPane,
+              shellState.quickTerminal?.paneID == pane.paneID
+        else {
+            return nil
+        }
+
+        return ShellQuickTerminalPeakModel.tab(for: pane)
+    }
+
     private func activityNotificationVisibility(
         for pane: ShellPane
     ) -> ShellActivityNotificationVisibility {
+        if pane.isQuickTerminalPane,
+           shellState.quickTerminal?.paneID == pane.paneID
+        {
+            guard appIsActiveProvider(),
+                  shellState.quickTerminal?.presentation == .visible
+            else {
+                return .background
+            }
+            return .focusedVisible
+        }
+
         let isSelectedSpace = pane.spaceID == selectedSpace?.spaceID
         let isSelectedTab = pane.tabID == selectedTab?.tabID
         guard appIsActiveProvider() else {

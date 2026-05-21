@@ -1,19 +1,23 @@
 {
-  "fill-specializations" : [
-    {
-      "value" : "automatic"
-    },
-    {
-      "appearance" : "dark",
-      "value" : "system-dark"
-    }
-  ],
+  "fill" : {
+    "automatic-gradient" : "srgb:1.00000,1.00000,1.00000,1.00000"
+  },
   "groups" : [
     {
-      "hidden" : false,
       "layers" : [
         {
+          "blend-mode-specializations" : [
+            {
+              "appearance" : "tinted",
+              "value" : "normal"
+            }
+          ],
           "fill-specializations" : [
+            {
+              "value" : {
+                "solid" : "srgb:0.00000,0.00000,0.00000,1.00000"
+              }
+            },
             {
               "appearance" : "dark",
               "value" : {
@@ -23,51 +27,16 @@
             {
               "appearance" : "tinted",
               "value" : {
-                "automatic-gradient" : "srgb:1.00000,1.00000,1.00000,1.00000"
+                "solid" : "srgb:1.00000,1.00000,1.00000,1.00000"
               }
             }
           ],
-          "image-name" : "alan-logo-mask.svg",
-          "name" : "Alan Logo Mask",
+          "image-name" : "logo.svg",
+          "name" : "logo",
           "position" : {
-            "scale" : 1.1,
+            "scale" : 1,
             "translation-in-points" : [
-              -32,
-              0
-            ]
-          }
-        }
-      ],
-      "shadow" : {
-        "kind" : "neutral",
-        "opacity" : 0.5
-      },
-      "translucency" : {
-        "enabled" : true,
-        "value" : 0.5
-      }
-    },
-    {
-      "hidden" : false,
-      "layers" : [
-        {
-          "blend-mode" : "normal",
-          "hidden" : false,
-          "image-name" : "alan-logo-foreground.svg",
-          "name" : "Alan Logo Foreground",
-          "opacity-specializations" : [
-            {
-              "value" : 1
-            },
-            {
-              "appearance" : "dark",
-              "value" : 1
-            }
-          ],
-          "position" : {
-            "scale" : 1.1,
-            "translation-in-points" : [
-              -32,
+              -16,
               0
             ]
           }

@@ -29,14 +29,14 @@
   Space/tab that hides the Peak and clears the global quick slot.
 - [x] 3.4 Ensure promotion does not copy the terminal process or keep the same
   runtime visible in both the Peak and the target tab.
-- [ ] 3.5 Surface hidden quick-terminal user-actionable activity through the
+- [x] 3.5 Surface hidden quick-terminal user-actionable activity through the
   existing compact activity and notification policy.
 
 ## 4. Verification
 
 - [x] 4.1 Add focus, display/Space placement, hide/show, close, and promote
   tests.
-- [ ] 4.2 Add hidden-activity notification tests.
+- [x] 4.2 Add hidden-activity notification tests.
 - [x] 4.3 Add focused checks for `Esc` terminal routing and focus-loss behavior.
 - [x] 4.4 Run relevant shell model, window, command-routing, and terminal runtime
   tests.
@@ -47,7 +47,7 @@
 
 ## 5. Archive Readiness
 
-- [ ] 5.1 Review the UI to confirm quick terminal stays terminal-first and does
+- [x] 5.1 Review the UI to confirm quick terminal stays terminal-first and does
   not add duplicate sidebar, inspector, or dashboard composition.
-- [ ] 5.2 Before archive, sync accepted delta requirements into `openspec/specs/`.
-- [ ] 5.3 Archive the completed OpenSpec change after implementation merges.
+- [x] 5.2 Before archive, sync accepted delta requirements into `openspec/specs/`.
+- [x] 5.3 Archive the completed OpenSpec change after implementation merges.
