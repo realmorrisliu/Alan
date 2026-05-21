@@ -605,6 +605,14 @@ private enum ShellRuntimeMetadataTests {
         )
 
         expect(closeResponse.applied == true, "quick terminal close command must use controller routing")
+        expect(
+            closeResponse.paneID == controller.shellState.focusedPaneID,
+            "quick terminal close response must return the resulting focused pane"
+        )
+        expect(
+            closeResponse.paneID != ShellQuickTerminalSlot.globalPaneID,
+            "quick terminal close response must not return the removed quick pane"
+        )
         expect(controller.quickTerminalPane == nil, "close must clear the global quick-terminal slot")
         expect(
             !controller.terminalRuntimeRegistry.registeredPaneIDs.contains("quick_terminal_pane"),

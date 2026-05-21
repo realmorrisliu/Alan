@@ -807,7 +807,9 @@ extension ShellHostController {
             return response(
                 requestID: command.requestID,
                 applied: true,
-                paneID: paneID
+                spaceID: shellState.focusedSpaceID,
+                tabID: shellState.focusedTabID,
+                paneID: shellState.focusedPaneID
             )
 
         case .quickTerminalPromote:
