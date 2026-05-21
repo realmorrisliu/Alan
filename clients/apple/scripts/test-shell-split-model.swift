@@ -14,6 +14,8 @@ private enum ShellSplitModelTests {
         try verifiesSplitRatiosClampWhenResized()
         try verifiesEqualizeRestoresEverySplitRatio()
         try verifiesZoomProjectionUsesLeafWithoutMutatingSplitTree()
+        try verifiesInTabPaneMovementPreservesPaneIdentityAndRepairsTree()
+        try verifiesInvalidInTabPaneMovementLeavesStateUnchanged()
         try verifiesSameDirectionAttachKeepsBinarySplitTree()
         try verifiesSidebarSplitTopologyProjection()
         try verifiesSpatialFocusFollowsSplitTree()
@@ -104,6 +106,53 @@ private enum ShellSplitModelTests {
             treeAfterProjection == tree,
             "zoom projection must not mutate the canonical split tree"
         )
+    }
+
+    private static func verifiesInTabPaneMovementPreservesPaneIdentityAndRepairsTree() throws {
+        var state = ShellStateSnapshot.bootstrapDefault(workingDirectory: "/tmp")
+        state = try state.splittingPane("pane_1", placement: .right).state
+        let movedPaneBefore = try require(state.pane(paneID: "pane_2"), "moved pane missing")
+
+        let result = try state.movingPaneWithinTab("pane_2", placement: .left)
+        let movedTree = try requireFocusedTabTree(result.state)
+
+        expect(
+            movedTree.paneIDs == ["pane_2", "pane_1"],
+            "in-tab movement must repair the tree by placing the moved pane before the target"
+        )
+        expect(
+            result.state.pane(paneID: "pane_2") == movedPaneBefore,
+            "in-tab movement must preserve the moved PaneSlot and mounted content identity"
+        )
+        expect(
+            result.state.focusedPaneID == "pane_2",
+            "in-tab movement must keep focus on the moved pane"
+        )
+        expect(
+            result.state.pane(paneID: "pane_2")?.tabID == "tab_main",
+            "in-tab movement must keep the pane in the same tab"
+        )
+    }
+
+    private static func verifiesInvalidInTabPaneMovementLeavesStateUnchanged() throws {
+        var state = ShellStateSnapshot.bootstrapDefault(workingDirectory: "/tmp")
+        state = try state.splittingPane("pane_1", placement: .right).state
+        let original = state
+
+        do {
+            _ = try state.movingPaneWithinTab("pane_1", placement: .left)
+            expect(false, "moving a pane without an adjacent destination must be rejected")
+        } catch ShellStateMutationError.invalidMoveTarget {
+            expect(state == original, "failed movement must leave the original state unchanged")
+        }
+
+        do {
+            _ = try ShellStateSnapshot.bootstrapDefault(workingDirectory: "/tmp")
+                .movingPaneWithinTab("pane_1", placement: .right)
+            expect(false, "moving a single-pane tab must be rejected")
+        } catch ShellStateMutationError.invalidMoveTarget {
+            // Expected.
+        }
     }
 
     private static func verifiesSameDirectionAttachKeepsBinarySplitTree() throws {

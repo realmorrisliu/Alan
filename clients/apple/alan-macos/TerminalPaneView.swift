@@ -464,6 +464,12 @@ private struct ShellPaneTreeLayoutView: View {
                     isSelected: selectedPaneID == pane.paneID,
                     isZoomed: host.isPaneZoomed(pane.paneID),
                     canZoom: host.canZoomPane(pane.paneID),
+                    canMovePane: { placement in
+                        host.shellActionAvailability(
+                            paneMoveActionID(for: placement),
+                            target: .contextPane(pane.paneID)
+                        ).isAvailable
+                    },
                     runtimeRegistry: host.terminalRuntimeRegistry,
                     activationDelegate: host,
                     onShellAction: { actionID, target in
@@ -478,6 +484,12 @@ private struct ShellPaneTreeLayoutView: View {
                         } else {
                             _ = host.zoomPane(paneID: pane.paneID)
                         }
+                    },
+                    onMovePane: { placement in
+                        host.performShellAction(
+                            paneMoveActionID(for: placement),
+                            target: .contextPane(pane.paneID)
+                        )
                     },
                     onClosePane: {
                         if let onClosePane {
@@ -672,11 +684,13 @@ private struct ShellTerminalLeafView: View {
     let isSelected: Bool
     let isZoomed: Bool
     let canZoom: Bool
+    let canMovePane: (ShellPaneSplitDirection) -> Bool
     let runtimeRegistry: TerminalRuntimeRegistry
     let activationDelegate: TerminalHostActivationDelegate?
     let onShellAction: (ShellActionID, ShellActionTarget) -> Void
     let onCommandInput: () -> Void
     let onToggleZoom: () -> Void
+    let onMovePane: (ShellPaneSplitDirection) -> Void
     let onClosePane: () -> Void
     let onRuntimeUpdate: (TerminalHostRuntimeSnapshot) -> Void
     let onMetadataUpdate: (TerminalPaneMetadataSnapshot) -> Void
@@ -689,10 +703,12 @@ private struct ShellTerminalLeafView: View {
                 isSelected: isSelected,
                 isZoomed: isZoomed,
                 canZoom: canZoom,
+                canMovePane: canMovePane,
                 onFocusPane: {
                     activationDelegate?.terminalHostDidRequestActivation(paneID: pane.paneID)
                 },
                 onToggleZoom: onToggleZoom,
+                onMovePane: onMovePane,
                 onClosePane: onClosePane
             )
 
@@ -748,6 +764,19 @@ private struct ShellTerminalLeafView: View {
     }
 }
 
+private func paneMoveActionID(for placement: ShellPaneSplitDirection) -> ShellActionID {
+    switch placement {
+    case .left:
+        return .paneMoveLeft
+    case .right:
+        return .paneMoveRight
+    case .up:
+        return .paneMoveUp
+    case .down:
+        return .paneMoveDown
+    }
+}
+
 private enum ShellPaneTitleTypography {
     static let titleSize: CGFloat = 11
     static let accessorySize: CGFloat = 10
@@ -791,8 +820,10 @@ private struct ShellPaneTitleBarView: View {
     let isSelected: Bool
     let isZoomed: Bool
     let canZoom: Bool
+    let canMovePane: (ShellPaneSplitDirection) -> Bool
     let onFocusPane: () -> Void
     let onToggleZoom: () -> Void
+    let onMovePane: (ShellPaneSplitDirection) -> Void
     let onClosePane: () -> Void
     @State private var activityFreshnessNow = Date()
 
@@ -809,6 +840,27 @@ private struct ShellPaneTitleBarView: View {
         .background(ShellPalette.terminal)
         .contentShape(Rectangle())
         .onTapGesture(perform: onFocusPane)
+        .contextMenu {
+            Button("Move Pane Left") {
+                onMovePane(.left)
+            }
+            .disabled(!canMovePane(.left))
+
+            Button("Move Pane Right") {
+                onMovePane(.right)
+            }
+            .disabled(!canMovePane(.right))
+
+            Button("Move Pane Up") {
+                onMovePane(.up)
+            }
+            .disabled(!canMovePane(.up))
+
+            Button("Move Pane Down") {
+                onMovePane(.down)
+            }
+            .disabled(!canMovePane(.down))
+        }
         .task(id: activityFreshnessRefreshID) {
             await scheduleActivityFreshnessRefresh()
         }

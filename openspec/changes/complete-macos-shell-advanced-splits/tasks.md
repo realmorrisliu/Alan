@@ -7,10 +7,10 @@
 
 ## 2. Pane Movement
 
-- [ ] 2.1 Add explicit in-tab pane move operations with stable validation and tree repair.
-- [ ] 2.2 Route pane movement commands through the shared shell controller mutation path.
-- [ ] 2.3 Add drag/drop movement only after proving terminal text selection remains reliable.
-- [ ] 2.4 Add tests for in-tab movement, invalid movement, drag-backed movement routing, and PaneSlot / mounted ContentInstance identity preservation.
+- [x] 2.1 Add explicit in-tab pane move operations with stable validation and tree repair.
+- [x] 2.2 Route pane movement commands through the shared shell controller mutation path.
+- [x] 2.3 Add drag/drop movement only after proving terminal text selection remains reliable.
+- [x] 2.4 Add tests for in-tab movement, invalid movement, drag-backed movement routing, and PaneSlot / mounted ContentInstance identity preservation.
 
 ## 3. Control Plane
 

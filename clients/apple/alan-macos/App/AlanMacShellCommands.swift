@@ -82,6 +82,32 @@ struct AlanMacShellCommands: Commands {
 
             Divider()
 
+            Button(host.shellActionTitle(.paneMoveLeft)) {
+                host.performShellAction(.paneMoveLeft)
+            }
+            .shellActionKeyboardShortcut(host.shellActionShortcut(.paneMoveLeft))
+            .disabled(!host.shellActionAvailability(.paneMoveLeft).isAvailable)
+
+            Button(host.shellActionTitle(.paneMoveRight)) {
+                host.performShellAction(.paneMoveRight)
+            }
+            .shellActionKeyboardShortcut(host.shellActionShortcut(.paneMoveRight))
+            .disabled(!host.shellActionAvailability(.paneMoveRight).isAvailable)
+
+            Button(host.shellActionTitle(.paneMoveUp)) {
+                host.performShellAction(.paneMoveUp)
+            }
+            .shellActionKeyboardShortcut(host.shellActionShortcut(.paneMoveUp))
+            .disabled(!host.shellActionAvailability(.paneMoveUp).isAvailable)
+
+            Button(host.shellActionTitle(.paneMoveDown)) {
+                host.performShellAction(.paneMoveDown)
+            }
+            .shellActionKeyboardShortcut(host.shellActionShortcut(.paneMoveDown))
+            .disabled(!host.shellActionAvailability(.paneMoveDown).isAvailable)
+
+            Divider()
+
             Button(host.shellActionTitle(.paneFocusLeft)) {
                 host.performShellAction(.paneFocusLeft)
             }

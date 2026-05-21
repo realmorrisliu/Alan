@@ -64,6 +64,19 @@ enum ShellPaneSplitDirection: String, Codable, CaseIterable {
         }
     }
 
+    var spatialFocusDirection: ShellSpatialFocusDirection {
+        switch self {
+        case .left:
+            return .left
+        case .right:
+            return .right
+        case .up:
+            return .up
+        case .down:
+            return .down
+        }
+    }
+
     static func defaultPlacement(for splitDirection: ShellSplitDirection) -> ShellPaneSplitDirection {
         switch splitDirection {
         case .horizontal:
@@ -112,6 +125,10 @@ enum ShellWorkspaceCommand: String, CaseIterable, Identifiable {
     case focusDown
     case equalizeSplits
     case togglePaneZoom
+    case movePaneLeft
+    case movePaneRight
+    case movePaneUp
+    case movePaneDown
     case closePane
     case closeTab
     case quickTerminalToggle

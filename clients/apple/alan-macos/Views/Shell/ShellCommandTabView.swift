@@ -14,6 +14,10 @@ private enum ShellCommandInputAction: CaseIterable {
     case focusDown
     case equalizeSplits
     case zoomPane
+    case movePaneLeft
+    case movePaneRight
+    case movePaneUp
+    case movePaneDown
     case closePane
     case closeTab
     case quickTerminalToggle
@@ -53,6 +57,14 @@ private enum ShellCommandInputAction: CaseIterable {
             return ["equalize splits", "balance splits", "reset splits"]
         case .zoomPane:
             return ["zoom pane", "unzoom pane", "toggle pane zoom", "zoom split"]
+        case .movePaneLeft:
+            return ["move pane left", "move split left"]
+        case .movePaneRight:
+            return ["move pane right", "move split right"]
+        case .movePaneUp:
+            return ["move pane up", "move split up"]
+        case .movePaneDown:
+            return ["move pane down", "move split down"]
         case .closePane:
             return ["close pane", "close focused pane"]
         case .closeTab:
@@ -245,6 +257,14 @@ struct ShellCommandTabView: View {
             host.performShellWorkspaceCommand(ShellWorkspaceCommand.equalizeSplits)
         case .zoomPane:
             host.performShellWorkspaceCommand(ShellWorkspaceCommand.togglePaneZoom)
+        case .movePaneLeft:
+            host.performShellAction(.paneMoveLeft)
+        case .movePaneRight:
+            host.performShellAction(.paneMoveRight)
+        case .movePaneUp:
+            host.performShellAction(.paneMoveUp)
+        case .movePaneDown:
+            host.performShellAction(.paneMoveDown)
         case .closePane:
             host.performShellWorkspaceCommand(ShellWorkspaceCommand.closePane)
         case .closeTab:

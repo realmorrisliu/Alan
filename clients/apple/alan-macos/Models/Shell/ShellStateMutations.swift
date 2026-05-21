@@ -996,6 +996,78 @@ extension ShellStateSnapshot {
         )
     }
 
+    func movingPaneWithinTab(
+        _ paneID: String,
+        placement: ShellPaneSplitDirection
+    ) throws -> ShellStateMutationResult {
+        guard let pane = pane(paneID: paneID),
+              let tab = tab(tabID: pane.tabID)
+        else {
+            throw ShellStateMutationError.paneNotFound
+        }
+
+        guard tab.paneTree.paneIDs.count > 1 else {
+            throw ShellStateMutationError.invalidMoveTarget
+        }
+
+        guard let targetPaneID = tab.paneTree.adjacentPaneID(
+            from: paneID,
+            direction: placement.spatialFocusDirection
+        ),
+        targetPaneID != paneID
+        else {
+            throw ShellStateMutationError.invalidMoveTarget
+        }
+
+        guard let treeWithoutMovedPane = tab.paneTree.removingPane(paneID),
+              treeWithoutMovedPane.paneIDs.contains(targetPaneID)
+        else {
+            throw ShellStateMutationError.invalidMoveTarget
+        }
+
+        let newSplitNodeID = nextID(
+            prefix: "node",
+            existing: spaces.flatMap { $0.tabs.flatMap { $0.paneTree.nodeIDs } }
+        )
+        let movedLeafNodeID = "node_\(paneID)_moved_in_tab"
+        let movedTree = treeWithoutMovedPane.splittingPane(
+            targetPaneID,
+            placement: placement,
+            splitNodeID: newSplitNodeID,
+            newLeafNodeID: movedLeafNodeID,
+            newPaneID: paneID
+        )
+        let updatedTab = ShellTab(
+            tabID: tab.tabID,
+            kind: tab.kind,
+            title: tab.title,
+            paneTree: movedTree,
+            isPinned: tab.isPinned
+        )
+        let nextSpaces = spaces.map { space in
+            guard space.spaceID == pane.spaceID else { return space }
+            return ShellSpace(
+                spaceID: space.spaceID,
+                title: space.title,
+                attention: space.attention,
+                tabs: space.tabs.map { existingTab in
+                    existingTab.tabID == updatedTab.tabID ? updatedTab : existingTab
+                }
+            )
+        }
+
+        return ShellStateMutationResult(
+            state: replacing(
+                spaces: rebuildingAttention(in: nextSpaces, panes: panes),
+                panes: panes,
+                focusedPaneID: paneID
+            ),
+            spaceID: pane.spaceID,
+            tabID: pane.tabID,
+            paneID: paneID
+        )
+    }
+
     func organizingTab(
         tabID: String,
         targetSpaceID requestedTargetSpaceID: String? = nil,

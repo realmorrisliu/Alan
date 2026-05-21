@@ -36,6 +36,8 @@ private enum ShellRuntimeMetadataTests {
         verifiesQuickTerminalPeakEscapePolicyBelongsToTerminal()
         verifiesSplitZoomLeavesCanonicalTreeAndKeepsSiblingRuntimes()
         verifiesSplitZoomIsTabScopedAndPrunedWhenPaneDisappears()
+        verifiesInTabPaneMovementPreservesRuntimeContinuity()
+        verifiesPaneMovementDragPolicyProtectsTerminalSelection()
         verifiesTerminalActivityProjectsByPaneID()
         verifiesProgressActivityFactoryUsesSourceFirstDisplay()
         verifiesCommandCompletionActivityFactory()
@@ -814,6 +816,69 @@ private enum ShellRuntimeMetadataTests {
 
         _ = controller.closePane(paneID: "pane_1")
         expect(controller.selectedTabZoomedPaneID == nil, "closing the zoomed pane must prune zoom state")
+    }
+
+    private static func verifiesInTabPaneMovementPreservesRuntimeContinuity() {
+        let controller = makeController()
+        _ = controller.splitPane(paneID: "pane_1", placement: .right)
+        let movedPaneBefore = controller.pane(paneID: "pane_2")
+        _ = controller.terminalRuntimeRegistry.surfaceHandle(
+            for: controller.pane(paneID: "pane_1"),
+            bootProfile: controller.bootProfile(for: controller.pane(paneID: "pane_1"))
+        )
+        _ = controller.terminalRuntimeRegistry.surfaceHandle(
+            for: controller.pane(paneID: "pane_2"),
+            bootProfile: controller.bootProfile(for: controller.pane(paneID: "pane_2"))
+        )
+        let registeredBefore = controller.terminalRuntimeRegistry.registeredPaneIDs
+
+        expect(
+            controller.movePaneWithinTab(paneID: "pane_2", placement: .left),
+            "in-tab movement must accept an adjacent destination"
+        )
+        expect(
+            controller.selectedTab?.paneTree.paneIDs == ["pane_2", "pane_1"],
+            "in-tab movement must update PaneSlot placement inside the selected tab"
+        )
+        expect(
+            controller.pane(paneID: "pane_2") == movedPaneBefore,
+            "in-tab movement must preserve mounted terminal content metadata"
+        )
+        expect(
+            controller.terminalRuntimeRegistry.registeredPaneIDs == registeredBefore,
+            "in-tab movement must not release or recreate terminal runtimes"
+        )
+    }
+
+    private static func verifiesPaneMovementDragPolicyProtectsTerminalSelection() {
+        let controller = makeController()
+        _ = controller.splitPane(paneID: "pane_1", placement: .right)
+        let originalTree = controller.selectedTab?.paneTree
+
+        expect(
+            !controller.movePaneWithinTab(
+                paneID: "pane_2",
+                placement: .left,
+                source: .terminalContentDrag
+            ),
+            "terminal content drags must not start pane movement"
+        )
+        expect(
+            controller.selectedTab?.paneTree == originalTree,
+            "rejected terminal-content drag movement must leave layout unchanged"
+        )
+        expect(
+            controller.movePaneWithinTab(
+                paneID: "pane_2",
+                placement: .left,
+                source: .titleBarDragAffordance
+            ),
+            "drag-backed movement must route through the same controller mutation path"
+        )
+        expect(
+            controller.selectedTab?.paneTree.paneIDs == ["pane_2", "pane_1"],
+            "drag-backed movement must preserve the explicit movement result semantics"
+        )
     }
 
     private static func verifiesTerminalActivityProjectsByPaneID() {
