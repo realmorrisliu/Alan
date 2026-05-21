@@ -13,6 +13,7 @@ private enum ShellSplitModelTests {
         try verifiesDirectionalSplitsPlaceNewPaneOnRequestedSide()
         try verifiesSplitRatiosClampWhenResized()
         try verifiesEqualizeRestoresEverySplitRatio()
+        try verifiesZoomProjectionUsesLeafWithoutMutatingSplitTree()
         try verifiesSameDirectionAttachKeepsBinarySplitTree()
         try verifiesSidebarSplitTopologyProjection()
         try verifiesSpatialFocusFollowsSplitTree()
@@ -87,6 +88,21 @@ private enum ShellSplitModelTests {
         expect(
             equalizedRatio == 0.5,
             "equalize must restore the tab's root split ratio"
+        )
+    }
+
+    private static func verifiesZoomProjectionUsesLeafWithoutMutatingSplitTree() throws {
+        let base = ShellStateSnapshot.bootstrapDefault(workingDirectory: "/tmp")
+        let split = try base.splittingPane("pane_1", placement: .right).state
+        let tree = try requireFocusedTabTree(split)
+        let zoomedLeaf = try require(tree.leafNode(containingPaneID: "pane_2"), "zoom leaf missing")
+
+        expect(zoomedLeaf.kind == .pane, "zoom projection must display a single pane leaf")
+        expect(zoomedLeaf.paneID == "pane_2", "zoom projection must display the requested pane")
+        let treeAfterProjection = try requireFocusedTabTree(split)
+        expect(
+            treeAfterProjection == tree,
+            "zoom projection must not mutate the canonical split tree"
         )
     }
 
@@ -431,6 +447,13 @@ private enum ShellSplitModelTests {
             throw TestFailure("focused tab missing")
         }
         return tab.paneTree
+    }
+
+    private static func require<T>(_ value: T?, _ message: String) throws -> T {
+        guard let value else {
+            throw TestFailure(message)
+        }
+        return value
     }
 
     private static func summary(

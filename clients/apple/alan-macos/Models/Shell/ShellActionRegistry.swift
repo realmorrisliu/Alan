@@ -27,6 +27,7 @@ enum ShellActionID: String, CaseIterable, Identifiable, Hashable {
     case paneFocusUp = "shell.pane.focus_up"
     case paneFocusDown = "shell.pane.focus_down"
     case paneEqualizeSplits = "shell.pane.equalize_splits"
+    case paneZoomToggle = "shell.pane.zoom_toggle"
     case paneClose = "shell.pane.close"
     case findOpen = "shell.find.open"
     case spaceSelectPrevious = "shell.space.select_previous"
@@ -500,6 +501,14 @@ private let standardActions: [ShellActionDescriptor] = [
         effect: .workspaceCommand(.equalizeSplits)
     ),
     ShellActionDescriptor(
+        id: .paneZoomToggle,
+        title: "Zoom / Unzoom Pane",
+        targetKind: .pane,
+        defaultShortcut: ShellActionShortcut(key: "return", modifiers: [.command, .shift], context: .shell),
+        effect: .workspaceCommand(.togglePaneZoom),
+        availability: splitPaneAvailability
+    ),
+    ShellActionDescriptor(
         id: .paneFocusLeft,
         title: "Focus Pane Left",
         targetKind: .pane,
@@ -662,6 +671,29 @@ private func focusedPaneAvailability(
             ? .unavailable(reason: "No focused pane")
             : .available
     }
+}
+
+private func splitPaneAvailability(
+    state: ShellStateSnapshot,
+    target: ShellActionTarget
+) -> ShellActionAvailability {
+    let paneID: String?
+    if case .contextPane(let contextPaneID) = target {
+        paneID = contextPaneID
+    } else {
+        paneID = state.focusedPaneID
+    }
+
+    guard let paneID,
+          let pane = state.pane(paneID: paneID),
+          let tab = state.tab(tabID: pane.tabID)
+    else {
+        return .unavailable(reason: "No focused pane")
+    }
+
+    return tab.paneTree.paneIDs.count > 1
+        ? .available
+        : .unavailable(reason: "Pane zoom requires a split tab")
 }
 
 private func selectedTabAvailability(

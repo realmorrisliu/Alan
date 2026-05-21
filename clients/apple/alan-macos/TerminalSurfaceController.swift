@@ -721,6 +721,8 @@ final class AlanTerminalInputRouter {
             return "downArrow"
         case 0x31:
             return "space"
+        case 0x24, 0x4C:
+            return "return"
         default:
             break
         }

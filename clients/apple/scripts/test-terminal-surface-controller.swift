@@ -236,6 +236,21 @@ private enum TerminalSurfaceControllerTests {
             focusRight == .shellAction(.paneFocusRight, .currentSelection),
             "command-control-right must route to registered shell focus right"
         )
+
+        let paneZoom = router.routeKeyboard(
+            AlanTerminalKeyInput(
+                characters: "\r",
+                keyCode: 0x24,
+                modifiers: [.command, .shift],
+                phase: .down,
+                isRepeat: false
+            ),
+            hasMarkedText: false
+        )
+        expect(
+            paneZoom == .shellAction(.paneZoomToggle, .currentSelection),
+            "command-shift-return must route to registered pane zoom before terminal bindings"
+        )
     }
 
     private static func verifiesRegistryBackedShellShortcuts() {

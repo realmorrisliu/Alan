@@ -11,6 +11,7 @@ struct ShellWorkspaceView: View {
             tab: host.selectedTab,
             spaceID: host.selectedSpace?.spaceID,
             selectedPaneID: host.selectedPane?.paneID,
+            zoomedPaneID: host.selectedTabZoomedPaneID,
             terminalSurfaceInsets: ShellWorkspaceMetrics.terminalSurfaceInsets(
                 expandedSidebarProgress: expandedSidebarProgress
             )

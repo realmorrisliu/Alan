@@ -111,6 +111,7 @@ enum ShellWorkspaceCommand: String, CaseIterable, Identifiable {
     case focusUp
     case focusDown
     case equalizeSplits
+    case togglePaneZoom
     case closePane
     case closeTab
     case quickTerminalToggle

@@ -34,6 +34,8 @@ private enum ShellRuntimeMetadataTests {
         verifiesQuickTerminalPeakPresenterDoesNotRefocusOnVisibleRefresh()
         verifiesQuickTerminalPeakPlacementFitsActiveDisplay()
         verifiesQuickTerminalPeakEscapePolicyBelongsToTerminal()
+        verifiesSplitZoomLeavesCanonicalTreeAndKeepsSiblingRuntimes()
+        verifiesSplitZoomIsTabScopedAndPrunedWhenPaneDisappears()
         verifiesTerminalActivityProjectsByPaneID()
         verifiesProgressActivityFactoryUsesSourceFirstDisplay()
         verifiesCommandCompletionActivityFactory()
@@ -755,6 +757,63 @@ private enum ShellRuntimeMetadataTests {
         expect(policy.escapeKeyBehavior == .terminalInput, "Esc must remain terminal input by default")
         expect(policy.hidesOnFocusLoss == false, "focus loss must not auto-hide the peak")
         expect(policy.usesMainWindowParenting == false, "peak must not be parented to the main window")
+    }
+
+    private static func verifiesSplitZoomLeavesCanonicalTreeAndKeepsSiblingRuntimes() {
+        let controller = makeController()
+        _ = controller.splitPane(paneID: "pane_1", placement: .right)
+        guard let tab = controller.selectedTab else {
+            fail("test setup must keep a selected tab")
+        }
+        let canonicalTree = tab.paneTree
+        _ = controller.terminalRuntimeRegistry.surfaceHandle(
+            for: controller.pane(paneID: "pane_1"),
+            bootProfile: controller.bootProfile(for: controller.pane(paneID: "pane_1"))
+        )
+        _ = controller.terminalRuntimeRegistry.surfaceHandle(
+            for: controller.pane(paneID: "pane_2"),
+            bootProfile: controller.bootProfile(for: controller.pane(paneID: "pane_2"))
+        )
+
+        expect(controller.zoomPane(paneID: "pane_1"), "zoom must accept a split pane")
+        expect(controller.selectedTabZoomedPaneID == "pane_1", "zoom state must be tab scoped")
+        expect(
+            controller.displayPaneTree(for: controller.selectedTab)?.paneIDs == ["pane_1"],
+            "zoomed display tree must project only the zoomed pane"
+        )
+        expect(
+            controller.selectedTab?.paneTree == canonicalTree,
+            "zoom must leave the canonical split tree unchanged"
+        )
+        expect(
+            controller.terminalRuntimeRegistry.registeredPaneIDs.isSuperset(of: ["pane_1", "pane_2"]),
+            "zoom must not release sibling terminal runtimes"
+        )
+
+        expect(controller.unzoomSelectedTab(), "unzoom must clear the selected tab zoom state")
+        expect(
+            controller.displayPaneTree(for: controller.selectedTab)?.paneIDs == canonicalTree.paneIDs,
+            "unzoom must restore the displayed split tree"
+        )
+    }
+
+    private static func verifiesSplitZoomIsTabScopedAndPrunedWhenPaneDisappears() {
+        let controller = makeController()
+        _ = controller.splitPane(paneID: "pane_1", placement: .right)
+        let firstTabID = controller.selectedTabID
+        expect(controller.zoomPane(paneID: "pane_1"), "test setup must zoom the first split tab")
+        let secondTabID = controller.openTerminalTab(in: controller.selectedSpaceID)
+        expect(secondTabID != nil, "test setup must open a second tab")
+
+        expect(controller.selectedTabID == secondTabID, "opening a tab must select it")
+        expect(controller.selectedTabZoomedPaneID == nil, "zoom state must not leak to another tab")
+        if let firstTabID {
+            controller.select(tabID: firstTabID)
+        }
+        expect(controller.selectedTabZoomedPaneID == "pane_1", "zoom state must remain attached to its tab")
+
+        _ = controller.closePane(paneID: "pane_1")
+        expect(controller.selectedTabZoomedPaneID == nil, "closing the zoomed pane must prune zoom state")
     }
 
     private static func verifiesTerminalActivityProjectsByPaneID() {

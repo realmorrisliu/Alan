@@ -6,6 +6,7 @@ struct TerminalPaneView: View {
     let tab: ShellTab?
     let spaceID: String?
     let selectedPaneID: String?
+    let zoomedPaneID: String?
     let terminalSurfaceInsets: EdgeInsets
     let onClosePane: ((ShellPane) -> Void)?
 
@@ -14,6 +15,7 @@ struct TerminalPaneView: View {
         tab: ShellTab? = nil,
         spaceID: String? = nil,
         selectedPaneID: String? = nil,
+        zoomedPaneID: String? = nil,
         terminalSurfaceInsets: EdgeInsets,
         onClosePane: ((ShellPane) -> Void)? = nil
     ) {
@@ -21,6 +23,7 @@ struct TerminalPaneView: View {
         self.tab = tab
         self.spaceID = spaceID
         self.selectedPaneID = selectedPaneID
+        self.zoomedPaneID = zoomedPaneID
         self.terminalSurfaceInsets = terminalSurfaceInsets
         self.onClosePane = onClosePane
     }
@@ -33,7 +36,7 @@ struct TerminalPaneView: View {
 
     private var paneCanvas: some View {
         Group {
-            if let paneTree = displayTab?.paneTree {
+            if let paneTree = displayPaneTree {
                 ShellPaneTreeLayoutView(
                     node: paneTree,
                     host: host,
@@ -83,6 +86,16 @@ struct TerminalPaneView: View {
 
     private var displaySelectedPaneID: String? {
         selectedPaneID ?? host.selectedPane?.paneID
+    }
+
+    private var displayPaneTree: ShellPaneTreeNode? {
+        guard let tab = displayTab else { return nil }
+        guard let zoomedPaneID,
+              let zoomedLeaf = tab.paneTree.leafNode(containingPaneID: zoomedPaneID)
+        else {
+            return tab.paneTree
+        }
+        return zoomedLeaf
     }
 
     private var runtimeCard: some View {
@@ -449,6 +462,8 @@ private struct ShellPaneTreeLayoutView: View {
                     pane: pane,
                     bootProfile: host.bootProfile(for: pane),
                     isSelected: selectedPaneID == pane.paneID,
+                    isZoomed: host.isPaneZoomed(pane.paneID),
+                    canZoom: host.canZoomPane(pane.paneID),
                     runtimeRegistry: host.terminalRuntimeRegistry,
                     activationDelegate: host,
                     onShellAction: { actionID, target in
@@ -456,6 +471,13 @@ private struct ShellPaneTreeLayoutView: View {
                     },
                     onCommandInput: {
                         host.requestCommandInput()
+                    },
+                    onToggleZoom: {
+                        if host.isPaneZoomed(pane.paneID) {
+                            _ = host.unzoomSelectedTab()
+                        } else {
+                            _ = host.zoomPane(paneID: pane.paneID)
+                        }
                     },
                     onClosePane: {
                         if let onClosePane {
@@ -648,10 +670,13 @@ private struct ShellTerminalLeafView: View {
     let pane: ShellPane
     let bootProfile: AlanShellBootProfile?
     let isSelected: Bool
+    let isZoomed: Bool
+    let canZoom: Bool
     let runtimeRegistry: TerminalRuntimeRegistry
     let activationDelegate: TerminalHostActivationDelegate?
     let onShellAction: (ShellActionID, ShellActionTarget) -> Void
     let onCommandInput: () -> Void
+    let onToggleZoom: () -> Void
     let onClosePane: () -> Void
     let onRuntimeUpdate: (TerminalHostRuntimeSnapshot) -> Void
     let onMetadataUpdate: (TerminalPaneMetadataSnapshot) -> Void
@@ -662,9 +687,12 @@ private struct ShellTerminalLeafView: View {
                 title: shellPaneTitleBarTitle(for: pane),
                 pane: pane,
                 isSelected: isSelected,
+                isZoomed: isZoomed,
+                canZoom: canZoom,
                 onFocusPane: {
                     activationDelegate?.terminalHostDidRequestActivation(paneID: pane.paneID)
                 },
+                onToggleZoom: onToggleZoom,
                 onClosePane: onClosePane
             )
 
@@ -761,7 +789,10 @@ private struct ShellPaneTitleBarView: View {
     let title: String
     let pane: ShellPane
     let isSelected: Bool
+    let isZoomed: Bool
+    let canZoom: Bool
     let onFocusPane: () -> Void
+    let onToggleZoom: () -> Void
     let onClosePane: () -> Void
     @State private var activityFreshnessNow = Date()
 
@@ -802,6 +833,10 @@ private struct ShellPaneTitleBarView: View {
             }
 
             Spacer(minLength: 0)
+
+            if canZoom {
+                zoomButton
+            }
 
             closeButton
         }
@@ -845,6 +880,28 @@ private struct ShellPaneTitleBarView: View {
         .fixedSize(horizontal: true, vertical: true)
         .help("Close pane")
         .accessibilityLabel("Close pane")
+    }
+
+    private var zoomButton: some View {
+        Button(action: onToggleZoom) {
+            Image(systemName: isZoomed ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right")
+                .font(
+                    .system(
+                        size: ShellPaneTitleTypography.closeSize,
+                        weight: ShellPaneTitleTypography.closeWeight
+                    )
+                )
+                .foregroundStyle(Color.white.opacity(isSelected ? 0.70 : 0.54))
+                .frame(
+                    width: ShellPaneTitleBarMetrics.closeButtonSize,
+                    height: ShellPaneTitleBarMetrics.closeButtonSize
+                )
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .fixedSize(horizontal: true, vertical: true)
+        .help(isZoomed ? "Unzoom pane" : "Zoom pane")
+        .accessibilityLabel(isZoomed ? "Unzoom pane" : "Zoom pane")
     }
 
     private var activityFreshnessRefreshID: String {
