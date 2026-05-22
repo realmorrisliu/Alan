@@ -17,6 +17,9 @@ private enum ShellWorkspaceManifestTests {
         try verifiesMaterializerPreservesEmptySelectedSpace()
         try verifiesPinnedSnapshotWinsOverLaterLiveSnapshot()
         try verifiesPinnedSplitSnapshotRestoresSplitTree()
+        try verifiesTerminalOnlySnapshotMigratesToContentContainerShape()
+        try verifiesContentContainerMigrationPreservesWorkspaceMetadata()
+        try verifiesContentContainerMigrationPreservesNilRestoreCwd()
         try verifiesUnpinnedTabPruningUsesTtlAndActiveTask()
         try verifiesSelectedTabPruningCanLeaveSelectedSpaceEmpty()
         print("Shell workspace manifest tests passed.")
@@ -180,6 +183,127 @@ private enum ShellWorkspaceManifestTests {
         )
     }
 
+    private static func verifiesTerminalOnlySnapshotMigratesToContentContainerShape() throws {
+        var tab = makeTab(
+            tabID: "tab_split",
+            title: "Pinned Split",
+            isPinned: true,
+            pinCwd: nil,
+            liveCwd: "/live/single",
+            lastActivatedAt: referenceDate,
+            lastActivityAt: referenceDate,
+            activeTask: .inactive
+        )
+        tab.pinSnapshot = makeSplitSnapshot(tabID: tab.tabID)
+        let manifest = makeManifest(selectedTabID: tab.tabID, tabs: [tab])
+
+        let migrated = manifest.migratingTerminalRestoreSnapshotsToContentContainers()
+        let migratedTab = try requireContentTab("tab_split", in: migrated)
+        let snapshot = try requireSnapshot(migratedTab.pinSnapshot)
+
+        expect(
+            migrated.contentContractVersion == ShellContentStateSnapshot.currentContractVersion,
+            "content manifest migration must use the v0.2 content contract"
+        )
+        expect(
+            snapshot.paneTree.paneSlotIDs == ["pane_tab_split_left", "pane_tab_split_right"],
+            "content migration must preserve terminal pane IDs as PaneSlot IDs"
+        )
+        expect(
+            snapshot.paneSlots.map(\.paneSlotID) == ["pane_tab_split_left", "pane_tab_split_right"],
+            "content migration must create one PaneSlot per terminal restore pane"
+        )
+        expect(
+            snapshot.paneSlots.map(\.contentID) == [
+                "content_pane_tab_split_left",
+                "content_pane_tab_split_right",
+            ],
+            "content migration must assign stable ContentInstance IDs"
+        )
+        expect(
+            snapshot.contents.map(\.kind) == [.terminal, .terminal],
+            "terminal-only restore panes must migrate to terminal ContentInstances"
+        )
+        expect(
+            snapshot.contents.map(\.title) == ["Shell", "Shell"],
+            "terminal ContentInstances must keep user-facing terminal titles"
+        )
+        expect(
+            snapshot.contents.compactMap(\.payload.terminal?.cwd) == [
+                "/pinned/left",
+                "/pinned/right",
+            ],
+            "terminal content payloads must preserve per-pane cwd"
+        )
+        expect(
+            snapshot.contents.allSatisfy { $0.payload.markdown == nil && $0.payload.settings == nil },
+            "terminal migration must not fabricate non-terminal payloads"
+        )
+    }
+
+    private static func verifiesContentContainerMigrationPreservesWorkspaceMetadata() throws {
+        let activatedAt = referenceDate.addingTimeInterval(-120)
+        let activityAt = referenceDate.addingTimeInterval(-30)
+        let tab = makeTab(
+            tabID: "tab_active",
+            title: "Active",
+            isPinned: false,
+            pinCwd: nil,
+            liveCwd: "/fallback",
+            lastActivatedAt: activatedAt,
+            lastActivityAt: activityAt,
+            activeTask: .alanPendingYield
+        )
+        let manifest = makeManifest(selectedTabID: tab.tabID, tabs: [tab])
+
+        let migrated = manifest.migratingTerminalRestoreSnapshotsToContentContainers()
+        let migratedSpace = try requireOnlySpace(in: migrated)
+        let migratedTab = try requireOnlyContentTab(in: migrated)
+
+        expect(migrated.selectedSpaceID == manifest.selectedSpaceID, "migration must preserve selected Space")
+        expect(migrated.selectedTabID == manifest.selectedTabID, "migration must preserve selected Tab")
+        expect(migratedSpace.spaceID == "space_main", "migration must preserve Space identity")
+        expect(migratedSpace.order == 0, "migration must preserve Space ordering")
+        expect(migratedTab.tabID == tab.tabID, "migration must preserve Tab identity")
+        expect(migratedTab.isPinned == tab.isPinned, "migration must preserve pin state")
+        expect(
+            migratedTab.lastActivatedAt == activatedAt && migratedTab.lastActivityAt == activityAt,
+            "migration must preserve TTL anchor timestamps"
+        )
+        expect(
+            migratedTab.activeTask == .alanPendingYield,
+            "migration must preserve active-task metadata"
+        )
+        let snapshot = try requireSnapshot(migratedTab.liveSnapshot)
+        expect(
+            snapshot.contents.first?.payload.terminal?.cwd == "/fallback",
+            "migration must preserve terminal restore payload cwd"
+        )
+    }
+
+    private static func verifiesContentContainerMigrationPreservesNilRestoreCwd() throws {
+        var tab = makeTab(
+            tabID: "tab_nil_cwd",
+            title: "Nil Cwd",
+            isPinned: false,
+            pinCwd: nil,
+            liveCwd: "/will-be-replaced",
+            lastActivatedAt: referenceDate,
+            lastActivityAt: referenceDate,
+            activeTask: .inactive
+        )
+        tab.liveSnapshot = makeSnapshot(tabID: tab.tabID, cwd: nil)
+        let manifest = makeManifest(selectedTabID: tab.tabID, tabs: [tab])
+
+        let migrated = manifest.migratingTerminalRestoreSnapshotsToContentContainers()
+        let snapshot = try requireSnapshot(try requireOnlyContentTab(in: migrated).liveSnapshot)
+
+        expect(
+            snapshot.contents.first?.payload.terminal?.cwd == nil,
+            "migration must preserve nil cwd so restore can resolve the default directory later"
+        )
+    }
+
     private static func verifiesUnpinnedTabPruningUsesTtlAndActiveTask() throws {
         let expiredAt = referenceDate.addingTimeInterval(-(twelveHours + 60))
         let recentAt = referenceDate.addingTimeInterval(-60)
@@ -300,7 +424,7 @@ private enum ShellWorkspaceManifestTests {
         )
     }
 
-    private static func makeSnapshot(tabID: String, cwd: String) -> ShellTabRestoreSnapshot {
+    private static func makeSnapshot(tabID: String, cwd: String?) -> ShellTabRestoreSnapshot {
         let paneID = "pane_\(tabID)"
         return ShellTabRestoreSnapshot(
             paneTree: ShellPaneTreeNode(
@@ -378,6 +502,44 @@ private enum ShellWorkspaceManifestTests {
             throw TestFailure("expected exactly one tab")
         }
         return tab
+    }
+
+    private static func requireOnlySpace(
+        in manifest: ShellContentWorkspaceManifest
+    ) throws -> ShellContentWorkspaceSpaceRecord {
+        guard manifest.spaces.count == 1, let space = manifest.spaces.first else {
+            throw TestFailure("expected exactly one content space")
+        }
+        return space
+    }
+
+    private static func requireOnlyContentTab(
+        in manifest: ShellContentWorkspaceManifest
+    ) throws -> ShellContentWorkspaceTabRecord {
+        let tabs = manifest.spaces.flatMap(\.tabs)
+        guard tabs.count == 1, let tab = tabs.first else {
+            throw TestFailure("expected exactly one content tab")
+        }
+        return tab
+    }
+
+    private static func requireContentTab(
+        _ tabID: String,
+        in manifest: ShellContentWorkspaceManifest
+    ) throws -> ShellContentWorkspaceTabRecord {
+        guard let tab = manifest.spaces.flatMap(\.tabs).first(where: { $0.tabID == tabID }) else {
+            throw TestFailure("missing content tab \(tabID)")
+        }
+        return tab
+    }
+
+    private static func requireSnapshot(
+        _ snapshot: ShellContentTabRestoreSnapshot?
+    ) throws -> ShellContentTabRestoreSnapshot {
+        guard let snapshot else {
+            throw TestFailure("expected content restore snapshot")
+        }
+        return snapshot
     }
 
     private static func requireOnlyPane(in snapshot: ShellTabRestoreSnapshot?) throws -> ShellPaneRestoreRecord {
